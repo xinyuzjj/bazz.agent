@@ -1,10 +1,12 @@
-# Agent OS Alpha Scout
+# BAZZ.AGENT — Agent OS Alpha Scout
 
 > **A Binance-native AI trading copilot** built on top of the four official
 > Agent OS capabilities — MCP Server, Agentic Wallet, x402/B402 machine
 > payment and Skill Hub.
 
 [![Track A](https://img.shields.io/badge/Binance%20Agent%20OS-Track%20A-f0b90b)](#hackathon)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Pages-f0b90b?logo=githubpages&logoColor=white)](https://xinyuzjj.github.io/bazz.agent/)
+[![GitHub Repo](https://img.shields.io/badge/GitHub-bazz.agent-181717?logo=github&logoColor=white)](https://github.com/xinyuzjj/bazz.agent)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3776ab?logo=python&logoColor=white)](#stack)
 [![React](https://img.shields.io/badge/React-18-61dafb?logo=react&logoColor=222)](#stack)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688?logo=fastapi&logoColor=white)](#stack)
@@ -30,6 +32,8 @@ It is **not** a chat skin on top of Binance — it is a full agent loop:
 > 端的交易副驾。后端 FastAPI + SSE 流式对话，前端 React 18 + Vite +
 > Tailwind，Hermes 风格暗金主题；公开行情无需 key 即跑，真实交易 / 链上
 > 操作必须人工确认。
+
+**🖥️ Live Pages 展示页**：https://xinyuzjj.github.io/bazz.agent/（GitHub Pages 落地页，含产品截图、四能力卡与架构说明）
 
 ![Main UI](./docs/screenshot.png)
 
@@ -181,7 +185,7 @@ npx skills add https://github.com/binance/binance-skills-hub/tree/main/skills/<g
 ## 📦 Project layout
 
 ```
-binance-agent-os-scout/
+bazz.agent/
 ├── desktop_app.py            FastAPI backend (serves frontend/dist + /api/*)
 ├── src/
 │   ├── agent_core.py         intent → tool orchestration → approval → exec
@@ -205,10 +209,18 @@ binance-agent-os-scout/
 
 ---
 
+## 🏷 Topics
+
+`binance` · `agent-os` · `ai-agent` · `hackathon` · `trading` · `crypto`
+· `web3` · `mcp` · `x402` · `oauth` · `fastapi` · `react`
+
+---
+
 ## 🎯 Hackathon
 
 - **Event**: Binance Agent OS Mini Hackathon — Track A: *Build an AI Agent with Agent OS*
 - **Track deadline**: 2026-09-08 23:59 UTC
+- **Live Pages**: https://xinyuzjj.github.io/bazz.agent/
 - **Disclaimer**: This project is a hackathon demo. Nothing here is investment advice — crypto trading carries real risk. Every execution path requires explicit human approval.
 
 ---
