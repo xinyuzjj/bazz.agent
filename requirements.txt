@@ -1,0 +1,7 @@
+requests>=2.31
+python-dotenv>=1.0
+rich>=13.0
+fastapi>=0.100
+uvicorn>=0.23
+pywebview>=6.0
+qrcode>=7.4

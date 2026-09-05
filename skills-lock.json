@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "skills": {
+    "binance": {
+      "source": "binance/binance-skills-hub",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/binance/binance/SKILL.md",
+      "computedHash": "d9a528a59d54201901945db1b4fd97a13731333ecbc5fcf3ab31b94519f94ed4"
+    },
+    "binance-agentic-wallet": {
+      "source": "binance/binance-skills-hub",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/binance-web3/binance-agentic-wallet/SKILL.md",
+      "computedHash": "2696bdff3fcb52ffef8358e5a2ef8a4dfd58dfb1fbc48dd42255f9e8cacefc9d"
+    },
+    "binance-leaderboard": {
+      "source": "binance/binance-skills-hub",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/binance-web3/binance-leaderboard/SKILL.md",
+      "computedHash": "8fe7ecea58da92174b758e4d262ba7f2f54355791431c853b80d4a40a279bf48"
+    },
+    "binance-sports-ai-analyzer": {
+      "source": "binance/binance-skills-hub",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/binance-web3/binance-sports-ai-analyzer/SKILL.md",
+      "computedHash": "489ab9d9000e4c64dfdbdf840361ca94d0c9787dcd367ff799f7716847f38ff1"
+    },
+    "binance-tokenized-securities-info": {
+      "source": "binance/binance-skills-hub",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/binance-web3/binance-tokenized-securities-info/SKILL.md",
+      "computedHash": "6076f1e30aaae4817be002c9890133e6e58f70e0501e1e17d9c1a97e7efb319b"
+    },
+    "binance-trading-signal": {
+      "source": "binance/binance-skills-hub",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/binance-web3/binance-trading-signal/SKILL.md",
+      "computedHash": "d693a90e8d5783f55a992fdb1542d6f495f799660633008033552a2ad946cbad"
+    },
+    "binance-wallet-tracker": {
+      "source": "binance/binance-skills-hub",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/binance-web3/binance-wallet-tracker/SKILL.md",
+      "computedHash": "4149d2774737da5450c5b656b8de3f8d421830ce966d6e1fb5c52ea4bc34e8d4"
+    },
+    "crypto-market-rank": {
+      "source": "binance/binance-skills-hub",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/binance-web3/crypto-market-rank/SKILL.md",
+      "computedHash": "4f2bc27fb48ba2728f428289bce5308b21367e644d2ee37bd8f53ed96d70aa6d"
+    },
+    "meme-rush": {
+      "source": "binance/binance-skills-hub",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/binance-web3/meme-rush/SKILL.md",
+      "computedHash": "86ab39cbb0407c4eee2de9a604d444f0629eeb41116239bb9c8dc40bd69a1379"
+    },
+    "query-address-info": {
+      "source": "binance/binance-skills-hub",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/binance-web3/query-address-info/SKILL.md",
+      "computedHash": "90e8c988ff2d1ce8c6415d7ad7dd329502ce1006f07d4a6fb1cd71ab155c244b"
+    },
+    "query-token-audit": {
+      "source": "binance/binance-skills-hub",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/binance-web3/query-token-audit/SKILL.md",
+      "computedHash": "1379ddaa0f173d2acfa273216337a2f217cafa309d534331dd37744394c00fb4"
+    },
+    "query-token-info": {
+      "source": "binance/binance-skills-hub",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/binance-web3/query-token-info/SKILL.md",
+      "computedHash": "52e08436db584a22842b05b57c3eff484e19b7311e15f21c20bcf97e43023105"
+    },
+    "square-post": {
+      "source": "binance/binance-skills-hub",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/binance/square-post/SKILL.md",
+      "computedHash": "9d4588e5ceac8783d109c193c0244588a96e6fd8f9f686ffb60552e78fe2628a"
+    },
+    "trading-signal": {
+      "source": "binance/binance-skills-hub",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/binance-web3/trading-signal/SKILL.md",
+      "computedHash": "ab9ce2059f0007cc0195d331cb58cda14484a48ab8130d1aebc01b4dd696087b"
+    }
+  }
+}

@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BAZZ Agent · Binance Agent OS</title>
+    <script>
+      (function () {
+        function show(msg, src, line, col, err) {
+          var el = document.getElementById("__boot_err__");
+          if (!el) {
+            el = document.createElement("pre");
+            el.id = "__boot_err__";
+            el.style.cssText = "position:fixed;left:16px;right:16px;bottom:16px;max-height:60vh;overflow:auto;padding:14px;background:#1a0d0d;border:1px solid #f6465d;color:#ff9aa8;font:12px/1.5 ui-monospace,monospace;white-space:pre-wrap;z-index:99999;border-radius:8px;box-shadow:0 8px 32px #0008";
+            (document.body || document.documentElement).appendChild(el);
+          }
+          var stack = err && err.stack ? "\n\n" + err.stack : "";
+          var prev = el.textContent || "";
+          el.textContent = prev + "\n\n[" + new Date().toLocaleTimeString() + "] " + msg + (src ? " @ " + src + ":" + line + ":" + col : "") + stack;
+        }
+        window.addEventListener("error", function (e) { show(e.message || "error", e.filename, e.lineno, e.colno, e.error); });
+        window.addEventListener("unhandledrejection", function (e) { var r = e.reason || {}; show((r && r.message) || String(r), "promise", 0, 0, r); });
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <div id="__boot_root_fallback__" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;color:#8b95a8;font-family:ui-monospace,monospace;font-size:13px;pointer-events:none"><span>loading…</span></div>
+    <script>
+      setTimeout(function () { var f = document.getElementById("__boot_root_fallback__"); if (f && f.parentNode) f.parentNode.removeChild(f); }, 4000);
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

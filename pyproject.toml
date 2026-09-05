@@ -1,0 +1,4 @@
+[project]
+name = "binance-agent-os-scout"
+version = "0.1.0"
+description = "Binance Agent OS Mini Hackathon Track A submission - Alpha Scout & Trade Copilot"

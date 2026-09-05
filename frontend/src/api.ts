@@ -1,0 +1,170 @@
+// 统一 API 层。开发（Vite 5173 代理）与生产（后端 8080 同源）都用相对 /api。
+const BASE = "/api";
+
+async function jget(path: string) {
+  const r = await fetch(BASE + path);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+async function jpost(path: string, body: any) {
+  const r = await fetch(BASE + path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+async function jdel(path: string) {
+  const r = await fetch(BASE + path, { method: "DELETE" });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+export const api = {
+  BASE,
+  status: () => jget("/status"),
+  market: () => jget("/market"),
+  marketMonsters: (force = false) => jget("/market/monsters" + (force ? "?force=1" : "")),
+  marketIgnition: (force = false) => jget("/market/ignition" + (force ? "?force=1" : "")),
+  conversations: (includeArchived = false) =>
+    jget("/conversations" + (includeArchived ? "?include_archived=1" : "")),
+  rooms: () => jget("/rooms"),
+  createRoom: (b: any) => jpost("/rooms", b),
+  roomMembers: (rid: string, action: "add" | "remove", name: string) =>
+    jpost(`/rooms/${encodeURIComponent(rid)}/members`, { action, name }),
+  deleteRoom: (rid: string) => jdel("/rooms/" + encodeURIComponent(rid)),
+  newConversation: () => jpost("/conversations", {}),
+  getConversation: (id: string) => jget("/conversations/" + id),
+  deleteConversation: (id: string) => jdel("/conversations/" + id),
+  archiveConversation: (id: string, archived: boolean) =>
+    jpost("/conversations/" + encodeURIComponent(id) + "/archive", { archived }),
+  renameConversation: (id: string, title: string) =>
+    jpost("/conversations/" + encodeURIComponent(id) + "/rename", { title }),
+  workspaceFiles: (path: string = "") =>
+    jget("/workspace/files?path=" + encodeURIComponent(path)),
+  workspaceRead: (path: string) =>
+    jget("/workspace/read?path=" + encodeURIComponent(path)),
+  approvalWhitelist: () => jget("/approvals/whitelist"),
+  approvalWhitelistAdd: (rule: string) => jpost("/approvals/whitelist", { rule }),
+  approvalWhitelistRemove: (rule: string) => jdel("/approvals/whitelist?rule=" + encodeURIComponent(rule)),
+  uploadFile: async (file: File): Promise<any> => {
+    // base64 走 JSON（与后端一致、无 multipart 依赖）
+    const data = await new Promise<string>((res, rej) => {
+      const fr = new FileReader();
+      fr.onload = () => res(String(fr.result).split(",")[1] ?? "");
+      fr.onerror = () => rej(fr.error);
+      fr.readAsDataURL(file);
+    });
+    return jpost("/upload", { name: file.name, data });
+  },
+  settings: () => jget("/settings"),
+  saveSettings: (b: any) => jpost("/settings", b),
+  llmTest: (b: any) => jpost("/llm/test", b),
+  llmModels: (provider: string, base_url: string, api_key: string) =>
+    jget("/llm/models?provider=" + encodeURIComponent(provider) + "&base_url=" + encodeURIComponent(base_url) + "&api_key=" + encodeURIComponent(api_key)),
+  memory: () => jget("/memory"),
+  memoryStats: () => jget("/memory/stats"),
+  addMemory: (key: string, value: string) => jpost("/memory", { key, value }),
+  deleteMemory: (key: string) => jdel("/memory/" + encodeURIComponent(key)),
+  exportMemory: async () => {
+    const r = await fetch(BASE + "/memory/export");
+    if (!r.ok) throw new Error(await r.text());
+    return r.text();
+  },
+  mcp: () => jget("/mcp"),
+  addMcp: (b: any) => jpost("/mcp", b),
+  deleteMcp: (name: string) => jdel("/mcp/" + encodeURIComponent(name)),
+  toggleMcp: (name: string, enabled: boolean) => jpost(`/mcp/${encodeURIComponent(name)}/toggle`, { enabled }),
+  mcpTools: (name: string) => jget(`/mcp/${encodeURIComponent(name)}/tools`),
+  mcpOauthStart: (name: string) => jpost(`/mcp/${encodeURIComponent(name)}/oauth/start`, {}),
+  mcpOauthPoll: (name: string, state: string, timeout?: number) =>
+    jpost(`/mcp/${encodeURIComponent(name)}/oauth/poll`, { state, timeout: timeout ?? 120 }),
+  mcpSetToken: (name: string, token: string) => jpost(`/mcp/${encodeURIComponent(name)}/token`, { token }),
+  cron: () => jget("/cron"),
+  addCron: (b: any) => jpost("/cron", b),
+  deleteCron: (id: string) => jdel("/cron/" + encodeURIComponent(id)),
+  toggleCron: (id: string, enabled: boolean) => jpost(`/cron/${encodeURIComponent(id)}/toggle`, { enabled }),
+  cronRun: (id: string) => jpost(`/cron/${encodeURIComponent(id)}/run`, {}),
+  plugins: () => jget("/plugins"),
+  togglePlugin: (name: string, enabled: boolean) => jpost("/plugins", { name, enabled }),
+  pluginCommand: (id: string, name: string, params?: any) =>
+    jpost(`/plugins/${encodeURIComponent(id)}/command`, { name, params: params ?? {} }),
+  wallet: (force = false) => jget("/wallet" + (force ? "?force=1" : "")),
+  walletRun: (cmd: string) => jpost("/wallet/run", { cmd }),
+  walletInstall: () => jpost("/wallet/install", {}),
+  // Agent 钱包：Binance App 扫码登录
+  walletSignin: () => jpost("/wallet/signin", {}),
+  walletVerify: (qrCodeId: string, wait?: number) => jpost("/wallet/verify", { qrCodeId, wait: wait ?? 10 }),
+  walletSignout: () => jpost("/wallet/signout", {}),
+  walletCampaign: () => jget("/wallet/campaign"),
+  walletQr: async (text: string) => {
+    const r = await fetch(BASE + "/wallet/qr?text=" + encodeURIComponent(text));
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
+  },
+  // 链上钱包（CEX，API Key + Secret）：只读资产
+  cexStatus: () => jget("/wallet/cex/status"),
+  cexConnect: (api_key: string, secret: string) => jpost("/wallet/cex/connect", { api_key, secret }),
+  cexDisconnect: () => jpost("/wallet/cex/disconnect", {}),
+  cexSummary: (force = false) => jget("/wallet/cex/summary" + (force ? "?force=1" : "")),
+  cexOpenOrders: (symbol?: string) => jget("/wallet/cex/openorders" + (symbol ? "?symbol=" + encodeURIComponent(symbol) : "")),
+  cexTrades: (symbol: string, limit = 50) => jget("/wallet/cex/trades?symbol=" + encodeURIComponent(symbol) + "&limit=" + limit),
+  cexAllOrders: (symbol: string, limit = 50) => jget("/wallet/cex/allorders?symbol=" + encodeURIComponent(symbol) + "&limit=" + limit),
+  // 链上钱包（Binance Web3 Wallet API，BX- Key）：官方连接器桥
+  web3Status: () => jget("/wallet/web3/status"),
+  web3Connect: (api_key: string, secret: string) => jpost("/wallet/web3/connect", { api_key, secret }),
+  web3Disconnect: () => jpost("/wallet/web3/disconnect", {}),
+  web3Balance: (address: string, chains: string[], pageSize = 50) =>
+    jpost("/wallet/web3/balance", { address, chains, pageSize }),
+  web3AgentAddresses: () => jget("/wallet/web3/agent-addresses"),
+  x402Supported: () => jget("/x402/supported"),
+  x402Demo: (asset: string, amount: string) => jpost("/x402/demo", { asset, amount }),
+  skills: () => jget("/skills"),
+  bots: () => jget("/bots"),
+  botActivity: () => jget("/bots/activity"),
+  addBot: (b: any) => jpost("/bots", b),
+  updateBot: (id: string, b: any) => jpost("/bots/" + encodeURIComponent(id), b),
+  deleteBot: (id: string) => jdel("/bots/" + encodeURIComponent(id)),
+  importBot: (md: string) => jpost("/bots/import", { md }),
+  exportBot: async (id: string) => {
+    const r = await fetch(BASE + "/bots/" + encodeURIComponent(id) + "/export");
+    if (!r.ok) throw new Error(await r.text());
+    return r.text();
+  },
+  skillsInstall: (key: string) => jpost("/skills/install", { key }),
+  skillsInstallWallet: () => jpost("/skills/install-wallet-skills", {}),
+  skillsRun: (key: string, args?: string) => jpost("/skills/run", { key, args: args ?? "" }),
+  skillsRemove: (key: string) => jpost("/skills/remove", { key }),
+  // 币安广场发文台账（Agent 已发帖子记录，只读展示）
+  squarePosts: () => jget("/square/posts"),
+  squareKey: () => jget("/square/key"),
+  squareConnect: (api_key: string) => jpost("/square/connect", { api_key }),
+  squareDisconnect: () => jpost("/square/disconnect", {}),
+  getAutoExec: async () => {
+    const r = await fetch(BASE + "/settings/auto-exec");
+    return r.ok ? (await r.json()).auto_exec : true;
+  },
+  setAutoExec: (on: boolean) => jpost("/settings/auto-exec", { auto_exec: on }),
+  getDeepThinking: async () => {
+    const r = await fetch(BASE + "/settings/deep-thinking");
+    return r.ok ? (await r.json()).deep_thinking : true;
+  },
+  setDeepThinking: (on: boolean) => jpost("/settings/deep-thinking", { deep_thinking: on }),
+  getSettings: async () => {
+    const r = await fetch(BASE + "/settings");
+    return r.ok ? await r.json() : {};
+  },
+};
+
+// 流式对话：返回 reader，调用方逐行解析 NDJSON
+export async function streamChat(body: any, signal?: AbortSignal): Promise<Response> {
+  return fetch(BASE + "/chat/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+}

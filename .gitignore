@@ -1,0 +1,58 @@
+# ---- OS / Editor ----
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# ---- Python ----
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+*.egg-info/
+
+# ---- Node / Frontend ----
+node_modules/
+frontend/dist/
+frontend/vite.config.ts.timestamp-*
+
+# ---- Local secrets & state (PRIVATE — DO NOT COMMIT) ----
+.env
+.env.*
+!.env.example
+.scout.db
+.scout.db-journal
+.scout.lock
+.wallet_profile.json
+
+# ---- Local app data ----
+data/
+workspace/
+
+# ---- WorkBuddy tooling ----
+.workbuddy/
+
+# ---- Internal / personal ----
+# desktop shell (excluded by user request — desktop version not in this web release)
+app.py
+electron/
+start-desktop.bat
+start-dev.bat
+
+# legacy CLI demos (kept as historical references only; web app is the product)
+demo.py
+demo_agent.py
+src/agent.py
+
+# Stitch / scratch projects (unrelated to this repo)
+stitch_binance_agentos_dashboard/
+wallet_bridge/node_modules/
+
+# Misc junk
+30000
+*.tmp
+*.bak

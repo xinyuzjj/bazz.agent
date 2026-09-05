@@ -1,0 +1,44 @@
+{
+  "id": "scout-signals",
+  "name": "Scout 信号速报",
+  "version": "0.1.0",
+  "description": "示例插件：把扫描器能力包成可被 LLM 直接调用的命令（展示 Hermes 插件 SDK 用法）。",
+  "author": "Alpha Scout",
+  "commands": [
+    {
+      "name": "hot",
+      "description": "实时扫描 Binance 公开行情并返回当前最强 Top5 信号（无需 Key）。",
+      "args_schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "返回条数，默认 5"
+          }
+        }
+      }
+    },
+    {
+      "name": "quote",
+      "description": "查询单个交易对的实时价格与 24h 涨跌。",
+      "args_schema": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "description": "交易对，如 BTCUSDT"
+          }
+        },
+        "required": ["symbol"]
+      }
+    },
+    {
+      "name": "ping",
+      "description": "连通性自检，返回 pong。",
+      "args_schema": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  ]
+}

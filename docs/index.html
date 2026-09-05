@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Agent OS Alpha Scout · Binance Agent OS Hackathon</title>
+<meta name="description" content="A Binance-native AI trading copilot built on the four official Agent OS capabilities: MCP Server, Agentic Wallet, x402/B402, Skill Hub." />
+<meta property="og:title" content="Agent OS Alpha Scout" />
+<meta property="og:description" content="scan → analyze → propose → human approval → execute, on top of Binance Agent OS." />
+<style>
+  :root {
+    --bg: #0a0b0d;
+    --bg2: #111317;
+    --panel: #16191e;
+    --panel2: #1c2026;
+    --border: #262b33;
+    --text: #e7e9ee;
+    --dim: #8a93a3;
+    --gold: #f0b90b;
+    --gold2: #ffd34e;
+    --green: #2ebd85;
+    --red: #f6465d;
+    --blue: #4a9eff;
+    --radius: 14px;
+    --mono: ui-monospace, "JetBrains Mono", "Fira Code", "Cascadia Mono", "Consolas", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    font-size: 15px; line-height: 1.6; }
+  body {
+    background-image:
+      radial-gradient(900px 600px at 80% -10%, rgba(240,185,11,.10), transparent 60%),
+      radial-gradient(700px 500px at 0% 110%, rgba(74,158,255,.07), transparent 60%);
+    background-attachment: fixed;
+  }
+  a { color: var(--gold); text-decoration: none; }
+  a:hover { color: var(--gold2); }
+
+  .nav {
+    position: sticky; top: 0; z-index: 10;
+    backdrop-filter: blur(12px);
+    background: rgba(10,11,13,.78);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-inner {
+    max-width: 1200px; margin: 0 auto; padding: 14px 24px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .nav .logo { font-weight: 800; letter-spacing: .04em; font-size: 16px; }
+  .nav .logo .dot { color: var(--gold); }
+  .nav .grow { flex: 1; }
+  .nav .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 12px; border-radius: 999px;
+    border: 1px solid var(--border); color: var(--dim); font-size: 13px;
+  }
+  .nav .pill.gold { color: var(--gold); border-color: rgba(240,185,11,.5); }
+  .nav a.btn {
+    padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border);
+    color: var(--text); font-size: 13px; transition: all .15s ease;
+  }
+  .nav a.btn:hover { border-color: var(--gold); color: var(--gold); }
+  .nav a.btn.primary { background: var(--gold); color: #1a1d22; border-color: var(--gold); }
+  .nav a.btn.primary:hover { background: var(--gold2); color: #1a1d22; }
+
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 56px 24px 80px; }
+
+  /* HERO */
+  .hero { text-align: center; padding: 56px 8px 32px; }
+  .hero .eyebrow {
+    display: inline-flex; gap: 8px; align-items: center;
+    padding: 4px 12px; border-radius: 999px;
+    border: 1px solid rgba(240,185,11,.35); color: var(--gold);
+    background: rgba(240,185,11,.06); font-size: 12px; letter-spacing: .04em;
+    text-transform: uppercase; margin-bottom: 22px;
+  }
+  .hero h1 {
+    font-size: clamp(36px, 6vw, 64px); margin: 0 0 14px; line-height: 1.05;
+    font-weight: 900; letter-spacing: -.02em;
+  }
+  .hero h1 .grad {
+    background: linear-gradient(120deg, var(--gold), var(--gold2) 70%, var(--gold));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .hero .tag { font-size: 18px; color: var(--dim); max-width: 720px; margin: 0 auto 28px; }
+  .hero .cta { display: inline-flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+  .hero .cta a {
+    padding: 12px 20px; border-radius: 10px; font-weight: 600; font-size: 14px;
+    border: 1px solid var(--border); color: var(--text); transition: all .15s ease;
+  }
+  .hero .cta a.primary { background: var(--gold); color: #1a1d22; border-color: var(--gold); }
+  .hero .cta a.primary:hover { background: var(--gold2); color: #1a1d22; }
+  .hero .cta a:hover:not(.primary) { border-color: var(--gold); color: var(--gold); }
+
+  /* META */
+  .meta {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px;
+    margin-top: 40px; padding: 0; list-style: none;
+  }
+  .meta li {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px; text-align: center;
+  }
+  .meta li b { display: block; color: var(--gold); font-size: 18px; }
+  .meta li span { color: var(--dim); font-size: 12px; }
+
+  @media (max-width: 720px) { .meta { grid-template-columns: repeat(2, 1fr); } }
+
+  /* SECTIONS */
+  section { margin-top: 72px; }
+  h2 {
+    font-size: 26px; margin: 0 0 8px; font-weight: 800; letter-spacing: -.01em;
+  }
+  .h2-sub { color: var(--dim); margin: 0 0 26px; }
+
+  /* SCREENSHOT */
+  .shot {
+    margin-top: 18px; border-radius: var(--radius); overflow: hidden;
+    border: 1px solid var(--border); background: #000;
+    box-shadow: 0 30px 80px -40px rgba(0,0,0,.6);
+  }
+  .shot img { display: block; width: 100%; height: auto; }
+  .shotcap { color: var(--dim); font-size: 13px; margin-top: 10px; text-align: center; }
+
+  /* CAPABILITIES */
+  .caps { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  @media (max-width: 820px) { .caps { grid-template-columns: 1fr; } }
+  .cap {
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 22px; transition: transform .15s ease, border-color .15s ease;
+  }
+  .cap:hover { transform: translateY(-2px); border-color: rgba(240,185,11,.45); }
+  .cap h3 {
+    margin: 0 0 6px; font-size: 18px; font-weight: 700;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .cap h3 .badge {
+    font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    background: rgba(240,185,11,.12); color: var(--gold); border: 1px solid rgba(240,185,11,.3);
+    letter-spacing: .03em; font-weight: 600;
+  }
+  .cap .cmd { font-family: var(--mono); font-size: 12px; color: var(--dim); margin: 8px 0 12px; }
+  .cap p { margin: 0 0 12px; color: #c8ccd4; }
+  .cap ul { margin: 0; padding-left: 18px; color: #c8ccd4; }
+  .cap ul li { margin-bottom: 4px; font-size: 14px; }
+
+  /* ARCHITECTURE */
+  pre.code {
+    background: #0c0e12; border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 20px; overflow: auto; color: #d6d9df; font-family: var(--mono); font-size: 12.5px;
+    line-height: 1.55;
+  }
+  pre.code .gold { color: var(--gold); }
+  pre.code .dim { color: var(--dim); }
+  pre.code .green { color: var(--green); }
+  pre.code .blue { color: var(--blue); }
+
+  /* INSTALL */
+  .install {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 24px;
+  }
+  .install ol { margin: 0; padding-left: 22px; color: #c8ccd4; }
+  .install ol li { margin-bottom: 8px; }
+  .install code {
+    background: #0c0e12; padding: 2px 7px; border-radius: 6px; font-size: 13px;
+    border: 1px solid var(--border); color: var(--gold);
+  }
+
+  /* FOOTER */
+  footer {
+    margin-top: 96px; padding-top: 28px; border-top: 1px solid var(--border);
+    color: var(--dim); font-size: 13px; display: flex; justify-content: space-between;
+    flex-wrap: wrap; gap: 12px;
+  }
+  footer .hack { color: var(--gold); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <div class="logo">BAZZ<span class="dot">·</span>AGENT</div>
+    <div class="grow"></div>
+    <span class="pill gold">Binance Agent OS · Track A</span>
+    <a class="btn" href="#capabilities">能力</a>
+    <a class="btn" href="#install">快速开始</a>
+    <a class="btn primary" href="https://github.com/xinyuzjj/binance-agent-os-scout">★ GitHub</a>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <header class="hero">
+    <span class="eyebrow">Hackathon submission · Binance Agent OS · Track A</span>
+    <h1><span class="grad">Agent OS Alpha Scout</span></h1>
+    <p class="tag">
+      一个 web 端的 Binance 原生 AI 交易副驾 —— 把 <b>MCP Server</b>、<b>Agentic Wallet</b>、<b>x402/B402</b>、<b>Skill Hub</b> 四块官方能力
+      整合成「<b>扫描 · 分析 · 建议 · 人工确认 · 执行</b>」的闭环。
+    </p>
+    <div class="cta">
+      <a class="primary" href="https://github.com/xinyuzjj/binance-agent-os-scout">在 GitHub 查看 →</a>
+      <a href="#install">本地快速开始</a>
+      <a href="#capabilities">四块能力</a>
+    </div>
+    <ul class="meta">
+      <li><b>14</b><span>官方 Binance Skills</span></li>
+      <li><b>5</b><span>内置 Bot Persona</span></li>
+      <li><b>0 key</b><span>即可跑市场扫描</span></li>
+      <li><b>100%</b><span>下单 / 支付需确认</span></li>
+    </ul>
+  </header>
+
+  <div class="shot">
+    <img src="screenshot.png" alt="Agent OS Alpha Scout 主界面：左侧会话列表、中间对话区、右侧实时信号台" />
+  </div>
+  <p class="shotcap">主界面：左侧会话历史 · 中间对话与工具卡 · 右侧 Binance 实时信号</p>
+
+  <section id="capabilities">
+    <h2>四块原生能力</h2>
+    <p class="h2-sub">不是聊天气泡套 Binance 皮肤 —— 四块全部按官方真实协议实现。</p>
+    <div class="caps">
+
+      <div class="cap">
+        <h3>MCP Server <span class="badge">core</span></h3>
+        <div class="cmd">agent.binance.com · Streamable HTTP · OAuth 2.0 PKCE</div>
+        <p>Binance 官方 Agentic MCP 接入。运行时工具发现，无硬编码工具名；公开行情免鉴权，账户/交易走 OAuth + 最小权限 scope。</p>
+        <ul>
+          <li>RFC 9728 资源元数据挑战 → PKCE(S256) 浏览器流</li>
+          <li>工具运行时 <code>tools/list</code> 发现</li>
+          <li>无提现 scope；Agentic 子账户与主账户隔离</li>
+        </ul>
+      </div>
+
+      <div class="cap">
+        <h3>Agentic Wallet <span class="badge">baw</span></h3>
+        <div class="cmd">npm i -g @binance/agentic-wallet</div>
+        <p>官方 MPC 无密钥钱包，多链（BSC / ETH / Base / SOL），QR 扫码登录。Agent 只能通过 <code>run_command</code> 白名单调 <code>baw</code>，从不见私钥。</p>
+        <ul>
+          <li>兑换 $50k / DeFi $100k / x402 $20 每日上限</li>
+          <li>支持市价单 / 限价单 / 兑换 / 报价</li>
+          <li>全部 <code>--json</code> 机器可读</li>
+        </ul>
+      </div>
+
+      <div class="cap">
+        <h3>x402 / B402 <span class="badge">pay</span></h3>
+        <div class="cmd">/papi/v2/b402/{supported,verify,settle}</div>
+        <p>机器对机器支付：卖家 402 → 买家 Agentic Wallet 离线 Permit2 EIP-712 签名 → Facilitator 验证 → 链上点对点结算（Facilitator 代付 gas）。</p>
+        <ul>
+          <li>BNB Smart Chain (<code>eip155:56</code>)，Testnet 当前开放</li>
+          <li>真实 <code>/supported</code> 拉配置；无权限时仿真</li>
+          <li>签名环节无 gas，用户体验顺滑</li>
+        </ul>
+      </div>
+
+      <div class="cap">
+        <h3>Skill Hub <span class="badge">14 skills</span></h3>
+        <div class="cmd">npx skills add &lt;github path&gt;</div>
+        <p>14 个官方 Binance skill（CEX 5 个 + Web3 9 个），意图驱动：在对话里表达意图，skill 自己决定调哪个底层 API/CLI。</p>
+        <ul>
+          <li>本地已装 <code>.agents/skills/*</code>，锁文件 <code>skills-lock.json</code></li>
+          <li>install / run / remove 全套，带路径穿越防护</li>
+          <li>插件扩展：<code>plugins/&lt;id&gt;/{main.py,plugin.json}</code></li>
+        </ul>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>架构</h2>
+    <p class="h2-sub">FastAPI 后端 + React 前端，全部 SSE/NDJSON 流式，无 WebSocket。</p>
+<pre class="code"><span class="dim">┌──────────────────────────────────────────────────────────────────┐
+│              </span><span class="gold">Agent OS Alpha Scout (Web Cockpit)</span><span class="dim">                  │
+│                                                                  │
+│   </span>React + Vite + Tailwind (UI)<span class="dim"> ─── HTTP / SSE ───► </span>FastAPI<span class="dim">        │
+│                                                                  │
+│   </span>FastAPI (desktop_app.py)<span class="dim">                                       │
+│        │            │            │        │         │             │
+│        ▼            ▼            ▼        ▼         ▼             │
+│   </span>MCP Client<span class="dim">   </span>x402 Client<span class="dim">   </span>Wallet<span class="dim">   </span>Scheduler<span class="dim">  </span>LLM (compat)<span class="dim">    │
+│   </span>(OAuth)<span class="dim">      </span>(B402 Fac.)<span class="dim">   </span>(baw)<span class="dim">    </span>(cron)<span class="dim">     </span>+ rule engine<span class="dim">   │
+│        │                                                          │
+│        └──────────────► </span><span class="green">Binance Agent Native</span><span class="dim">                       │
+│                          </span>(MCP / Wallet / x402 / Skill Hub)<span class="dim">        │
+│                                                                  │
+│   </span>SQLite (.scout.db)<span class="dim">: sessions / messages / settings / memory    │
+└──────────────────────────────────────────────────────────────────┘</span></pre>
+  </section>
+
+  <section id="install">
+    <h2>本地快速开始</h2>
+    <p class="h2-sub">Python 3.11+ · Node 18+ · 一个命令起服务。</p>
+    <div class="install">
+      <ol>
+        <li>克隆：<code>git clone https://github.com/xinyuzjj/binance-agent-os-scout.git</code></li>
+        <li>后端：<code>python -m venv .venv &amp;&amp; .venv\Scripts\activate &amp;&amp; pip install -r requirements.txt</code></li>
+        <li>前端：<code>cd frontend &amp;&amp; npm install &amp;&amp; npm run build &amp;&amp; cd ..</code></li>
+        <li>启动：<code>.venv\Scripts\python -m uvicorn desktop_app:app --host 127.0.0.1 --port 8080</code></li>
+        <li>打开：<code>http://127.0.0.1:8080</code></li>
+      </ol>
+      <p style="margin-top:16px; color:var(--dim);">
+        公开行情扫描与基础分析无需任何凭据。<br />
+        接入真实交易 / LLM / MCP / Agentic Wallet 时，分别在「设置」「MCP」「钱包」面板按引导填写或扫码。
+      </p>
+    </div>
+  </section>
+
+  <footer>
+    <div><span class="hack">Binance Agent OS Mini Hackathon · Track A</span> · 截止 2026-09-08 23:59 UTC</div>
+    <div>本项目为 Hackathon 演示，非投资建议 · MIT License</div>
+  </footer>
+
+</div>
+
+</body>
+</html>

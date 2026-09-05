@@ -1,0 +1,9 @@
+{
+  "name": "scout-w3-bridge",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@binance-web3/wallet": "^12.1.2"
+  }
+}
