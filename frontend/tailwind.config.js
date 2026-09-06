@@ -5,23 +5,24 @@ export default {
     extend: {
       colors: {
         // Hermes Quant_Node v2.4.9 palette
-        canvas: "#0B0E11",
-        card: "#181A20",
-        elevated: "#1E2329",
-        line: "#2B313A",
-        active: "#474D57",
+        // 颜色走 CSS 变量（rgb 分量），让 Tailwind 工具类 + opacity 修饰符随 data-theme 联动
+        canvas: "rgb(var(--canvas-rgb) / <alpha-value>)",
+        card: "rgb(var(--card-rgb) / <alpha-value>)",
+        elevated: "rgb(var(--elevated-rgb) / <alpha-value>)",
+        line: "rgb(var(--line-rgb) / <alpha-value>)",
+        active: "rgb(var(--active-rgb) / <alpha-value>)",
         ink: {
-          DEFAULT: "#EAECEF",
-          dim: "#9AA4B2",
-          mute: "#6E7A8A",
+          DEFAULT: "rgb(var(--ink-rgb) / <alpha-value>)",
+          dim: "rgb(var(--ink-dim-rgb) / <alpha-value>)",
+          mute: "rgb(var(--ink-mute-rgb) / <alpha-value>)",
         },
         gold: {
-          DEFAULT: "#F0B90B",
-          soft: "#FCD535",
-          deep: "#FFD87F",
+          DEFAULT: "rgb(var(--gold-rgb) / <alpha-value>)",
+          soft: "rgb(var(--gold-soft-rgb) / <alpha-value>)",
+          deep: "rgb(var(--gold-deep-rgb, 255 216 127) / <alpha-value>)",
         },
-        green: "#0ECB81",
-        red: "#F6465D",
+        green: "rgb(var(--green-rgb) / <alpha-value>)",
+        red: "rgb(var(--red-rgb) / <alpha-value>)",
       },
       fontFamily: {
         sans: ['"Inter"', '"PingFang SC"', '"Microsoft YaHei"', "system-ui", "sans-serif"],

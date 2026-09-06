@@ -5,6 +5,29 @@ import { useTheme } from "../theme/theme";
 
 export type NavId = "chat" | "markets" | "wallet" | "skills" | "cex" | "council" | "settings" | "memory";
 
+// 仅当 desktop（preload 暴露了 bazzWindow）时显示窗口控制按钮
+function WindowControls() {
+  const w: any = (typeof window !== "undefined") ? (window as any) : null;
+  if (!w?.bazzWindow) return null;
+  const btn = "w-9 h-9 flex items-center justify-center rounded-md text-ink-dim hover:bg-elevated hover:text-ink transition-colors app-no-drag";
+  const close = "w-9 h-9 flex items-center justify-center rounded-md text-ink-dim hover:bg-red-500/85 hover:text-white transition-colors app-no-drag";
+  return (
+    <div className="flex items-center gap-0.5 ml-1">
+      <button onClick={() => w.bazzWindow.minimize()} className={btn} title="最小化" aria-label="最小化">
+        <svg width="10" height="10" viewBox="0 0 10 10"><rect x="1" y="5" width="8" height="1" fill="currentColor"/></svg>
+      </button>
+      <button onClick={() => w.bazzWindow.toggleMaximize()} className={btn} title="最大化" aria-label="最大化">
+        <svg width="10" height="10" viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1"/></svg>
+      </button>
+      <button onClick={() => w.bazzWindow.close()} className={close} title="关闭" aria-label="关闭">
+        <svg width="10" height="10" viewBox="0 0 10 10">
+          <path d="M1.5 1.5 L8.5 8.5 M8.5 1.5 L1.5 8.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" fill="none"/>
+        </svg>
+      </button>
+    </div>
+  );
+}
+
 export function TopBar({
   nav, setNav, onMemory, llmReady,
 }: {
@@ -28,7 +51,7 @@ export function TopBar({
   const otherLocaleLabel = locale === "zh" ? "EN" : "中";
 
   return (
-    <header className="sticky top-0 z-40 border-b border-line bg-canvas/85 backdrop-blur-md">
+    <header className="sticky top-0 z-40 border-b border-line bg-canvas/85 backdrop-blur-md app-drag">
       <div className="flex items-center gap-3 px-4 h-14">
         {/* Brand left */}
         <div className="flex items-center gap-2.5 shrink-0">
@@ -40,7 +63,7 @@ export function TopBar({
         </div>
 
         {/* Nav center */}
-        <nav className="flex items-center gap-0.5 mx-auto px-2 py-1 rounded-lg bg-elevated/40 border border-line">
+        <nav className="flex items-center gap-0.5 mx-auto px-2 py-1 rounded-lg bg-elevated/40 border border-line app-no-drag">
           {NAV.map(n => (
             <button key={n.id}
               onClick={() => setNav(n.id)}
@@ -54,7 +77,7 @@ export function TopBar({
         </nav>
 
         {/* Tools right */}
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0 app-no-drag">
           <button onClick={onMemory}
             className={`pill ${nav === "memory" ? "pill-gold" : "pill-dim hover:bg-elevated"} transition-colors`}>
             <I.Memory size={12} /> {t("topbar.memory")}
@@ -87,6 +110,9 @@ export function TopBar({
 
           <div className="w-7 h-7 rounded-full bg-elevated border border-line flex items-center justify-center font-mono text-[11px] text-gold">Q</div>
         </div>
+
+        {/* 窗口控制按钮（仅桌面版显示） */}
+        <WindowControls />
       </div>
     </header>
   );

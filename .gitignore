@@ -37,11 +37,8 @@ workspace/
 .workbuddy/
 
 # ---- Internal / personal ----
-# desktop shell (excluded by user request — desktop version not in this web release)
+# legacy pywebview shell (superseded by the Electron desktop app in /electron)
 app.py
-electron/
-start-desktop.bat
-start-dev.bat
 
 # legacy CLI demos (kept as historical references only; web app is the product)
 demo.py

@@ -205,7 +205,7 @@ def account_summary(keys: Optional[Tuple[str, str]] = None, force: bool = False)
             return {"status": "error", "code": "ip_or_permission",
                     "message": "币安拒绝了这把 Key（-2015 Invalid API-key, IP, or permissions）。"
                                "通常不是密钥格式问题，而是下面三者之一未满足：",
-                    "hint": "① IP 白名单：在 API 管理里把出口 IP 117.170.200.178 加入该 Key 白名单（或临时关闭 IP 限制）；"
+                    "hint": "① IP 白名单：在 API 管理里把当前机器出口 IP 加入该 Key 白名单（或临时关闭 IP 限制）；"
                             "② API Key 是否复制完整（应 64 字符）且与 Secret 配对；"
                             "③ 权限是否开启：现货读取/交易、合约等要按需勾选（提现保持关闭）。",
                     "masked_key": masked_key()}

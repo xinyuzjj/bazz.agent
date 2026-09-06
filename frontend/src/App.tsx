@@ -45,6 +45,8 @@ function AppInner() {
   // 跨视图下单标的（行情/妖币/对话 → CEX；妖币可带现货/合约+方向预设）
   const [tradeSymbol, setTradeSymbol] = useState<string | undefined>(undefined);
   const [tradeMode, setTradeMode] = useState<"spot-long" | "futures-long" | "futures-short" | undefined>(undefined);
+  // 跨视图「提问 Agent」消息：行情页下单按钮 → 切到对话并自动发问
+  const [pendingChatMsg, setPendingChatMsg] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     api.settings().then(setSettings).catch(() => {});
@@ -68,6 +70,22 @@ function AppInner() {
     setNav("cex");
   };
 
+  // 从行情按钮（现货买入 / 合约做多 / 合约做空）跳到对话，并向 Agent 提问仓位建议
+  const goChatOrder = (symbol: string, mode: "spot-long" | "futures-long" | "futures-short") => {
+    const tag =
+      mode === "spot-long"      ? "现货买入"
+      : mode === "futures-long" ? "合约做多"
+      : "合约做空";
+    const msg = `我想对 ${symbol} 做${tag}，请结合行情页当前价位 / 7日与30日趋势 / 成交量与持仓变化，给出仓位建议：` +
+      (mode === "spot-long"
+        ? "建议占总资金比例、入场策略（市价/限价/分批）、目标价、止损价、止盈分批。"
+        : "建议杠杆倍数（保守）、仓位占比、强平价、止损、止盈分批、风险收益比。");
+    setPendingChatMsg(msg);
+    setTradeSymbol(undefined);
+    setTradeMode(undefined);
+    setNav("chat");
+  };
+
   const openMemory = () => { setNav("memory"); setMemoryOpen(true); };
   const closeMemory = () => { setMemoryOpen(false); setNav("chat"); };
 
@@ -82,8 +100,8 @@ function AppInner() {
 
   const renderView = () => {
     try {
-      if (nav === "chat") return <ChatView convId={convId} conversations={conversations} setConversations={setConversations} setConvId={setConvId} onTrade={goTrade} onNav={(n) => setNav(n as any)} />;
-      if (nav === "markets") return <MarketsView onTrade={goTrade} onOrder={goTrade} />;
+      if (nav === "chat") return <ChatView convId={convId} conversations={conversations} setConversations={setConversations} setConvId={setConvId} onTrade={goTrade} onNav={(n) => setNav(n as any)} pendingMsg={pendingChatMsg} onPendingConsumed={() => setPendingChatMsg(undefined)} />;
+      if (nav === "markets") return <MarketsView onTrade={goTrade} onOrder={goChatOrder} />;
       if (nav === "wallet") return <WalletView />;
       if (nav === "skills") return <Web3SkillsView />;
       if (nav === "cex") return (

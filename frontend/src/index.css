@@ -12,6 +12,21 @@
 @tailwind utilities;
 
 :root {
+  /* rgb 分量（供 Tailwind 颜色 + opacity 修饰符使用，如 bg-canvas/85） */
+  --canvas-rgb: 11 14 17;
+  --card-rgb: 24 26 32;
+  --elevated-rgb: 30 35 41;
+  --line-rgb: 43 49 58;
+  --active-rgb: 71 77 87;
+  --ink-rgb: 234 236 239;
+  --ink-dim-rgb: 154 164 178;
+  --ink-mute-rgb: 110 122 138;
+  --gold-rgb: 240 185 11;
+  --gold-soft-rgb: 252 213 53;
+  --green-rgb: 14 203 129;
+  --red-rgb: 246 70 93;
+
+  /* 旧 hex 变量（保留给纯 CSS 直接引用） */
   --canvas: #0b0e11;
   --card: #181a20;
   --elevated: #1e2329;
@@ -22,6 +37,7 @@
   --ink-mute: #6e7a8a;     /* 提亮：辅助文字更可读（原 #5e6673） */
   --gold: #f0b90b;
   --gold-soft: #fcd535;
+  --gold-deep: #ffd87f;
   --green: #0ecb81;
   --red: #f6465d;
 }
@@ -52,6 +68,10 @@ body {
 
 /* Tabular numbers globally on metrics (DESIGN: enforce tnum) */
 .mono, .tabular { font-variant-numeric: tabular-nums; }
+
+/* Electron frameless：顶栏接管拖动，按钮显式 no-drag */
+.app-drag { -webkit-app-region: drag; }
+.app-no-drag, .app-no-drag * { -webkit-app-region: no-drag; }
 
 /* Glassmorphism card tier 1 — 80% opacity + 12px blur + 1px line */
 .glass {
@@ -319,6 +339,21 @@ input[type=range]::-moz-range-thumb {
 
 /* ============== 浅色主题（白底黑字）============== */
 [data-theme="light"] {
+  /* rgb 分量（让 Tailwind 颜色 + opacity 全部跟随） */
+  --canvas-rgb: 245 246 248;
+  --card-rgb: 255 255 255;
+  --elevated-rgb: 238 240 244;
+  --line-rgb: 216 221 227;
+  --active-rgb: 170 177 187;
+  --ink-rgb: 26 29 34;
+  --ink-dim-rgb: 74 81 96;
+  --ink-mute-rgb: 107 114 128;
+  --gold-rgb: 200 156 8;
+  --gold-soft-rgb: 212 168 15;
+  --green-rgb: 10 168 97;
+  --red-rgb: 214 50 74;
+
+  /* 旧 hex 变量 */
   --canvas: #f5f6f8;
   --card: #ffffff;
   --elevated: #eef0f4;
@@ -329,6 +364,7 @@ input[type=range]::-moz-range-thumb {
   --ink-mute: #6b7280;     /* 辅助文字 */
   --gold: #c89c08;         /* 略压暗：浅底上更可读 */
   --gold-soft: #d4a80f;
+  --gold-deep: #b88a06;
   --green: #0aa861;
   --red: #d6324a;
 }

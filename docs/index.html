@@ -184,8 +184,11 @@
     <div class="logo">BAZZ<span class="dot">·</span>AGENT</div>
     <div class="grow"></div>
     <span class="pill gold">Binance Agent OS · Track A</span>
+    <a class="btn" href="#download">下载</a>
     <a class="btn" href="#capabilities">能力</a>
     <a class="btn" href="#install">快速开始</a>
+    <a class="btn" href="https://github.com/xinyuzjj/bazz.agent/blob/main/README.zh-CN.md">中文</a>
+    <a class="btn" href="https://github.com/xinyuzjj/bazz.agent/blob/main/README.md">EN</a>
     <a class="btn primary" href="https://github.com/xinyuzjj/bazz.agent">★ GitHub</a>
   </div>
 </nav>
@@ -196,17 +199,19 @@
     <span class="eyebrow">Hackathon submission · Binance Agent OS · Track A</span>
     <h1><span class="grad">Agent OS Alpha Scout</span></h1>
     <p class="tag">
-      一个 web 端的 Binance 原生 AI 交易副驾 —— 把 <b>MCP Server</b>、<b>Agentic Wallet</b>、<b>x402/B402</b>、<b>Skill Hub</b> 四块官方能力
-      整合成「<b>扫描 · 分析 · 建议 · 人工确认 · 执行</b>」的闭环。
+      币安原生的 AI 交易副驾（桌面版 + Web 版）—— 把 <b>MCP Server</b>、<b>Agentic Wallet</b>、<b>x402/B402</b>、<b>Skill Hub</b> 四块官方能力
+      整合成「<b>扫描 · 分析 · 建议 · 人工确认 · 执行</b>」的闭环。双击即跑的
+      <b>Windows 便携版</b>无需 Python / Node。
     </p>
     <div class="cta">
-      <a class="primary" href="https://github.com/xinyuzjj/bazz.agent">在 GitHub 查看 →</a>
-      <a href="#install">本地快速开始</a>
+      <a class="primary" href="#download">↓ 下载 Windows 便携版</a>
+      <a href="https://github.com/xinyuzjj/bazz.agent">在 GitHub 查看 →</a>
+      <a href="#install">从源码运行</a>
       <a href="#capabilities">四块能力</a>
     </div>
     <ul class="meta">
+      <li><b>v1.0.0</b><span>桌面 + Web 双形态</span></li>
       <li><b>14</b><span>官方 Binance Skills</span></li>
-      <li><b>5</b><span>内置 Bot Persona</span></li>
       <li><b>0 key</b><span>即可跑市场扫描</span></li>
       <li><b>100%</b><span>下单 / 支付需确认</span></li>
     </ul>
@@ -290,9 +295,33 @@
 └──────────────────────────────────────────────────────────────────┘</span></pre>
   </section>
 
+  <section id="download">
+    <h2>下载桌面版（Windows）</h2>
+    <p class="h2-sub">免安装便携版：解压 → 双击 BAZZ.AGENT.exe → 开箱即用。</p>
+    <div class="install">
+      <p style="margin-top:0;">
+        <code style="font-size:14px; padding:4px 10px;">BAZZ.AGENT-v1.0.0-win32-x64-portable.zip</code>
+        <span style="display:inline-block; margin-left:10px;">
+          <a class="btn primary" style="display:inline-block; padding:8px 18px; border-radius:10px;" href="https://github.com/xinyuzjj/bazz.agent/releases/latest/download/BAZZ.AGENT-v1.0.0-win32-x64-portable.zip">↓ 下载便携版（约 155 MB）</a>
+        </span>
+      </p>
+      <ol style="margin-top:14px;">
+        <li>下载 zip → 解压到任意目录（建议英文路径）</li>
+        <li>双击 <code>BAZZ.AGENT.exe</code>，首次启动等 3–5 秒后端预热</li>
+        <li>数据（<code>.scout.db</code>）在 exe 旁边生成——整个文件夹可随意搬走</li>
+        <li>窗口无边框：按住顶栏拖动，最小化/最大化/关闭在顶栏最右（─ / □ / ✕）</li>
+      </ol>
+      <p style="margin-top:14px; color:var(--dim);">
+        内置 Electron + PyInstaller 冻结后端，无需 Python / Node；支持
+        <b style="color:var(--text)">深色/浅色主题</b>与<b style="color:var(--text)">中/英文</b>一键切换（重启记住）。
+        Windows 10/11 x64。macOS / Linux 请从源码运行。
+      </p>
+    </div>
+  </section>
+
   <section id="install">
-    <h2>本地快速开始</h2>
-    <p class="h2-sub">Python 3.11+ · Node 18+ · 一个命令起服务。</p>
+    <h2>本地快速开始（从源码）</h2>
+    <p class="h2-sub">Python 3.11+ · Node 18+ · 一条命令起服务。</p>
     <div class="install">
       <ol>
         <li>克隆：<code>git clone https://github.com/xinyuzjj/bazz.agent.git</code></li>
@@ -310,7 +339,7 @@
 
   <footer>
     <div><span class="hack">Binance Agent OS Mini Hackathon · Track A</span> · 截止 2026-09-08 23:59 UTC</div>
-    <div>本项目为 Hackathon 演示，非投资建议 · MIT License</div>
+    <div>本项目为 Hackathon 演示，非投资建议 · MIT License · <a href="https://github.com/xinyuzjj/bazz.agent/blob/main/README.zh-CN.md">中文说明</a> / <a href="https://github.com/xinyuzjj/bazz.agent/blob/main/README.md">English</a></div>
   </footer>
 
 </div>

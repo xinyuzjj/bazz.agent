@@ -32,10 +32,11 @@ const AVATARS = ["🤖", "🧭", "🦊", "💰", "🛡️", "🧠", "⚡", "🐙
 const COLORS = ["#F0B90B", "#0ECB81", "#F6465D", "#8B5CF6", "#3B82F6", "#EC4899", "#5E6673", "#F59E0B"];
 
 export function ChatView({
-  convId, conversations, setConversations, setConvId, onTrade, onNav,
+  convId, conversations, setConversations, setConvId, onTrade, onNav, pendingMsg, onPendingConsumed,
 }: {
   convId: string | null; conversations: any[]; setConversations: (c: any[]) => void; setConvId: (id: string | null) => void;
   onTrade?: (symbol: string) => void; onNav?: (nav: string) => void;
+  pendingMsg?: string; onPendingConsumed?: () => void;
 }) {
   const t = useT();
   const [messages, setMessages] = useState<ChatMsg[]>([]);
@@ -359,6 +360,16 @@ export function ChatView({
   useEffect(() => { loadAvailableModels(); /* eslint-disable-line */ }, [convId, conversations?.length]);
   // 全能模式：默认开，启动时按用户上次设置加载
   useEffect(() => { api.getAutoExec().then((v) => setAutoExec(v !== false)); }, []);
+
+  // 跨视图触发：行情按钮等 → 跳到对话时附带待发消息，到位后自动 send
+  useEffect(() => {
+    if (!pendingMsg) return;
+    const t = pendingMsg;
+    onPendingConsumed?.();
+    // 给 ChatView 一次状态 tick 让 streaming/uploading 检测稳定
+    setTimeout(() => { try { send(t); } catch {} }, 50);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingMsg]);
 
   const openAgentEditor = (b: Agent | "new") => {
     setEditBot(b);

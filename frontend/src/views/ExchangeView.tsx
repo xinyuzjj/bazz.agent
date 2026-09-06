@@ -184,7 +184,7 @@ export function ExchangeView({ initialSymbol, initialTab, initialSide, halted, o
             )}
             {cexOk && <div className="rounded-md border border-green/40 bg-green/5 px-3 py-2 font-mono text-[11px] text-green leading-relaxed">{cexOk}</div>}
             <div className="font-mono text-[10px] text-ink-mute leading-relaxed">
-              ⚠ 密钥仅保存本机 settings，提交前先用 <code className="text-gold">/api/v3/account</code> 真实校验；建议 API Key 绑定受信 IP（出口 <code className="text-gold">117.170.200.178</code>）、<b className="text-ink-dim">保持提现权限关闭</b>，只勾选需要的现货/合约/闪兑权限。
+              ⚠ 密钥仅保存本机 settings，提交前先用 <code className="text-gold">/api/v3/account</code> 真实校验；<b className="text-ink-dim">保持提现权限关闭</b>，只勾选需要的现货/合约/闪兑权限。
             </div>
           </div>
         )}
