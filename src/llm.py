@@ -3,7 +3,8 @@
 设计参照 Hermes：
 - 配置存于本地 state settings("llm") = JSON {"provider","base_url","api_key","model"}。
 - 走标准 OpenAI Chat Completions 协议（/chat/completions），天然兼容
-  OpenAI / DeepSeek / Moonshot / 硅基流动 / Qwen / OpenRouter / 本地 Ollama 等。
+  OpenAI / DeepSeek / Anthropic / Google / xAI / Moonshot / 硅基流动 / Qwen / 智谱 /
+  Mistral / OpenRouter / 本地 Ollama 等。
 - 支持 function calling（tools + tool_calls 循环）：这是「真 LLM 接上」的核心——
   Agent 让 LLM 决定调用哪个工具（扫描/风险/下单方案/支付/Skills…），再合成最终回答。
 - 无 key 时 chat()/stream_chat()/chat_with_tools() 返回 None，调用方降级到规则路由。
@@ -28,34 +29,72 @@ except Exception:
 
 
 # provider 预设（base_url 去掉尾部 /v1 之外的路径统一由模型端点拼接）
-# DeepSeek 官方 API 现用模型名：deepseek-chat(主力) / deepseek-reasoner(思考)。
-# （部分第三方网关自命名为 v4-flash/v4-pro 等，见 _LEGACY_MODEL_MAP 反向兜底。）
+# 模型名按 2026-09 各厂商官方 API 现役目录核实（只列可用、不列已退役），
+# 与前端 SettingsView.tsx 的 LLM_PROVIDERS presets 完全对齐。
+# 备注：
+# - DeepSeek 官方 API 现用名 deepseek-v4-pro / deepseek-v4-flash（+vision-exp）；
+#   旧的 deepseek-chat / deepseek-reasoner 已于 2026-07-24 下线，遇历史配置由 _LEGACY_MODEL_MAP 自动归一到 v4 系列。
+#   第三方网关（如硅基流动）仍以「deepseek-ai/DeepSeek-V4-*」组织前缀托管同名模型，详见 siliconflow 预设。
+# - Anthropic / Google 官方均提供 OpenAI 兼容端点（/chat/completions），可直接接入。
+# - 无 key 或拉目录失败时，设置面板会回退到下列 presets 作为可选手动模型。
 PROVIDERS = {
-    "openai":      {"base_url": "https://api.openai.com/v1",       "models": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "o3-mini"]},
-    "deepseek":    {"base_url": "https://api.deepseek.com/v1",      "models": ["deepseek-chat", "deepseek-reasoner"]},
-    "moonshot":    {"base_url": "https://api.moonshot.cn/v1",       "models": ["moonshot-v1-8k", "moonshot-v1-32k", "kimi-k2-0711-preview"]},
-    "siliconflow": {"base_url": "https://api.siliconflow.cn/v1",    "models": ["Qwen/Qwen2.5-72B-Instruct", "deepseek-ai/DeepSeek-V3", "Pro/deepseek-ai/DeepSeek-R1"]},
-    "qwen":        {"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "models": ["qwen-max", "qwen-plus", "qwen-turbo"]},
-    "zhipu":       {"base_url": "https://open.bigmodel.cn/api/paas/v4", "models": ["glm-4-plus", "glm-4-air", "glm-4-flash"]},
-    "openrouter":  {"base_url": "https://openrouter.ai/api/v1",     "models": ["openai/gpt-4o", "anthropic/claude-3.5-sonnet", "google/gemini-pro-1.5"]},
-    "nous":        {"base_url": "https://api.nousresearch.com/v1",  "models": ["hermes-3-llama-3.1-405b", "nous-hermes-2-mistral-7b-dpo"]},
-    "ollama":      {"base_url": "http://localhost:11434/v1",        "models": ["llama3.1", "qwen2.5"]},
-    "custom":      {"base_url": "", "models": []},
+    # OpenAI：GPT-5.6 世代(2026-09-03 发布) + 5.5/5.4 + codex/o3；gpt-4o/4.1/o3-mini/o1 等已退役
+    "openai":   {"base_url": "https://api.openai.com/v1", "models": [
+        "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5",
+        "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.3-codex", "o3"]},
+    # Anthropic：Claude Opus 5 / Sonnet 5 / Haiku 4.5（Opus 4、Sonnet 4 已于 2026-06 退役）
+    "anthropic": {"base_url": "https://api.anthropic.com/v1", "models": [
+        "claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5"]},
+    # Google Gemini：OpenAI 兼容端点；3.1 Pro 为旗舰，Flash 线已迭代到 3.6/3.5
+    "google":   {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "models": [
+        "gemini-3.1-pro", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3-flash", "gemini-3.1-flash-lite"]},
+    # xAI Grok：OpenAI 兼容端点（2026-08 起品牌 SpaceXAI，API 域名不变）
+    "xai":      {"base_url": "https://api.x.ai/v1", "models": [
+        "grok-4.6", "grok-4.5", "grok-4.3"]},
+    # DeepSeek 官方 API 现用名（2026-09 现役，1M ctx，Thinking/Non-Thinking 切换）：
+    # - deepseek-v4-pro (V4-Pro-0813, GA)
+    # - deepseek-v4-flash (V4-Flash-0731, public beta)
+    # - deepseek-v4-flash-vision-exp (实验性多模态)
+    # 旧别名 deepseek-chat / deepseek-reasoner 已于 2026-07-24 15:59 UTC 下线，
+    # 在官方端点上继续发请求会 404；详见 _LEGACY_MODEL_MAP 自动迁移。
+    "deepseek": {"base_url": "https://api.deepseek.com/v1", "models": [
+        "deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"]},
+    # Moonshot：moonshot-v1 全系与 kimi-k2.5 已于 2026-08-31 下线，现役 kimi-k3 家族
+    "moonshot": {"base_url": "https://api.moonshot.cn/v1", "models": [
+        "kimi-k3", "kimi-k2.7-code", "kimi-k2.7-code-highspeed", "kimi-k2.6"]},
+    # 阿里云百炼：qwen-max/plus/turbo 为自动指向最新版的长期别名
+    "qwen":     {"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "models": [
+        "qwen-max", "qwen-plus", "qwen-turbo"]},
+    # 智谱 BigModel：GLM-5.3 旗舰 / 5.3-Flash 原生多模态（glm-4-plus/air/flash 已退役）
+    "zhipu":    {"base_url": "https://open.bigmodel.cn/api/paas/v4", "models": [
+        "glm-5.3", "glm-5.3-flash", "glm-5.2", "glm-5", "glm-4.7"]},
+    "mistral":  {"base_url": "https://api.mistral.ai/v1", "models": [
+        "mistral-large-latest", "mistral-medium-latest", "mistral-small-latest", "codestral-latest"]},
+    # 硅基流动：第三方托管目录用「组织/模型」全名；前缀以 /models 实际返回为准（可用“拉取模型”刷新）
+    "siliconflow": {"base_url": "https://api.siliconflow.cn/v1", "models": [
+        "deepseek-ai/DeepSeek-V4-Pro", "deepseek-ai/DeepSeek-V4-Flash",
+        "Qwen/Qwen3.6-27B", "Qwen/Qwen3.6-35B-A3B",
+        "Pro/moonshotai/Kimi-K2.6", "Pro/zai-org/GLM-5.2"]},
+    # OpenRouter：聚合网关，前缀「厂商/模型」；完整目录请用“拉取模型”
+    "openrouter": {"base_url": "https://openrouter.ai/api/v1", "models": [
+        "openai/gpt-5.6-sol", "anthropic/claude-sonnet-5", "google/gemini-3.1-pro", "x-ai/grok-4.6"]},
+    "ollama":   {"base_url": "http://localhost:11434/v1", "models": [
+        "qwen3", "llama3.3", "deepseek-r1", "gemma3"]},
+    "custom":   {"base_url": "", "models": []},
 }
 
 
 _LEGACY_MODEL_MAP = {
-    # 兜底：把第三方/网关命名的 v4 系列名归一到 DeepSeek 官方现名（官方 API 不识别 v4 名）。
-    # deepseek-chat 为主力对话模型；deepseek-reasoner 为深度思考模型。
-    "deepseek-v4-flash": "deepseek-chat",
-    "deepseek-v4-pro": "deepseek-reasoner",
-    "deepseek-v4-flash-vision-exp": "deepseek-chat",
+    # 兜底：把官方 DeepSeek 端点上已下线（2026-07-24 后 404）的别名归一到现役 v4 系列。
+    # 第三方网关（如硅基流动）自有命名 deepseek-ai/DeepSeek-V4-* 不走此映射，避免误伤。
+    "deepseek-chat": "deepseek-v4-flash",
+    "deepseek-reasoner": "deepseek-v4-pro",
 }
 
 
 def _is_official_deepseek(cfg: dict) -> bool:
     """是否官方 DeepSeek 端点（api.deepseek.com）。仅官方端才做退役别名迁移，
-    避免误伤第三方网关自行命名的 deepseek-reasoner。"""
+    避免误伤第三方网关托管的 deepseek-ai/DeepSeek-V4-*。"""
     try:
         return (str(cfg.get("provider", "")).lower() == "deepseek") or \
                ("api.deepseek.com" in str(cfg.get("base_url", "") or ""))
@@ -65,7 +104,7 @@ def _is_official_deepseek(cfg: dict) -> bool:
 
 def _map_legacy_model(model: str, cfg: dict = None) -> str:
     """把已退役/过期的官方模型别名映射到现名（仅官方 DeepSeek 端点）。
-    第三方网关自行命名的 deepseek-reasoner 不受影响。"""
+    第三方网关托管的 deepseek-ai/DeepSeek-V4-* 不受影响。"""
     if not model:
         return model
     if not cfg or not _is_official_deepseek(cfg):
@@ -86,7 +125,7 @@ def get_llm_config() -> dict:
     cfg.setdefault("provider", "openai")
     preset = PROVIDERS.get(cfg["provider"], {})
     cfg.setdefault("base_url", preset.get("base_url", ""))
-    cfg.setdefault("model", (preset.get("models") or ["gpt-4o-mini"])[0])
+    cfg.setdefault("model", (preset.get("models") or ["gpt-5.4-mini"])[0])
     cfg.setdefault("api_key", os.getenv("LLM_API_KEY", ""))   # 兼容旧的 LLM_API_KEY 直给
     cfg.setdefault("key_env", "")                             # key_env：api_key 留空时从该环境变量读
     if not isinstance(cfg.get("backup_models"), list):
@@ -199,7 +238,7 @@ def cfg_from_snapshot(snap: dict = None) -> dict:
 
 def _model_chain(cfg: dict) -> List[str]:
     """主模型 + 备用模型链（Hermes fallback：429/5xx/超时自动切换）。
-    官方 DeepSeek 端点上自动把 v4 系列网关名归一到官方现名（deepseek-chat/reasoner）。"""
+    官方 DeepSeek 端点上自动把已下线别名（deepseek-chat/deepseek-reasoner）归一到 v4 现名（deepseek-v4-flash/v4-pro）。"""
     chain = [cfg.get("model") or ""]
     for m in cfg.get("backup_models") or []:
         if m and m not in chain:
@@ -211,7 +250,7 @@ def _model_chain(cfg: dict) -> List[str]:
         if m not in out:
             out.append(m)
     return out
-    return chain or ["gpt-4o-mini"]
+    return chain or ["gpt-5.4-mini"]
 
 
 def _chain_for(cfg: dict, task: str = None) -> List[str]:
@@ -316,6 +355,7 @@ def _is_reasoning_model(model: str) -> bool:
         return False
     n = model.lower()
     return any(k in n for k in ("reasoner", "-thinking", "thinking", "deepseek-r1",
+                                "deepseek-v4-pro",
                                 "o1-", "o1.", "o3-", "o3.", "o4-", "gpt-5", "qwq"))
 
 
@@ -433,6 +473,29 @@ TOOLS: List[Dict[str, Any]] = [
             "name": "onchain_ops",
             "description": "介绍链上自动化（Agentic Wallet + Skills）。用户问‘钱包/链上/defi’时调用。",
             "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "meme_watch",
+            "description": ("妖币雷达 / 启动前埋伏：**直接调取行情模块 Monster Radar 同源数据**"
+                            "(scanner.get_ignition_coins + get_monster_coins，与「行情→妖币雷达」"
+                            "页面展示 100% 一致)。\n"
+                            "**mode 必须按用户语义传**（不传则默认 both）：\n"
+                            "- ignition：用户说『启动前/埋伏/蓄势/点火前/吸筹/二买点』→ 仅返回 ignition(埋伏候选)\n"
+                            "- takeoff：用户说『起飞中/追涨/已爆发/拉升中/暴涨中/加速/起飞』→ 仅返回 takeoff(已爆发跟踪)\n"
+                            "- both：『妖币/meme/百倍币/十倍币/妖币雷达』等无明确阶段 → 两组都给\n"
+                            "**不要**自己拿全市场数据二次筛，也**不要**给 scan_market 的 24h 涨跌幅榜"
+                            "（那是已爆发币）。拿到列表后可继续用 market_quote 查某币实时行情、"
+                            "propose_trade 给带止损/止盈的下单方案（需用户确认才真实下单）。"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "mode": {"type": "string", "enum": ["ignition", "takeoff", "both"],
+                             "description": "按用户语义选 ignition/takeoff/both；无明确阶段默认 both"},
+                },
+            },
         },
     },
     {
@@ -596,7 +659,9 @@ def test_connection(base_url: str = "", api_key: str = "", model: str = "", prov
     cfg = _materialize()
     base_url = base_url or cfg.get("base_url") or PROVIDERS.get(provider or cfg.get("provider", ""), {}).get("base_url", "")
     api_key = api_key or cfg.get("api_key", "")
-    model = model or cfg.get("model", "") or "gpt-4o-mini"
+    eff_provider = (provider or cfg.get("provider", "") or "").lower()
+    default_model = "deepseek-v4-flash" if eff_provider == "deepseek" else "gpt-5.4-mini"
+    model = model or cfg.get("model", "") or default_model
     # 官方 DeepSeek 端点：把 UI/配置里残留的退役别名迁移到现名再测
     if _is_official_deepseek({"provider": provider or cfg.get("provider", ""), "base_url": base_url}):
         model = _map_legacy_model(model, {"provider": "deepseek", "base_url": base_url})
@@ -622,7 +687,7 @@ def test_connection(base_url: str = "", api_key: str = "", model: str = "", prov
     except Exception as e:
         first = f"阶段1 /models 异常：{type(e).__name__}: {str(e)[:200]}"
     # 2) 试一次极小补全（部分 provider 无 /models，或 model 是目录外的可用别名，
-    #    例如 DeepSeek 的 deepseek-chat：/models 不再列出但仍可用 → 以 chat 实测为准）
+    #    例如 DeepSeek 的 deepseek-v4-flash：/models 不再列出但仍可用 → 以 chat 实测为准）
     try:
         r = requests.post(base + "/chat/completions",
             headers=headers,
