@@ -49,6 +49,25 @@ and they persist across restarts.
 
 ---
 
+## ⭐ Features at a glance
+
+| | What you get |
+|---|---|
+| 📡 **Real-time market radar** | Full-universe volatility scanner · Monster Radar breakout windows · 24h auto-alerts · live BTC/ETH/SOL/BNB quotes. No API key needed. |
+| 🗣 **Conversational agent cockpit** | SSE/NDJSON streaming chat with live tool cards · file & voice input · multi-provider LLM with a deterministic rule-engine fallback that works fully offline. |
+| ✅ **Human-in-the-loop by design** | Every trade, transfer and signed payment is gated behind an explicit `confirm` card in the chat — nothing sensitive ever executes silently. |
+| 🧠 **Long-term memory** | Cross-session preferences & risk anchors, auto-learned from your conversations, indexed & searchable in the Memory panel. |
+| 👛 **Agentic Wallet (keyless MPC)** | BSC / Ethereum / Base / Solana swaps via `baw`, respecting Binance's official daily caps; private keys never pass through the app. |
+| 💹 **Real CEX trading** | Spot / futures / convert on your actual exchange account through a whitelisted `binance-cli` profile; CEX and Web3 key systems are strictly separated. |
+| 🧩 **Skill Hub + plugins** | 14 official Binance skills pre-installed · intent-driven execution · path-traversal-safe install/run/remove · drop-in plugins. |
+| 💸 **x402 / B402 payments** | Machine-to-machine payments with offline Permit2 EIP-712 signing, verified and settled by the official facilitator. |
+| 📣 **Square publishing** | Post text / article / image / video to Binance Square with a local ledger of everything you published. |
+| 🖥 **Desktop + Web, one codebase** | Frameless Windows portable app (Electron + embedded PyInstaller backend — no Python/Node required) *and* the same cockpit in the browser. |
+| 🌓 **Bilingual & themable** | 中 / EN interface and dark/gold ↔ light theme, each one click in the top bar, remembered across restarts. |
+| 🔒 **Local-first state** | Sessions, memory and config live in a single `.scout.db` next to the app — move the folder, your workspace moves with it. |
+
+---
+
 ## 🚀 Download & run
 
 ### Windows portable (recommended)
