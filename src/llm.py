@@ -399,7 +399,7 @@ TOOLS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "scan_market",
-            "description": "扫描 Binance 全市场行情：在按成交额排序的前 300 个 USDT 现货交易对上动态发现 24h 波动/资金费率异常币种（非固定 20 币），并给出领涨/领跌概况。用户问‘行情/市场/扫描/异常/有什么异动/分析大盘’等时调用，能覆盖任意市值币种。",
+            "description": "扫描 Binance 全市场行情：在按成交额排序的前 300 个 USDT 现货交易对上动态发现 24h 波动/资金费率异常币种（非固定 20 币），并给出领涨/领跌概况。用户问‘行情/市场/扫描/异常/有什么异动/分析大盘’等时调用，能覆盖任意市值币种。\n**同时覆盖 USDT 永续合约维度**：每个币附带其永续资金费率，用户搜『合约/永续/资金费率/哪个合约费率异常/合约代币/查合约行情』也用本工具（输出含每币资金费率）。\n⚠️ 本工具走公开行情接口，**免费、无需任何授权**——不要为此走 mcp_call。",
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -430,7 +430,7 @@ TOOLS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "market_quote",
-            "description": "查询单个交易对的实时价格与波动。参数 symbol 如 BTCUSDT。",
+            "description": "查询单个交易对（USDT 现货或 USDT 永续均可，symbol 如 BTCUSDT / 1000PEPEUSDT）的实时价格、24h 涨跌与永续资金费率。**公开行情接口，免费免授权——不要走 mcp_call**；查不到该交易对时如实说明，可换 scan_market 扫全市场。",
             "parameters": {
                 "type": "object",
                 "properties": {"symbol": {"type": "string", "description": "交易对，如 BTCUSDT"}},
@@ -542,7 +542,7 @@ TOOLS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "mcp_call",
-            "description": "调用 Binance MCP 网关暴露的真实工具（账户/行情/交易等，工具由运行时 tools/list 发现）。参数 server=网关名（默认 binance），tool=工具名，arguments=工具参数对象。",
+            "description": "调用 Binance MCP 网关暴露的**私有鉴权**工具（余额/持仓/账户信息/真实下单/划转/OTC 等，需先完成 OAuth 授权）。\n⚠️ **查询公开行情（价格/24h 波动/资金费率/市场扫描）一律用 scan_market / market_quote**——那是免费公开接口，无需 MCP/OAuth；仅在确实需要账户级私有数据时才调用本工具。参数 server=网关名（默认 binance），tool=工具名，arguments=工具参数对象。",
             "parameters": {
                 "type": "object",
                 "properties": {

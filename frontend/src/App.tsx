@@ -100,21 +100,31 @@ function AppInner() {
 
   const renderView = () => {
     try {
-      if (nav === "chat") return <ChatView convId={convId} conversations={conversations} setConversations={setConversations} setConvId={setConvId} onTrade={goTrade} onNav={(n) => setNav(n as any)} pendingMsg={pendingChatMsg} onPendingConsumed={() => setPendingChatMsg(undefined)} />;
-      if (nav === "markets") return <MarketsView onTrade={goTrade} onOrder={goChatOrder} />;
-      if (nav === "wallet") return <WalletView />;
-      if (nav === "skills") return <Web3SkillsView />;
-      if (nav === "cex") return (
+      // 除 chat 外的活动视图（chat 常驻挂载，见下方）
+      let active: React.ReactNode = null;
+      if (nav === "markets") active = <MarketsView onTrade={goTrade} onOrder={goChatOrder} />;
+      else if (nav === "wallet") active = <WalletView />;
+      else if (nav === "skills") active = <Web3SkillsView />;
+      else if (nav === "cex") active = (
         <ExchangeView key={`${tradeSymbol ?? "cex"}|${tradeMode ?? "def"}`}
           initialSymbol={tradeSymbol}
           initialTab={tradeMode?.startsWith("spot") ? "spot" : "futures"}
           initialSide={tradeMode === "futures-short" ? "SHORT" : "LONG"}
           halted={halted} onPanicHalt={() => setPanicOpen(true)} />
       );
-      if (nav === "council") return <SquarePostView />;
-      if (nav === "settings") return <SettingsView settings={settings} onSaved={setSettings} onNav={(n: any) => setNav(n)} />;
-      if (nav === "memory") return <MemoryOverlay open={memoryOpen} full onClose={closeMemory} />;
-      return null;
+      else if (nav === "council") active = <SquarePostView />;
+      else if (nav === "settings") active = <SettingsView settings={settings} onSaved={setSettings} onNav={(n: any) => setNav(n)} />;
+      else if (nav === "memory") active = <MemoryOverlay open={memoryOpen} full onClose={closeMemory} />;
+      return (
+        <>
+          {/* ChatView 常驻挂载：切到行情/钱包等视图仅隐藏（display:none）而不卸载，
+              正在进行的流式生成、消息列表与 streaming 状态全部保留，切回即可继续看到完整回复 */}
+          <div style={{ display: nav === "chat" ? undefined : "none", height: "100%" }}>
+            <ChatView convId={convId} conversations={conversations} setConversations={setConversations} setConvId={setConvId} onTrade={goTrade} onNav={(n) => setNav(n as any)} pendingMsg={pendingChatMsg} onPendingConsumed={() => setPendingChatMsg(undefined)} />
+          </div>
+          {active}
+        </>
+      );
     } catch (e: any) {
       return (
         <div style={{ padding: 16, color: "#ff9aa8", fontFamily: "monospace", fontSize: 12 }}>

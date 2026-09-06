@@ -156,6 +156,36 @@ def get_24h(symbols) -> dict:
         return {}
 
 
+def get_futures_ticker(symbol: str) -> dict | None:
+    """单币 U 本位永续合约 24h 行情（公开免鉴权）。
+    用于现货端点查不到某币（如仅永续上市 SNDKUSDT 类）时的兜底。
+    返回值与 get_24h 同结构（symbol/lastPrice/priceChangePercent/quoteVolume…）。
+    """
+    try:
+        url = f"{FAPI}/fapi/v1/ticker/24hr?symbol=" + urllib.parse.quote(symbol)
+        r = _session.get(url, timeout=5)
+        r.raise_for_status()
+        d = r.json()
+        if isinstance(d, list):
+            d = d[0] if d else None
+        return d if isinstance(d, dict) else None
+    except Exception:
+        return None
+
+
+def get_funding_rate(symbol: str) -> float:
+    """单币永续资金费率（fapi premiumIndex 单参）；失败返回 0。"""
+    try:
+        r = _session.get(f"{FAPI}/fapi/v1/premiumIndex", params={"symbol": symbol}, timeout=5)
+        r.raise_for_status()
+        d = r.json()
+        if isinstance(d, list):
+            d = d[0] if d else {}
+        return float((d or {}).get("lastFundingRate", 0) or 0)
+    except Exception:
+        return 0.0
+
+
 def scan_top20(min_change_pct: float = 5.0, min_funding: float = 0.01, top_n: int = 20) -> list:
     """(兼容旧名) 全市场异动扫描 —— 不再固定 TOP_SYMBOLS 那 20 个币！
 
@@ -473,12 +503,16 @@ def get_ignition_coins(force: bool = False, top_n: int = 120, min_qv: float = 2e
 def scan_symbols(symbols: list, min_change_pct: float = 3.0, min_funding: float = 0.01,
                  force: bool = False) -> list:
     """对任意符号列表扫描异常（用于并行子代理分板块扫描）。
-    force=True 时（指定交易对精确查价）跳过波动/资金费率过滤，只要有价格即返回。"""
+    force=True 时（指定交易对精确查价）跳过波动/资金费率过滤，只要有价格即返回。
+    兼容仅永续上市币种：SPOT ticker 缺失时自动回退 fapi 公开端点取价。"""
     rates = get_funding_rates()
     tickers = get_24h(symbols)
     results = []
     for sym in symbols:
         t = tickers.get(sym)
+        # 现货端查不到（如仅 U 本位永续上市）→ 回退 fapi 单币 ticker
+        if not t:
+            t = get_futures_ticker(sym)
         if not t:
             continue
         try:
@@ -488,7 +522,9 @@ def scan_symbols(symbols: list, min_change_pct: float = 3.0, min_funding: float 
             continue
         if price <= 0:
             continue
-        funding = rates.get(sym, 0.0)
+        funding = rates.get(sym)
+        if funding is None:
+            funding = get_funding_rate(sym)  # 全量 funding 没拿到时按需补单币
         if not force and not ((abs(change) >= min_change_pct) or (abs(funding) >= min_funding)):
             continue
         results.append({

@@ -23,7 +23,7 @@ const { spawnSync } = require("child_process");
 const PROJ = process.env.BAZZ_PROJ || __dirname;
 const LEGACY_STAGE = "E:/hermes_app/_gh_staging";
 const STAGE = process.env.BAZZ_STAGE || (path.basename(PROJ) === "binance-agent-os-scout" ? LEGACY_STAGE : path.join(PROJ, "dist"));
-const VERSION = process.env.BAZZ_VERSION || "1.2.2";
+const VERSION = process.env.BAZZ_VERSION || "1.2.3";
 const PY_DIST = path.join(STAGE, "dist_py", "ScoutBackend");
 const ELECTRON_VER = "31.7.7";
 const ELECTRON_DIST = path.join(PROJ, "frontend", "node_modules", "electron", "dist");

@@ -27,7 +27,11 @@ def _ok_status(t: dict) -> bool:
     return st not in ("", "error", "fail", "failed", "failed:", "bad")
 
 
-_HEAL_MAX = 2  # 同一请求内工具失败的最大自愈轮次
+_HEAL_MAX = 3  # 同一请求内工具失败的最大自愈轮次（永续/小币类查询需要更长窗口）
+# 单次生成的 agent 轮次上限：每轮 = 一次模型决策 + 一批工具执行。
+# 14 轮足够容纳长链研究（市场扫描→多币逐一 quote→资金费率/量能核对→风险→成稿），
+# 同时避免模型因上限过低而在数据没拿全时被强断（用户反馈过『轮次太少自动结束』）。
+MAX_AGENT_TURNS = 14
 
 
 def _tool_fail_desc(res) -> str:
@@ -165,7 +169,9 @@ def _system_prompt() -> str:
     return (SOUL + "\n\n你是 Binance Agent OS 的中文交易助手(BAZZ Agent)。\n"
             "你拥有一组工具（function calling），用它们完成用户的真实请求。\n"
             "【强制规则 — 必须遵守】\n"
-            "1) 涉及行情/异常 → 立即调用 scan_market；问某币价格 → market_quote；\n"
+            "1) 涉及行情/异常 → 立即调用 scan_market；问某币价格/合约行情/资金费率 → market_quote；\n"
+            "   **公开行情（现货价量 + USDT 永续资金费率）一律走 scan_market / market_quote——免费免授权，"
+            "绝对禁止用 mcp_call 查行情**（mcp_call 仅用于账户级私有数据：余额/持仓/真实下单等）；\n"
             "   风险/风控 → check_risk；买卖/多空 → propose_trade（仅出方案，下单需确认）；\n"
             "   支付/x402/402 → explain_x402；skills/技能 → list_skills；\n"
             "   链上/钱包/defi → onchain_ops；『记住…』→ memory_write；能力介绍 → get_help；\n"
@@ -191,14 +197,18 @@ def _system_prompt() -> str:
             "   回答风格不限，可以偶尔轻松一点，但行情数字必须来自工具结果，绝不编造。\n"
             "8) **工具执行失败时不要放弃、也不要假装成功：主动自我修复**——分析报错原因"
             "（参数/格式/网络/权限），修正参数后重试，或改换更合适的工具/路径完成同一目标；\n"
-            "   同一意图最多自动修复 2 轮。若工具结果里出现『自愈次数已用尽』的提示，"
-            "立即停止调用工具，把失败原因、已尝试的方案与建议如实告诉用户，绝不编造成功结果。\n"
+            "   同一意图最多自动修复 3 轮。若工具结果里出现『自愈次数已用尽』的提示，"
+            "**别直接摆烂**：轮次耗尽兜底时，把可换路径一次性列给用户（`fapi 公开端点 ticker/24hr` 直查合约、`run_skill` 调官方 `binance-agentic-wallet`/`binance-leaderboard`/`trading-signal`、`fetch_url` 抓公开 Binance 页、`run_command` 让我本地 Python 直请求 fapi），并自行尝试其中至少一条再总结——尤其当目标是『某个只在永续上的币』时，先把 `fapi /fapi/v1/ticker/24hr?symbol=XXX` 与 `/fapi/v1/premiumIndex` 这两条公开免授权接口试一遍再说。\n"
             "9) **深度思考（deep-thinking 协议）**：行情归因/是否交易/策略对比/风险判断等分析类请求，"
             "先在思考链里按『拆解→列假设→用工具核验→推理→自检→收敛』走一遍再回答：\n"
             "   - 至少列 2 个假设并用真实工具数据支持/推翻，不凭印象编数字；"
             "自检时反问『有无相反证据/是否把相关性当因果/有没有越过用户风险边界（查记忆）』；\n"
             "   - 支持思考链的模型把推理过程放进 reasoning 字段（前端会折叠展示），最终回答只放结论+依据+风险；\n"
             "   - 拿不准就直说『无法确定』，绝不硬编。简单查询（单个价格/是否存在）可跳过，直接答。\n"
+            "10) **收尾自查（防止答一半就结束）**：当用户要的是分析/研究/对比时，第一轮拿到数据不要急着收尾——\n"
+            "   先对照需求自查：价格有了，那资金费率？24h 量能？相对大盘强弱？历史高低点？风险与止损参考？\n"
+            "   缺哪补哪（market_quote 逐项补 / scan_market 看大盘背景 / run_skill 查链上与官方榜单），补齐后再给结构化结论；\n"
+            "   用户只要『报个价/一句话快答』、或所需数据已齐全时则立即收尾——不要为凑轮数空转。\n"
             + memory_context())
 
 
@@ -213,7 +223,8 @@ def _detect(message: str) -> str:
     if (re.search(r"定时|cron|每隔|日报|schedule|自动定时|自动.{0,4}扫描|帮我做.*定时|每天.{0,5}点|定时提醒", t)
             or re.search(r"每天.{0,8}(分析|扫|检查|看|提醒|推送)", message)): return "cron"
     if any(k in t for k in ["scan", "扫描", "数据", "分析", "异常", "看看",
-                            "行情", "市场", "大盘", "涨跌", "涨幅", "异动", "波动", "走势"]): return "scan"
+                            "行情", "市场", "大盘", "涨跌", "涨幅", "异动", "波动", "走势",
+                            "合约行情", "合约价格", "合约代币", "永续合约", "资金费率", "funding", "perp"]): return "scan"
     if any(k in t for k in ["risk", "风险", "风控", "check"]): return "risk"
     # 链上 / 钱包 交易类（含交易动作词，如「用 agent 钱包买入」）→ 优先归 onchain，
     # 避免被下方 CEX execute（买入/市价…）抢走路由到交易所下单。
@@ -1658,7 +1669,7 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
     turns = 0
     heal_left = _HEAL_MAX  # 工具失败自愈预算（同一请求内共享）
     ever_failed = False    # 出现过工具失败（用于轮次用尽时区分提示语）
-    while turns < 6:  # 比默认多 2 轮：容纳「失败→自愈→再失败→最终回答」
+    while turns < MAX_AGENT_TURNS:  # 长链研究（行情/合约多币对比/多步分析）轮次充足；见常量说明
         turns += 1
         try:
             resp = llm.chat_with_tools(messages, tools, llm_cfg=llm_cfg)
@@ -1733,6 +1744,11 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
                                  "content": tmsg})
                 continue  # 进下一轮让 LLM 看到 tool 结果再合成最终回答
             # 已是最终回答轮（或意图不匹配）：把 LLM 正文流式输出（剥掉「我先…让我…」客套）
+            if not content.strip() and not accumulated_tools:
+                # 模型既没调工具又没输出正文（偶发空返回）→ 追加一次明确指令再生成，避免空 done 直接结束
+                if turns < MAX_AGENT_TURNS:
+                    messages.append({"role": "user", "content": "（你刚才没有输出任何内容）请直接回答用户的问题。"})
+                    continue
             if content.strip():
                 for chunk in _chunk_text(_strip_preamble(content)):
                     yield {"type": "text", "delta": chunk}
@@ -1795,14 +1811,19 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
                     heal_left -= 1
                 tool_msg += _heal_hint(fail, heal_left)
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_msg})
-    # 超过轮次保护：明确提示，不走规则引擎固定话术
+    # 超过轮次保护：明确提示，并给具体可换路径清单，不让用户陷入死胡同
     if ever_failed:
-        tip = ("我已经连续尝试多轮仍未成功（工具持续报错或自愈次数已用尽）。\n"
-               "请看上面的错误卡片：通常是网络 / API Key / 参数问题。检查后重试，"
-               "或换一种问法，让我换条路再试。")
+        tip = ("我已经连续尝试多轮仍未拿到完整结果（工具持续报错或自愈次数已用尽）。\n\n"
+               "**下一步建议**（你可直接选一条让我重试，或你自己操作后告诉我）：\n"
+               "1) 该币可能在 SPOT 没上、只上了 U 本位永续 —— 我会用 `fapi /fapi/v1/ticker/24hr?symbol=XXX` 这条公开免授权接口直接拿合约价量+资金费率（前面已尝试过的话可以再说一次『用 fapi 公开端点再试一次』）；\n"
+               "2) 用 `run_skill` 调官方 `binance-agentic-wallet` / `binance-leaderboard` / `trading-signal` 等已装技能查它的合约/链上数据；\n"
+               "3) 用 `fetch_url` 直接抓 `fapi.binance.com/fapi/v1/ticker/24hr?symbol=XXX` 或交易所公告页验证存在性；\n"
+               "4) 用 `run_command` 让我本地 Python 直接请求 fapi 公开接口（无需 API Key），绕过工具链路。\n"
+               "告诉我用哪条，或换种问法让我换条路再试。")
         yield {"type": "text", "delta": tip}
         yield {"type": "done", "intent": "llm", "reply": tip, "model": model_used,
-               "tools": [{"icon": "⚠️", "name": "多次尝试失败", "ok": False, "detail": "已达最大轮次"}]}
+               "tools": [{"icon": "⚠️", "name": "多次尝试失败", "ok": False,
+                          "detail": "已达最大轮次 · 见建议清单"}]}
         return
     yield from _emit_llm_unavailable(message)
 
