@@ -349,12 +349,12 @@ export function ChatView({
       const merged: string[] = [];
       arr.forEach((m) => add(m));
       candidates.forEach((m) => { if (!merged.includes(m)) merged.push(m); });
-      setAvailableModels(merged.length ? merged : (arr.length ? arr : [def || "deepseek-v4-flash"]));
+      setAvailableModels(merged.length ? merged : (arr.length ? arr : [def || "gpt-5.4-mini"]));
       setDefaultModel(def);
       // 若该会话快照里有模型，优先作为默认；否则用全局默认
       setSessionModel(snap.model || llm.model || def);
     } catch {
-      setAvailableModels(["deepseek-v4-flash", "deepseek-v4-pro"]);
+      setAvailableModels(["gpt-5.4-mini", "deepseek-v4-flash"]);
     }
   };
   useEffect(() => { loadAvailableModels(); /* eslint-disable-line */ }, [convId, conversations?.length]);
@@ -1775,7 +1775,7 @@ export function ChatView({
                 <div className="px-3 pb-3 pt-1 space-y-3 border-t border-line/50">
                   <div><label className="prefix block mb-1">Model（偏好模型）</label>
                     <input value={cfg.model} onChange={(e) => setCfg({ ...cfg, model: e.target.value })}
-                      placeholder="例如 deepseek-v4-pro / claude-opus-5-thinking / 留空=默认" className="field" /></div>
+                      placeholder="例如 gpt-5.4-mini / deepseek-v4-pro / 留空=默认" className="field" /></div>
                   <div><label className="prefix block mb-1">Tone（语气与风格）</label>
                     <textarea value={cfg.tone} onChange={(e) => setCfg({ ...cfg, tone: e.target.value })} rows={3}
                       placeholder="例如：犀利简洁，先给结论再解释；话少但精确" className="field resize-y min-h-[4.5rem]" /></div>
