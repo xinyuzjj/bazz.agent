@@ -28,10 +28,11 @@ except Exception:
 
 
 # provider 预设（base_url 去掉尾部 /v1 之外的路径统一由模型端点拼接）
-# DeepSeek 2026-07-24 已退役 deepseek-chat/deepseek-reasoner，官方现名：v4-flash(主力/思考模式请求级) v4-pro(重度推理)
+# DeepSeek 官方 API 现用模型名：deepseek-chat(主力) / deepseek-reasoner(思考)。
+# （部分第三方网关自命名为 v4-flash/v4-pro 等，见 _LEGACY_MODEL_MAP 反向兜底。）
 PROVIDERS = {
     "openai":      {"base_url": "https://api.openai.com/v1",       "models": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "o3-mini"]},
-    "deepseek":    {"base_url": "https://api.deepseek.com/v1",      "models": ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"]},
+    "deepseek":    {"base_url": "https://api.deepseek.com/v1",      "models": ["deepseek-chat", "deepseek-reasoner"]},
     "moonshot":    {"base_url": "https://api.moonshot.cn/v1",       "models": ["moonshot-v1-8k", "moonshot-v1-32k", "kimi-k2-0711-preview"]},
     "siliconflow": {"base_url": "https://api.siliconflow.cn/v1",    "models": ["Qwen/Qwen2.5-72B-Instruct", "deepseek-ai/DeepSeek-V3", "Pro/deepseek-ai/DeepSeek-R1"]},
     "qwen":        {"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "models": ["qwen-max", "qwen-plus", "qwen-turbo"]},
@@ -44,10 +45,11 @@ PROVIDERS = {
 
 
 _LEGACY_MODEL_MAP = {
-    # DeepSeek 官方退役别名 → v4 现名（2026-07-24 起旧名直接 4xx；reasoner 只是 v4-flash 的思考模式，
-    # 迁移到 v4-flash 价格不变；v4-pro 是能力升级选项而非迁移目标）
-    "deepseek-chat": "deepseek-v4-flash",
-    "deepseek-reasoner": "deepseek-v4-flash",
+    # 兜底：把第三方/网关命名的 v4 系列名归一到 DeepSeek 官方现名（官方 API 不识别 v4 名）。
+    # deepseek-chat 为主力对话模型；deepseek-reasoner 为深度思考模型。
+    "deepseek-v4-flash": "deepseek-chat",
+    "deepseek-v4-pro": "deepseek-reasoner",
+    "deepseek-v4-flash-vision-exp": "deepseek-chat",
 }
 
 
@@ -136,11 +138,18 @@ def resolve_key(cfg: dict) -> str:
 
 
 def _materialize(cfg: dict = None) -> dict:
-    """把配置补成可直接请求的形态（api_key 解析 key_env 后填入）。"""
-    cfg = dict(cfg or get_llm_config())
-    if not cfg.get("api_key"):
-        cfg["api_key"] = resolve_key(cfg)
-    return cfg
+    """把配置补成可直接请求的形态（api_key 解析 key_env 后填入）。
+
+    以全局配置为底，只覆盖调用方传入的“非空”字段——修复部分配置（如仅
+    {deep_thinking: True}）传入时丢失 provider/base_url/model/api_key 的坑。
+    """
+    base = get_llm_config()
+    if not cfg:
+        return base
+    merged = {**base, **{k: v for k, v in cfg.items() if v not in (None, "")}}
+    if not merged.get("api_key"):
+        merged["api_key"] = resolve_key(merged)
+    return merged
 
 
 def is_configured(cfg: dict = None) -> bool:
@@ -190,7 +199,7 @@ def cfg_from_snapshot(snap: dict = None) -> dict:
 
 def _model_chain(cfg: dict) -> List[str]:
     """主模型 + 备用模型链（Hermes fallback：429/5xx/超时自动切换）。
-    官方 DeepSeek 端点上自动把已退役别名（deepseek-chat/reasoner）映射到 v4-flash。"""
+    官方 DeepSeek 端点上自动把 v4 系列网关名归一到官方现名（deepseek-chat/reasoner）。"""
     chain = [cfg.get("model") or ""]
     for m in cfg.get("backup_models") or []:
         if m and m not in chain:
