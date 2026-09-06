@@ -25,6 +25,12 @@
 
 ![Main cockpit](./docs/screenshot.png)
 
+> 🎬 **88-second live demo video** (real UI walkthrough): open a past session →
+> market radar → click “Buy Spot” to jump into chat while the agent analyzes and
+> proposes a position → memory → wallet → settings.
+> [▶ Watch online (Pages)](https://xinyuzjj.github.io/bazz.agent/#demo) ·
+> [⬇ Download MP4 (3.2 MB)](./docs/video/BAZZ-demo-v1.mp4)
+
 ---
 
 ## Why this exists

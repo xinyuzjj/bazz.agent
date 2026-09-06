@@ -22,6 +22,11 @@
 
 ![主界面](./docs/screenshot.png)
 
+> 🎬 **88 秒演示视频**（真实 UI 操作实录）：打开历史会话 → 行情雷达 → 点「现货买入」跳转对话、
+> Agent 实盘分析给仓位建议 → 记忆 → 钱包 → 设置。
+> [▶ 在线播放（展示页）](https://xinyuzjj.github.io/bazz.agent/#demo) ·
+> [⬇ 下载 MP4（3.2 MB）](./docs/video/BAZZ-demo-v1.mp4)
+
 ---
 
 ## 为什么会有这个项目
