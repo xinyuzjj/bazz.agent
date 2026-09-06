@@ -60,6 +60,26 @@ cd frontend && npm install && npm run build && cd ..
 > Settings page accepts any OpenAI-compatible `base_url` + API key
 > (DeepSeek / OpenAI / Moonshot / Ollama / custom).
 
+### 🖥 Desktop app (Windows portable)
+
+The desktop shell is an **Electron + PyInstaller** build of the same codebase —
+double-click, no Python/Node install needed:
+
+```
+BAZZ.AGENT-win32-x64/
+├── BAZZ.AGENT.exe            # ← 双击启动（自动拉起内嵌后端，端口 8080）
+└── resources/
+    ├── app/                  # Electron 壳（main.cjs）
+    ├── scout-bundle/         # PyInstaller 打包的 FastAPI 后端（ScoutBackend.exe）
+    └── assets/               # 品牌图标
+```
+
+First launch takes a few seconds while the embedded backend warms up; the
+database `.scout.db` is created next to `BAZZ.AGENT.exe`. Packaging is done
+with repo-local build tooling (`launcher.py` as PyInstaller entry +
+`build-desktop.js` driving `@electron/packager` offline) — both stay out of
+the repo since they are build-time only; ask the author for a release build.
+
 ### Hot keys
 
 | Shortcut | Action |
