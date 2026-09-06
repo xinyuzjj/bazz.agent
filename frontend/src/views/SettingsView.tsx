@@ -5,10 +5,27 @@ import { CronPanel, McpPanel, ChannelPanel } from "./AdminPanels";
 import { useT } from "../i18n/i18n";
 
 const LLM_PROVIDERS = [
-  { id: "openai", label: "OpenAI", base: "https://api.openai.com/v1", presets: ["gpt-4o", "gpt-4o-mini", "o1-preview"] },
-  { id: "deepseek", label: "DeepSeek", base: "https://api.deepseek.com/v1", presets: ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"] },
-  { id: "moonshot", label: "Moonshot (Kimi)", base: "https://api.moonshot.cn/v1", presets: ["moonshot-v1-8k", "moonshot-v1-32k"] },
-  { id: "ollama", label: "Ollama (Local)", base: "http://127.0.0.1:11434/v1", presets: ["llama3.1", "qwen2.5"] },
+  // presets 与后端 src/llm.py 的 PROVIDERS 完全对齐（按 2026-09 各厂商官方 API 现役目录核实）。
+  // 首项为切换厂商时的默认模型；改模型前可用「拉取模型」读取真实 /models 目录。
+  { id: "openai", label: "OpenAI", base: "https://api.openai.com/v1", presets: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.3-codex", "o3"] },
+  { id: "anthropic", label: "Anthropic (Claude)", base: "https://api.anthropic.com/v1", presets: ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5"] },
+  { id: "google", label: "Google (Gemini)", base: "https://generativelanguage.googleapis.com/v1beta/openai", presets: ["gemini-3.1-pro", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3-flash", "gemini-3.1-flash-lite"] },
+  { id: "xai", label: "xAI (Grok)", base: "https://api.x.ai/v1", presets: ["grok-4.6", "grok-4.5", "grok-4.3"] },
+  // DeepSeek 官方 API 现用 v4 系列：deepseek-v4-pro (1M, GA) / deepseek-v4-flash (1M, public beta) / deepseek-v4-flash-vision-exp。
+  // 旧别名 deepseek-chat / deepseek-reasoner 已于 2026-07-24 下线，遇历史配置由后端 _LEGACY_MODEL_MAP 自动归一到 v4。
+  { id: "deepseek", label: "DeepSeek", base: "https://api.deepseek.com/v1", presets: ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"] },
+  // moonshot-v1 全系与 kimi-k2.5 已于 2026-08-31 下线，现役为 kimi-k3 家族。
+  { id: "moonshot", label: "Moonshot (Kimi)", base: "https://api.moonshot.cn/v1", presets: ["kimi-k3", "kimi-k2.7-code", "kimi-k2.7-code-highspeed", "kimi-k2.6"] },
+  // 阿里云百炼：qwen-max/plus/turbo 为自动指向最新版的长期别名。
+  { id: "qwen", label: "阿里云百炼 (Qwen)", base: "https://dashscope.aliyuncs.com/compatible-mode/v1", presets: ["qwen-max", "qwen-plus", "qwen-turbo"] },
+  // 智谱 BigModel：GLM-5.3 旗舰（glm-4-plus/air/flash 已退役）。
+  { id: "zhipu", label: "智谱 (GLM)", base: "https://open.bigmodel.cn/api/paas/v4", presets: ["glm-5.3", "glm-5.3-flash", "glm-5.2", "glm-5", "glm-4.7"] },
+  { id: "mistral", label: "Mistral", base: "https://api.mistral.ai/v1", presets: ["mistral-large-latest", "mistral-medium-latest", "mistral-small-latest", "codestral-latest"] },
+  // 硅基流动：模型用「组织/模型」全名，精确前缀以「拉取模型」返回为准。
+  { id: "siliconflow", label: "硅基流动 SiliconFlow", base: "https://api.siliconflow.cn/v1", presets: ["deepseek-ai/DeepSeek-V4-Pro", "deepseek-ai/DeepSeek-V4-Flash", "Qwen/Qwen3.6-27B", "Qwen/Qwen3.6-35B-A3B", "Pro/moonshotai/Kimi-K2.6", "Pro/zai-org/GLM-5.2"] },
+  // OpenRouter：聚合网关，模型名「厂商/模型」，完整目录请用「拉取模型」。
+  { id: "openrouter", label: "OpenRouter", base: "https://openrouter.ai/api/v1", presets: ["openai/gpt-5.6-sol", "anthropic/claude-sonnet-5", "google/gemini-3.1-pro", "x-ai/grok-4.6"] },
+  { id: "ollama", label: "Ollama (Local)", base: "http://127.0.0.1:11434/v1", presets: ["qwen3", "llama3.3", "deepseek-r1", "gemma3"] },
   { id: "custom", label: "自定义 / OpenAI 兼容", base: "", presets: [] },
 ];
 
@@ -247,7 +264,7 @@ export function SettingsView({ settings, onSaved, onNav }: { settings: any; onSa
               开启后：每轮请求注入 THINKING_PROTOCOL，让模型在正文前先写
               <code className="px-1 mx-1 rounded bg-elevated/80">&lt;thinking&gt;</code>
               块；前端「深度思考」折叠块会展示该过程并把它从正文剥离开。
-              原生推理模型（deepseek-v4-pro / deepseek-v4-flash 思考模式 / claude-opus-5-thinking / o1 等）天然输出 reasoning_content，无需协议即可生效。
+              原生推理模型（deepseek-v4-pro / grok-4.x / kimi-k3 / glm-5.x-thinking 等）天然输出 reasoning_content，无需协议即可生效。
             </div>
           </label>
           <div className="rounded-md border border-line bg-elevated/40 p-3">
