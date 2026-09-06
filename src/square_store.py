@@ -1,7 +1,7 @@
 """币安广场发文台账（本地记账）—— 广场 OpenAPI 官方只发不读，
 广场页要展示「Agent 发过的帖子」，唯一真实可靠的来源是本机每次发布的记录。
 
-数据落在项目根 data/square_posts.json（自动建目录），由两个执行入口埋点：
+数据落在运行时工作区 <WORKSPACE>/square_posts.json（首启自动从旧 data/ 迁移），由两个执行入口埋点：
   - agent_core._tool_run_skill    （聊天 / 定时任务里的 Agent 自动发布）→ via=agent
   - skills_client.run_skill       （前端「运行」按钮手动发布）        → via=manual
 
@@ -14,9 +14,7 @@ import re
 import shlex
 import time
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # E:/.../binance-agent-os-scout
-DATA_DIR = os.path.join(PROJECT_ROOT, "data")
-DATA_FILE = os.path.join(DATA_DIR, "square_posts.json")
+from workspace import SQUARE_POSTS as DATA_FILE  # 统一落盘到 workspace
 
 SQUARE_SKILL = "square-post"
 DAILY_LIMIT = 100                      # Square OpenAPI 每 key 每日发帖上限

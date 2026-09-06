@@ -4,7 +4,8 @@ Hermes 风格：
 - 多会话持久化（conversations / messages）
 - 长期记忆（memory 表：跨会话用户画像 / 学到的偏好）
 - 设置（Key 仅存本机 SQLite；明确告知用户不跨设备同步）
-数据库文件位于项目根目录 .scout.db。
+
+数据库文件位于运行时工作区 <WORKSPACE>/state.db（首启自动从旧 .scout.db 迁移）。
 """
 import os
 import json
@@ -12,8 +13,7 @@ import sqlite3
 import uuid
 import time
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(APP_DIR, "..", ".scout.db")
+from workspace import DB_PATH  # 统一落盘到 workspace（见 src/workspace.py）
 
 _conn = None
 

@@ -376,8 +376,8 @@ async def upload_file(req: Request):
     if len(raw) > 8 * 1024 * 1024:
         return JSONResponse({"error": "文件超过 8MB 上限"}, status_code=413)
     filename = os.path.basename(filename or "upload.bin")[:120] or "upload.bin"
-    at_dir = os.path.join(APP_DIR, ".workbuddy", "attachments")
-    os.makedirs(at_dir, exist_ok=True)
+    from workspace import ATTACHMENTS  # 统一落盘到 workspace
+    at_dir = ATTACHMENTS
     safe = f"{int(time.time() * 1000)}-{filename}"
     path = os.path.join(at_dir, safe)
     with open(path, "wb") as f:
@@ -399,23 +399,22 @@ async def upload_file(req: Request):
     }
 
 
-_WORKSPACE_SKIP = {".git", ".venv", "venv", "node_modules", "dist", "__pycache__",
-                     ".workbuddy", ".curator_backups", "bootstrap-cache", ".agents"}
+_WORKSPACE_SKIP = {"migrated_v1", ".DS_Store", "Thumbs.db"}
 
 
 def _resolve_workspace_subpath(rel: str) -> str:
-    """把相对路径（来自前端 ?path=）解析为绝对路径，越界（不在 APP_DIR）则拒绝。"""
+    """把相对路径（来自前端 ?path=）解析为 workspace 内绝对路径，越界则拒绝。"""
+    from workspace import WORKSPACE
     rel = (rel or "").strip().replace("\\", "/").lstrip("/")
     if not rel:
-        return APP_DIR
-    # 显式拒绝 .. 段（双重防护）
+        return WORKSPACE
     parts = [p for p in rel.split("/") if p and p != "."]
     if any(p == ".." for p in parts):
         raise ValueError("path 含越界段 ..")
-    target = os.path.realpath(os.path.join(APP_DIR, *parts))
-    base = os.path.realpath(APP_DIR)
+    target = os.path.realpath(os.path.join(WORKSPACE, *parts))
+    base = os.path.realpath(WORKSPACE)
     if not (target == base or target.startswith(base + os.sep)):
-        raise ValueError("path 越界项目根")
+        raise ValueError("path 越界 workspace")
     return target
 
 
@@ -516,7 +515,7 @@ async def wl_del(req: Request):
 
 @app.get("/api/workspace/files")
 def workspace_files(path: str = ""):
-    """列项目工作区某子目录真实文件。黑名单跳过缓存/依赖目录。"""
+    """列运行时工作区某子目录真实文件（黑名单跳过隐藏/系统文件）。"""
     try:
         base = _resolve_workspace_subpath(path)
     except ValueError as e:
@@ -540,11 +539,10 @@ def workspace_files(path: str = ""):
             })
     except Exception:
         pass
-    # 计算相对路径（forward-slash，前端面包屑用）
     rel = ""
     if path:
         rel = path.strip().replace("\\", "/").lstrip("/")
-    return {"items": rows, "path": rel, "root": ""}
+    return {"items": rows, "path": rel, "root": "workspace"}
 
 
 _MAX_FILE_BYTES = 1.5 * 1024 * 1024  # 1.5MB 文本上限（防大文件）
