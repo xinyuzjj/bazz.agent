@@ -96,6 +96,20 @@ start-dev.bat         # FastAPI + Vite hot-reload for UI iteration
 
 ---
 
+## 📸 The cockpit, in four panels
+
+| Markets | Agent Wallet |
+|:---:|:---:|
+| ![Markets — full-universe radar, Monster Radar breakout window, 24h auto-scanner](./docs/screenshots/markets-en.png) | ![Agent Wallet — keyless MPC (baw), on-chain caps, Wallet Skills catalog](./docs/screenshots/wallet-en.png) |
+| **Settings** | **Memory** |
+| ![Settings — unified config: multi-provider LLM, Gateway, agent behavior, encryption at rest](./docs/screenshots/settings-en.png) | ![Memory — long-term preferences & risk / allocation anchors, indexed and searchable](./docs/screenshots/memory-en.png) |
+
+The four panels you'll spend the most time in: read the market, hold the wallet,
+shape the agent, recall what it has learned. Every panel is bilingual (中 / EN)
+and respects the dark/gold ↔ light theme — both switch in one click in the top bar.
+
+---
+
 ## 🧭 Stack
 
 | Layer | Tech |

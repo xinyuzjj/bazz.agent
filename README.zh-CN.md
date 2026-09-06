@@ -88,6 +88,19 @@ start-dev.bat         # FastAPI + Vite 热更新，UI 快速迭代用
 
 ---
 
+## 📸 驾驶舱，四张主面板
+
+| 行情 | Agent 钱包 |
+|:---:|:---:|
+| ![行情 —— 全市场雷达 + Monster Radar 爆发窗口 + 24h 智能异动扫描](./docs/screenshots/markets-zh.png) | ![Agent 钱包 —— 无密钥 MPC（baw）+ 链上限额 + Wallet Skills 技能库](./docs/screenshots/wallet-zh.png) |
+| **设置** | **记忆** |
+| ![设置 —— 统一配置：LLM 多供应商、网关、Agent 行为、静态加密](./docs/screenshots/settings-zh.png) | ![记忆 —— 长期偏好与风控 / 资产配置锚点，已索引可检索](./docs/screenshots/memory-zh.png) |
+
+四个花得时间最多的面板：读市场、握钱包、塑 Agent、翻记忆。中 / EN 双语、
+深色 ↔ 浅色主题顶栏一键切换，重启后自动保留。
+
+---
+
 ## 🧭 技术栈
 
 | 层 | 技术 |
