@@ -59,7 +59,11 @@ and they persist across restarts.
 | 🧠 **Long-term memory** | Cross-session preferences & risk anchors, auto-learned from your conversations, indexed & searchable in the Memory panel. |
 | 👛 **Agentic Wallet (keyless MPC)** | BSC / Ethereum / Base / Solana swaps via `baw`, respecting Binance's official daily caps; private keys never pass through the app. |
 | 💹 **Real CEX trading** | Spot / futures / convert on your actual exchange account through a whitelisted `binance-cli` profile; CEX and Web3 key systems are strictly separated. |
-| 🧩 **Skill Hub + plugins** | 14 official Binance skills pre-installed · intent-driven execution · path-traversal-safe install/run/remove · drop-in plugins. |
+| 🧩 **Skill Hub** | 14 official Binance skills pre-installed · intent-driven execution · path-traversal-safe install/run/remove. |
+| 🔌 **Plugins** | Drop-in extensions (e.g. `plugins/scout-signals`) — a Python `main.py` + manifest hooks into the agent loop without touching core. |
+| 🤖 **Multi-bot workspace** | Create any number of persona-driven bots (own skills, own memory scope) and talk to each in its own session. |
+| 👥 **Group chat · dispatch tasks to bots** | Build a room, `@mention` several bots and hand them a job — members answer in turns with a shared room log. |
+| ⏰ **Scheduled automations (CRON)** | Visual cron panel + per-agent routines: create “scan the market at 09:00” in plain language; run / pause / fire manually. |
 | 💸 **x402 / B402 payments** | Machine-to-machine payments with offline Permit2 EIP-712 signing, verified and settled by the official facilitator. |
 | 📣 **Square publishing** | Post text / article / image / video to Binance Square with a local ledger of everything you published. |
 | 🖥 **Desktop + Web, one codebase** | Frameless Windows portable app (Electron + embedded PyInstaller backend — no Python/Node required) *and* the same cockpit in the browser. |
@@ -181,6 +185,8 @@ serves the same React build — **one codebase, two form factors**.
 | “帮我发条广场动态” | Square post skill (text/article/image/video) with a local ledger of everything posted |
 | “记住：杠杆不超过 10x” | Long-term memory write → injected into future plans as a constraint |
 | “发现并安装 X 技能” | Three-source skill discovery (local / community / GitHub API) with approval |
+| “建个行情 bot 拉个群，每天把任务丢给它” | Create persona bots → build a room → `@mention` and dispatch jobs; members answer in turns with a shared log |
+| “每天早上 9 点扫一遍全市场” | Plain-language CRON → scheduled automation you can run / pause / trigger manually |
 
 ---
 
