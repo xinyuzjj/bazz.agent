@@ -59,15 +59,11 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Python 依赖（含 PyInstaller 收集清单）
+      - name: Python 依赖（requirements-build.txt = 冻结清单，钉死版本）
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller `
-            pillow sqlalchemy aiohttp websockets cryptography httpx `
-            charset-normalizer certifi idna anyio sniffio h11 httpcore `
-            click docutils jinja2 markupsafe itsdangerous werkzeug `
-            PyYAML packaging pluggy
+          pip install -r requirements-build.txt pyinstaller
 
       - name: 前端构建（npm ci 含 electron 31.7.7 二进制下载）
         working-directory: frontend

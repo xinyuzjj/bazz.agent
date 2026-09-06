@@ -1,0 +1,20 @@
+# BAZZ.AGENT 桌面后端 PyInstaller 冻结依赖（钉死版本）
+# 来源：v1.2.0 已验证便携版 _internal 内实际打包的 16 个包。
+# CI（GitHub Actions windows-latest, python 3.11）与本地冻结环境保持同一集合，
+# 保证产物体积(~155MB)与运行行为与已发布版本一致。其余包缺失时 collect_all 静默为空。
+anyio==4.15.0
+certifi==2026.7.22
+charset-normalizer==3.5.1
+click==8.5.0
+fastapi==0.141.1
+h11==0.16.0
+idna==3.19
+numpy==2.4.6
+packaging==26.3
+pillow==12.3.0
+pydantic==2.13.5
+python-dotenv==1.2.3
+requests==2.34.2
+starlette==1.6.0
+urllib3==2.7.0
+uvicorn==0.52.4
