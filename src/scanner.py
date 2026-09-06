@@ -2,6 +2,7 @@
 - 单次拉全市场 24h 快照（一次性 /api/v3/ticker/24hr），本地 TTL 缓存
 - 异动信号 / 涨跌幅榜在"成交额前 N"的广阔交易对池上计算（不再固定 20 币）
 - 资金费率一次性批量拉取（premiumIndex），避免 N+1 请求
+- 「大盘币」按当前 24h 成交额**动态识别**（get_top_liquid_symbols），不再写死列表
 """
 import os
 import json
@@ -12,12 +13,6 @@ import requests
 SPOT = "https://api.binance.com"
 FAPI = "https://fapi.binance.com"
 
-TOP_SYMBOLS = [
-    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
-    "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "TRXUSDT",
-    "DOTUSDT", "MATICUSDT", "LTCUSDT", "NEARUSDT", "APTUSDT",
-    "ARBUSDT", "OPUSDT", "TONUSDT", "SUIUSDT", "PEPEUSDT",
-]
 
 _session = requests.Session()
 _session.headers.update({"User-Agent": "AgentOS-BAZZ/1.0"})
@@ -25,6 +20,25 @@ _session.headers.update({"User-Agent": "AgentOS-BAZZ/1.0"})
 # ---- 全市场 24h 快照（TTL 缓存） ----
 SNAPSHOT_TTL = 8.0  # 秒；前端 30s 轮询 + 手动刷新，缓存避免击穿 Binance
 _snap_cache = {"ts": 0.0, "rows": []}
+
+
+def get_top_liquid_symbols(n: int = 20, limit_pool: int = 300) -> list:
+    """按当前 24h USDT 成交额**动态**识别前 n 个大盘币（每次按真实市场取）。
+
+    用于「妖币 / 启动前」筛选时的排除集合：动态而非固定，避免漏掉新晋大盘币、
+    也避免错误排除曾是大盘但已被边缘化的老币。无网络/快照空时返回空列表。
+    """
+    try:
+        rows = get_snapshot(quote="USDT", limit=limit_pool, use_cache=True)
+    except Exception:
+        return []
+    if not rows:
+        return []
+    rows_sorted = sorted(rows, key=lambda x: x.get("quote_volume", 0) or 0, reverse=True)
+    return [r["symbol"] for r in rows_sorted[: max(1, int(n))]]
+
+# 兼容旧名（部分历史代码可能引用）：保留为动态计算入口
+TOP_SYMBOLS = get_top_liquid_symbols  # type: ignore[assignment]
 
 
 def get_snapshot(quote: str = "USDT", limit: int = 0, use_cache: bool = True) -> list:
@@ -79,7 +93,7 @@ def get_funding_rates() -> dict:
         return {d["symbol"]: float(d.get("lastFundingRate", 0) or 0) for d in r.json()}
     except Exception:
         rates = {}
-        for sym in TOP_SYMBOLS:
+        for sym in TOP_SYMBOLS():  # 动态识别的大盘币（按当前成交额排序）
             try:
                 r = _session.get(f"{FAPI}/fapi/v1/fundingRate", params={"symbol": sym}, timeout=5)
                 rates[sym] = float(r.json().get("lastFundingRate", 0) or 0)
