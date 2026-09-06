@@ -123,6 +123,18 @@
   .shot img { display: block; width: 100%; height: auto; }
   .shotcap { color: var(--dim); font-size: 13px; margin-top: 10px; text-align: center; }
 
+  /* UI GALLERY */
+  .ui-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+  @media (max-width: 860px) { .ui-grid { grid-template-columns: 1fr; } }
+  .ui-card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+    overflow: hidden; transition: transform .15s ease, border-color .15s ease;
+  }
+  .ui-card:hover { transform: translateY(-2px); border-color: rgba(240,185,11,.45); }
+  .ui-card img { display: block; width: 100%; height: auto; border-bottom: 1px solid var(--border); }
+  .ui-cap { padding: 10px 14px 12px; color: var(--dim); font-size: 13px; }
+  .ui-cap b { color: var(--text); font-weight: 700; }
+
   /* CAPABILITIES */
   .caps { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
   @media (max-width: 820px) { .caps { grid-template-columns: 1fr; } }
@@ -185,6 +197,7 @@
     <div class="grow"></div>
     <span class="pill gold">Binance Agent OS · Track A</span>
     <a class="btn" href="#download">下载</a>
+    <a class="btn" href="#preview">界面</a>
     <a class="btn" href="#capabilities">能力</a>
     <a class="btn" href="#install">快速开始</a>
     <a class="btn" href="https://github.com/xinyuzjj/bazz.agent/blob/main/README.zh-CN.md">中文</a>
@@ -221,6 +234,34 @@
     <img src="screenshot.png" alt="Agent OS Alpha Scout 主界面：左侧会话列表、中间对话区、右侧实时信号台" />
   </div>
   <p class="shotcap">主界面：左侧会话历史 · 中间对话与工具卡 · 右侧 Binance 实时信号</p>
+
+  <section id="preview">
+    <h2>界面预览</h2>
+    <p class="h2-sub">行情雷达 · Agent 钱包 · 系统设置 · 长期记忆 —— 截图全部来自真实运行的桌面版。</p>
+    <div class="ui-grid">
+      <div class="ui-card">
+        <img src="screenshots/markets-zh.png" alt="行情界面：Monster Radar 与 24h 智能异动扫描" />
+        <div class="ui-cap"><b>行情</b> —— Monster Radar 爆发窗口 · 24h 智能异动扫描 · BTC/ETH/SOL/BNB 实时价</div>
+      </div>
+      <div class="ui-card">
+        <img src="screenshots/wallet-zh.png" alt="Agent 钱包：无密钥 MPC 与链上限额" />
+        <div class="ui-cap"><b>Agent 钱包</b> —— 无密钥 MPC（baw）· 链上限额策略 · Wallet Skills 技能库</div>
+      </div>
+      <div class="ui-card">
+        <img src="screenshots/settings-zh.png" alt="设置：多供应商 LLM 与全局安全数据中心" />
+        <div class="ui-cap"><b>设置</b> —— 多供应商 LLM · 网关 · AES-256-GCM 静态加密 · 全局安全状态</div>
+      </div>
+      <div class="ui-card">
+        <img src="screenshots/memory-zh.png" alt="记忆：跨会话长期偏好与风险锚点" />
+        <div class="ui-cap"><b>记忆</b> —— 跨会话长期记忆 · 风控与资产配置锚点 · 已索引可检索</div>
+      </div>
+    </div>
+    <p style="color:var(--dim); font-size:13px; margin-top:10px;">
+      中 / EN 双语界面、深色 ↔ 浅色主题顶栏一键切换（重启自动记住）。右下角四个视图在
+      <a href="https://github.com/xinyuzjj/bazz.agent#-the-cockpit-in-four-panels">README</a>
+      中另有英文界面版。
+    </p>
+  </section>
 
   <section id="capabilities">
     <h2>四块原生能力</h2>
