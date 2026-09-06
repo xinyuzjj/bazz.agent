@@ -46,8 +46,11 @@ def _heal_hint(fail: str, remain: int) -> str:
     """自愈提示词：remain>0 引导模型修复重试；remain==0 强制停止并如实上报。"""
     if remain > 0:
         return (f"\n\n⚠️ 刚才的工具执行失败了：{fail}\n"
-                f"【自愈指令】不要放弃。分析失败原因（参数？格式？网络？权限？），自己修正后重试，"
-                f"或改换更合适的工具/路径完成同一目标（剩余自愈次数 {remain}）。成功后再向用户汇报。")
+                f"【自愈指令】分析失败原因（参数？格式？网络？权限？）。\n"
+                f"- 若 args 与上一次完全相同——**立即停止重试本调用**，改为：换工具/换路径（如发币安广场走 run_skill 而非 mcp_call）、"
+                f"向用户索要必要凭据、或把失败原文与建议直接呈现。\n"
+                f"- 修复点不明确时，也优先停下如实告知用户，不要盲目循环同 args。"
+                f"（剩余自愈次数 {remain}。）")
     return (f"\n\n⛔ 工具执行失败：{fail}\n"
             f"【自愈次数已用尽】立即停止调用工具，不要再尝试。直接向用户如实说明："
             f"发生了什么、已尝试了哪些方案、建议下一步怎么做。")
@@ -165,7 +168,10 @@ def _system_prompt() -> str:
             "1) 涉及行情/异常 → 立即调用 scan_market；问某币价格 → market_quote；\n"
             "   风险/风控 → check_risk；买卖/多空 → propose_trade（仅出方案，下单需确认）；\n"
             "   支付/x402/402 → explain_x402；skills/技能 → list_skills；\n"
-            "   链上/钱包/defi → onchain_ops；『记住…』→ memory_write；能力介绍 → get_help。\n"
+            "   链上/钱包/defi → onchain_ops；『记住…』→ memory_write；能力介绍 → get_help；\n"
+            "   **发币安广场 / Square 发文 / 发推 / 发图文 / 『把这篇分析发出去』→ 必须用 run_skill(\n"
+            "       skill_name='square-post', args='<text|article|image|video 子命令 + JSON 参数>'\n"
+            "     ),不要走 mcp_call —— MCP binance 网关只有公开行情/账户/交易端点，没有发广场的能力，OAuth 授权也帮不上**。\n"
             "2) **绝不要先用文字叙述『我先调用 xxx』或『正在调用 xxx』！**\n"
             "   直接在 reply 之外、以 tool_calls 形式调用；用户必须看到真实数据。\n"
             "   调完拿到数据后再用中文总结结论；不要在 text 里编造数字。\n"
@@ -204,6 +210,12 @@ def _detect(message: str) -> str:
     if any(k in t for k in ["scan", "扫描", "数据", "分析", "异常", "看看",
                             "行情", "市场", "大盘", "涨跌", "涨幅", "异动", "波动", "走势"]): return "scan"
     if any(k in t for k in ["risk", "风险", "风控", "check"]): return "risk"
+    # 链上 / 钱包 交易类（含交易动作词，如「用 agent 钱包买入」）→ 优先归 onchain，
+    # 避免被下方 CEX execute（买入/市价…）抢走路由到交易所下单。
+    if any(k in t for k in ["钱包", "wallet", "chain", "链上", "defi", "质押", "baw", "agentic", "swap"]) \
+            and any(k in t for k in ["买", "卖", "buy", "sell", "swap", "兑换", "market", "limit",
+                                     "order", "交易", "下单", "定投", "建仓"]):
+        return "onchain"
     if any(k in t for k in ["确认下单", "execute", "下单", "buy", "sell", "执行", "交易", "建仓",
                               "买入", "卖出", "市价", "限价", "做多", "做空", "开仓", "平仓",
                               "market", "limit", "long", "short", "order"]): return "execute"
@@ -301,10 +313,23 @@ def _run_execute(confirm: bool = False, signal: dict = None, message: str = ""):
         ok = "error" not in res
         tools = [{"icon": "📈", "name": "Binance 真实下单", "status": "success" if ok else "error",
                   "detail": res.get("orderId", res.get("error", ""))}]
-        reply = ("✅ **已提交真实下单**\n\n"
-                 f"- 订单号：`{res.get('orderId', 'N/A')}`\n- 标的：{res.get('symbol')}\n"
-                 f"- 状态：{res.get('status', 'UNKNOWN')}\n\n请到 Binance 账户核对。") if ok else (
-                 f"⚠️ 下单失败：{res.get('error')}\n\n请检查 API Key、Agentic 子账户权限与网络。")
+        if ok:
+            reply = ("✅ **已提交真实下单**\n\n"
+                     f"- 订单号：`{res.get('orderId', 'N/A')}`\n- 标的：{res.get('symbol')}\n"
+                     f"- 状态：{res.get('status', 'UNKNOWN')}\n\n请到 Binance 账户核对。")
+        else:
+            # 按错误类型分类：CEX 下单报错仅与「币安交易所」相关，不要混入 Agentic Wallet 概念。
+            err = (res.get('error') or '').strip()
+            err_l = err.lower()
+            if 'api key' in err_l or 'api_key' in err_l or '缺少 api' in err_l:
+                reply = (f"⚠️ 下单失败：{err}\n\n"
+                         "**币安交易所未连接。** 请到「设置 → 币安 CEX」面板填写交易所 API Key 后再试。")
+            elif 'permission' in err_l or '权限' in err or 'signature' in err_l or '签名' in err or 'invalid' in err_l:
+                reply = (f"⚠️ 下单失败：{err}\n\n"
+                         "**币安交易所 API 权限或签名问题。** 请到「设置 → 币安 CEX」面板检查 API Key 权限、IP 白名单与签名配置。")
+            else:
+                reply = (f"⚠️ 下单失败：{err}\n\n"
+                         "请检查币安交易所连接状态、网络或稍后重试。")
         return {"reply": reply, "tools": tools, "data": res}
     # 解析用户真正想交易的标的（如「买入 BTC」「卖出 ETH 市价」）
     symbol, direction = _parse_trade(message)
@@ -370,7 +395,9 @@ def _run_onchain():
              "- 预测市场：`baw prediction market list` · `position list/pnl` · `trade place-order/redeem`\n"
              "- DeFi：`baw defi protocol-list` · `investment-list` · `position` · `deposit/redeem/lp-add`\n"
              "- 外部调用：`contract-call preview/execute`（devMode）· `sign-message` · `x402-payment`\n\n"
-             "需 Binance 账号 + App 扫码登录（MPC 无密钥）。已装链上 Skills：`binance-agentic-wallet` 等。")
+             "需 Binance 账号 + App 扫码登录（MPC 无密钥）。已装链上 Skills：`binance-agentic-wallet` 等。\n\n"
+             "**想真实执行**（如「用 agent 钱包买入 100 USDT 的 BTC」）直接说即可：我会先请你在对话里确认，"
+             "再经沙箱调用 `baw` 执行；若钱包未连接 / 未登录、余额或限额不足、命令语法错误，都会给出对应的钱包侧提醒。")
     return {"reply": reply, "tools": tools}
 
 
@@ -1090,6 +1117,71 @@ def _run_sandbox_cmd(args: dict, confirmed: bool = False) -> Dict[str, Any]:
             "tools": [{"icon": "⚡", "name": "运行命令", "status": "success" if ok else "warn", "detail": detail}]}
 
 
+def _is_wallet_skill(name: str) -> bool:
+    """是否 Agentic Wallet 相关技能（baw / binance-agentic-wallet 等）。"""
+    n = (name or "").lower()
+    return any(k in n for k in ["wallet", "agentic", "baw", "onchain", "chain"])
+
+
+def _wallet_fail_hint(out: str) -> str:
+    """baw / Agentic Wallet 技能失败 → 针对钱包侧的分诊文案（避免混成交易所/通用错误）。"""
+    o = (out or "").lower()
+    if re.search(r"not logged|not connected|login|qr ?code|扫码|expired|unauthorized|forbidden|401|403|session|请登录|未连接|未登录|会话", o):
+        return ("**Agentic Wallet 未登录 / 未连接。** 请到「钱包」面板点连接、用手机 App 重新扫码登录 baw"
+                "（MPC 无密钥），并确认会话未过期。")
+    if re.search(r"command not found|no such command|unknown command|not a command|invalid .{0,20}(option|command|arg)|usage:", o):
+        return ("**baw 命令语法或版本问题。** 可先跑 `baw wallet status` 自检；参考 `baw market-order quote/swap`、"
+                "`baw limit-order buy/sell`。")
+    if re.search(r"slippage|price impact|滑点|价格影响", o):
+        return ("**滑点 / 价格影响超限。** 可提高滑点容忍度，或改用限价单（`baw limit-order`）。")
+    if re.search(r"insufficient|balance|余额|资金不足", o):
+        return ("**链上余额不足。** 请确认所选链（BSC / ETH / Base / SOL）上有足够本币与 gas 后再试。")
+    if re.search(r"daily limit|limit (reached|exceeded)|cap|上限|限额|quota", o):
+        return ("**触发币安官方每日限额**（兑换 $50k / DeFi $100k / x402 $20）。超出部分请改日再试，或改走 CEX 下单。")
+    if re.search(r"approve|allowance|授权", o):
+        return ("**需要先授权代币。** 可先让 Agent 执行 `baw approvals` 授权后再交易。")
+    if re.search(r"network|timeout|connect|rpc|网络|超时|econnreset", o):
+        return ("**网络 / RPC 问题。** 请检查网络连接后重试。")
+    return ""
+
+
+def _is_square_post_skill(name: str) -> bool:
+    n = (name or "").lower()
+    return "square" in n or "广场" in n or "square-post" in n
+
+
+def _square_post_fail_hint(out: str) -> str:
+    """square-post 技能失败 → 按 Square OpenAPI 错误码 / 常见环境问题分诊。"""
+    o = (out or "")
+    ol = o.lower()
+    # 错误码优先
+    if re.search(r"220003|api ?key ?(not found|missing|未)", o):
+        return ("**Square OpenAPI Key 未配置。** 请到创作者中心 https://www.binance.com/square/creator-center/home 生成，"
+                "再设环境变量 `BINANCE_SQUARE_OPENAPI_KEY=<key>` 或存到 `~/.config/binance-square/openapi-key` 后再试。")
+    if re.search(r"220004|key ?(expired|invalid)", ol) and re.search(r"key|key", ol):
+        return ("**Square OpenAPI Key 已过期 / 无效。** 请到创作者中心重生成并更新 `BINANCE_SQUARE_OPENAPI_KEY`。")
+    if re.search(r"220009|daily post limit|每日.*(帖|发布)", ol):
+        return ("**触发每日发帖上限**（OpenAPI 100 帖 / 日）。请改日再试或减少同主题连发。")
+    if re.search(r"220014|daily upload limit|每日.*上传", ol):
+        return ("**触发每日媒体上传上限**（400 次 / 日）。请改日再试或减少上传次数。")
+    if re.search(r"20002|20022|sensitive|敏感词", o):
+        return ("**内容含敏感词。** 请去掉或替换触发词后重试。")
+    if re.search(r"20013|content length|内容过长|too long", ol):
+        return ("**内容超过单帖长度限制。** 长文改用 article 子命令 + 标题，或拆成多帖。")
+    if re.search(r"20020|220011|empty|内容为空", o):
+        return ("**内容为空。** 给 run_skill 传入的 `--text` 文本不可为空。")
+    if re.search(r"30008|2000001|2000002|account|device|账号|设备", o):
+        return ("**账号或设备发帖受限。** 请到币安 App 端广场检查账号状态或解除限制后再试。")
+    if re.search(r"ffmpeg|ffprobe", ol):
+        return ("**缺少 ffmpeg / ffprobe。** 视频发帖需要从视频抽帧作封面，请先 `winget install ffmpeg` 或装好后确保 PATH 里有 `ffmpeg` 与 `ffprobe`。")
+    if re.search(r"command not found|no such file|enoent|cannot find module", ol):
+        return ("**Node 环境或脚本路径问题。** 请确认 Node ≥18、`node scripts/cli.mjs` 在 square-post 目录下可执行；"
+                "或直接走 run_skill 工具重试。")
+    if re.search(r"network|timeout|econnreset|fetch failed|网络|超时", ol):
+        return ("**网络问题。** 检查网络后重试；若持续失败，多为币安广场 OpenAPI 网关临时不可用。")
+    return ""
+
+
 def _tool_run_skill(args: dict, confirmed: bool = False) -> Dict[str, Any]:
     """run_skill：本地可执行类技能（baw / cli.mjs）需确认后经沙箱执行；纯指引类直接返回说明。"""
     from exec_sandbox import SandboxError, run_skill_cmd, skill_is_executable
@@ -1098,6 +1190,16 @@ def _tool_run_skill(args: dict, confirmed: bool = False) -> Dict[str, Any]:
     arg_s = args.get("args") or ""
     installed = set(skills_client.list_installed())
     if name not in installed:
+        if _is_wallet_skill(name):
+            return {"reply": (f"技能 `{name}` 未安装。\n\n"
+                              "**Agentic Wallet 技能缺失：** 请到「技能 / Skills」面板安装官方 `binance-agentic-wallet`"
+                              "（或先 `npm i -g @binance/agentic-wallet` 装 baw CLI），装好后再执行钱包操作。"),
+                    "tools": [{"icon": "🧰", "name": "执行技能", "status": "error", "detail": "未安装（钱包技能）"}]}
+        if _is_square_post_skill(name):
+            return {"reply": (f"技能 `{name}` 未安装。\n\n"
+                              "**广场发文技能缺失：** 请到「技能 / Skills」面板安装官方 `square-post`（无需 MCP / OAuth 授权），"
+                              "装好后再发币安广场。"),
+                    "tools": [{"icon": "🧰", "name": "执行技能", "status": "error", "detail": "未安装（广场技能）"}]}
         return {"reply": f"技能 `{name}` 未安装。可用：{', '.join(sorted(installed)[:8]) or '（无）'}",
                 "tools": [{"icon": "🧰", "name": "执行技能", "status": "error", "detail": "未安装"}]}
     if not skill_is_executable(name):
@@ -1117,7 +1219,12 @@ def _tool_run_skill(args: dict, confirmed: bool = False) -> Dict[str, Any]:
     try:
         r = run_skill_cmd(name, arg_s)
     except SandboxError as e:
-        return {"reply": f"⛔ 技能执行拦截：{e}", "tools": [
+        hint = ""
+        if _is_wallet_skill(name):
+            hint = _wallet_fail_hint(str(e))
+        elif _is_square_post_skill(name):
+            hint = _square_post_fail_hint(str(e))
+        return {"reply": f"⛔ 技能执行拦截：{e}" + (f"\n\n{hint}" if hint else ""), "tools": [
             {"icon": "🧰", "name": f"技能 {name}", "status": "error", "detail": str(e)[:140]}]}
     ok = r["exit_code"] == 0
     out = r.get("output", "")
@@ -1129,7 +1236,16 @@ def _tool_run_skill(args: dict, confirmed: bool = False) -> Dict[str, Any]:
             square_store.record_from_run(name, arg_s, out, r["exit_code"], via="agent")
         except Exception:
             pass
-    return {"reply": f"{'✅' if ok else '⚠️'} 技能 **{name}** 退出码 {r['exit_code']}（{r['elapsed']}s）\n\n```\n{r['output'][:1200]}\n```",
+    reply = f"{'✅' if ok else '⚠️'} 技能 **{name}** 退出码 {r['exit_code']}（{r['elapsed']}s）\n\n```\n{r['output'][:1200]}\n```"
+    if not ok:
+        hint = ""
+        if _is_wallet_skill(name):
+            hint = _wallet_fail_hint(out)
+        elif _is_square_post_skill(name):
+            hint = _square_post_fail_hint(out)
+        if hint:
+            reply += "\n\n" + hint
+    return {"reply": reply,
             "intent": "tool", "data": r,
             "tools": [{"icon": "🧰", "name": f"技能 {name}", "status": "success" if ok else "warn", "detail": detail}]}
 
