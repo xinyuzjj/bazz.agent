@@ -10,6 +10,7 @@ import os
 import json
 import time
 import threading
+import re
 
 from state import (get_setting, set_setting, new_conversation,
                    add_message, list_conversations)
@@ -71,6 +72,66 @@ def _parse(spec):
     return ("interval", 21600)
 
 
+def parse_time_to_spec(s):
+    """把自然语言/简写时间归一到调度器可读的 cron / interval 规格字符串。
+    支持：
+      - '09:00' / '9:30' → cron 'MM HH * * *'
+      - '9 点' / '9点'    → cron '0 9 * * *'
+      - '每天 09:00'      → 同 09:00（去掉『每天/每日』前缀）
+      - '0 9 * * *' 等 5 字段 cron 原样回传
+      - 'interval:30m' / 'interval:1h' / 'interval:3600' → 'interval:<秒>'
+    解析失败返回 None。"""
+    if not s:
+        return None
+    t = str(s).strip().strip("`'\"")
+    t = re.sub(r"^(每天|每日|每天早上|每天上午|每天下午|每天晚上|每天\\s*)", "", t).strip()
+    if not t:
+        return None
+    m = re.match(r"^interval\s*:\s*(\d+)\s*([smhd]?)$", t, re.I)
+    if m:
+        n = int(m.group(1))
+        u = (m.group(2) or "s").lower()
+        sec = {"s": 1, "m": 60, "h": 3600, "d": 86400}.get(u, 1) * n
+        return f"interval:{sec}"
+    if re.match(r"^interval\s*:\s*\d+$", t):
+        return t  # 已规范化的 interval:秒
+    m = re.match(r"^(\d{1,2})\s*[:点]\s*(\d{1,2})$", t)
+    if m:
+        h, mn = int(m.group(1)), int(m.group(2))
+        if 0 <= h <= 23 and 0 <= mn <= 59:
+            return f"{mn} {h} * * *"
+    m = re.match(r"^(\d{1,2})\s*[点时:]\s*(\d{1,2})\s*分?$", t)
+    if m:
+        h, mn = int(m.group(1)), int(m.group(2))
+        if 0 <= h <= 23 and 0 <= mn <= 59:
+            return f"{mn} {h} * * *"
+    # 中文口语：『N 点』『N 点半』『N 点 N 分』
+    m = re.match(r"^(\d{1,2})\s*点\s*半$", t)
+    if m:
+        h = int(m.group(1))
+        if 0 <= h <= 23:
+            return f"30 {h} * * *"
+    m = re.match(r"^(\d{1,2})\s*点$", t)
+    if m:
+        h = int(m.group(1))
+        if 0 <= h <= 23:
+            return f"0 {h} * * *"
+    # 『上午 N 点 / 下午 N 点』→ 12 小时制换算（仅整点；半/分带也支持）
+    m = re.match(r"^(上午|早上|凌晨)\s*(\d{1,2})\s*点(\s*半)?$", t)
+    if m:
+        h = int(m.group(2)); half = bool(m.group(3))
+        return f"{(30 if half else 0)} {h % 12} * * *"
+    m = re.match(r"^(下午|晚上)\s*(\d{1,2})\s*点(\s*半)?$", t)
+    if m:
+        h = int(m.group(2)); half = bool(m.group(3))
+        h12 = h % 12 + 12 if h != 12 else 12
+        return f"{(30 if half else 0)} {h12} * * *"
+    parts = t.split()
+    if len(parts) >= 2 and all(re.match(r"^[\d*/,\-]+$", p) for p in parts):
+        return t
+    return None
+
+
 def _next(spec, now):
     kind, val = _parse(spec)
     if kind == "interval":
@@ -87,16 +148,66 @@ def _next(spec, now):
         return now + 3600
 
 
-def run_job(job):
-    """执行一个任务，返回摘要文本。若绑定 persona，则报告写入该 Agent 的专属会话（Hermes Routines）。"""
+def _run_market_scan():
+    """默认任务：全市场 Top 行情扫描 + 风险提示 → 报告文本。"""
     from scanner import scan_universe
     from reporter import format_report
     from risk_guard import check_risks
-
     sigs = scan_universe(min_change_pct=2.0, min_funding=0.01, universe_size=300, max_signals=12)
     best = sigs[0] if sigs else {"symbol": "BTCUSDT", "price": "0", "change_pct": 0, "funding_rate": 0}
     tips = check_risks(best, 50)
-    report = format_report(best, {"status": "cron_daily"}, tips)
+    return format_report(best, {"status": "cron_daily"}, tips)
+
+
+def _run_meme_scan():
+    """妖币雷达日报：取 Monster Radar 同源 ignition + takeoff 两组，按 RPS 给简报。"""
+    try:
+        from scanner import get_ignition_coins, get_monster_coins
+        ign = get_ignition_coins(limit=8) or []
+        tkf = get_monster_coins(limit=8) or []
+    except Exception as e:
+        return f"（妖币雷达暂不可用：{e}）"
+
+    def _fmt(rows, label):
+        if not rows:
+            return f"- {label}：暂无信号"
+        head = []
+        for r in rows[:6]:
+            sym = r.get("symbol", "?")
+            px = r.get("price", "n/a")
+            qv = r.get("quote_volume", 0) or 0
+            ch = r.get("change_pct", 0) or 0
+            head.append(f"- **{sym}** · 价 {px} · 24h {ch:+.2f}% · 量 {qv:,.0f} USDT")
+        return "\n".join(head)
+
+    lines = [
+        "### 🐸 妖币雷达日报 · " + time.strftime("%Y-%m-%d %H:%M"),
+        "",
+        "**启动前埋伏（ignition）**",
+        _fmt(ign, "启动前"),
+        "",
+        "**起飞中跟踪（takeoff）**",
+        _fmt(tkf, "起飞中"),
+    ]
+    return "\n".join(lines)
+
+
+TASK_HANDLERS = {
+    "daily_scan_report": _run_market_scan,
+    "meme_scan_report": _run_meme_scan,
+}
+
+
+def run_job(job):
+    """执行一个任务，返回摘要文本。若绑定 persona，则报告写入该 Agent 的专属会话（Hermes Routines）。"""
+    task = job.get("task") or "daily_scan_report"
+    handler = TASK_HANDLERS.get(task)
+    if not handler:
+        return f"未知任务类型: {task}"
+    try:
+        report = handler()
+    except Exception as e:
+        report = f"任务 {task} 执行失败：{type(e).__name__}: {e}"
     persona = job.get("persona") or ""
     if persona:
         # Hermes Routines：结果投递到该 Agent 的专属会话
@@ -107,7 +218,7 @@ def run_job(job):
         add_message(cid, "assistant",
                     f"## 📅 Routine · {time.strftime('%Y-%m-%d %H:%M')}\n\n" + report,
                     tools=[{"icon": "📅", "name": "定时任务", "status": "success",
-                            "detail": f"{len(sigs)} 个信号"}],
+                            "detail": f"{task} · 周期 {job.get('schedule','?')}"}],
                     data={"persona": persona, "intent": "routine"})
         touch_conversation(cid)
         return report
@@ -116,7 +227,7 @@ def run_job(job):
     add_message(cid, "assistant",
                 f"## 📅 定时日报 · {time.strftime('%Y-%m-%d %H:%M')}\n\n" + report,
                 tools=[{"icon": "📅", "name": "定时扫描", "status": "success",
-                        "detail": f"{len(sigs)} 个信号"}])
+                        "detail": f"{task} · 周期 {job.get('schedule','?')}"}])
     return report
 
 

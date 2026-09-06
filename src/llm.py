@@ -608,6 +608,33 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "schedule_task",
+            "description": ("管理后台定时任务（cron / interval）。任务会被桌面后端守护线程到点自动执行——**不需要 Agent 开着**。"
+                            "action：list 列出全部任务；create 新建（必填 name + time，task 默认 daily_scan_report，可选 meme_scan_report）；"
+                            "delete / toggle / run 用 job_id（toggle 可传 enabled）。\n"
+                            "time 支持：`09:00` / `9 点` / `0 9 * * *`（5 字段 cron）/ `interval:30m` 或 `interval:1h`。\n"
+                            "用户说『帮我做一个定时任务』『每天早上 9 点分析妖币』『每隔 30 分钟扫一次』『加个日报』『每天 9 点检查 BTC』"
+                            "『加个定时提醒』时必须调本工具——不要给一句手动话术，也不要用 mcp_call 写系统级 cron。"
+                            "任务被触发后报告会自动写入『BAZZ Agent 日报』会话（不需要用户在场）。"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["list", "create", "delete", "toggle", "run"],
+                               "description": "list=列任务；create=新建（必填 name+time）；delete/toggle/run 用 job_id"},
+                    "name": {"type": "string", "description": "任务名（create 时必填）"},
+                    "time": {"type": "string", "description": "时间规格（create 时必填），如 09:00 / 0 9 * * * / interval:30m"},
+                    "task": {"type": "string", "enum": ["daily_scan_report", "meme_scan_report"],
+                             "description": "任务类型：daily_scan_report=全市场 Top 行情扫描；meme_scan_report=妖币雷达（Monster Radar 同源 ignition+takeoff）"},
+                    "job_id": {"type": "string", "description": "已有任务 ID（delete/toggle/run 必填）"},
+                    "enabled": {"type": "boolean", "description": "toggle 时是否启用"},
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "run_skill",
             "description": ("执行已安装的 Binance Skills Hub 技能（位于 .agents/skills/<name>/）。\n"
                             "- 带本地脚本的（scripts/cli.mjs）或 binance-agentic-wallet：真实运行（需用户确认）\n"

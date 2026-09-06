@@ -70,7 +70,7 @@ def _norm_tool(t: dict) -> dict:
 def _norm_tools(items):
     return [_norm_tool(t) for t in (items or [])]
 
-from scanner import scan_universe, scan_symbols, market_movers, SECTORS
+from scanner import scan_universe, scan_symbols, market_movers, SECTORS, get_snapshot, get_funding_rates, get_top_liquid_symbols
 from risk_guard import check_risks, format_risk_report
 from executor import confirm_and_place
 from reporter import format_report
@@ -169,9 +169,13 @@ def _system_prompt() -> str:
             "   风险/风控 → check_risk；买卖/多空 → propose_trade（仅出方案，下单需确认）；\n"
             "   支付/x402/402 → explain_x402；skills/技能 → list_skills；\n"
             "   链上/钱包/defi → onchain_ops；『记住…』→ memory_write；能力介绍 → get_help；\n"
+            "   **妖币 / 启动前 / 埋伏 / 蓄势 / meme / 百倍币 → 立即用 meme_watch（**直接调取行情模块 Monster Radar 同源数据**——scanner.get_ignition_coins/get_monster_coins，与「行情→妖币雷达」展示内容 100% 一致），"
+            "**不要**自己用价量/费率二次筛；拿到候选后可用 market_quote 查某币实时行情、propose_trade 给方案。\n"
+            "   **mode 必须按用户语义传**：用户说『启动前/埋伏/蓄势/点火前/吸筹/二买点』→ `mode='ignition'`；说『起飞中/追涨/已爆发/拉升中/暴涨中/加速/起飞』→ `mode='takeoff'`；说『妖币/meme/百倍币/十倍币』等无明确阶段 → `mode='both'`。\n"
             "   **发币安广场 / Square 发文 / 发推 / 发图文 / 『把这篇分析发出去』→ 必须用 run_skill(\n"
             "       skill_name='square-post', args='<text|article|image|video 子命令 + JSON 参数>'\n"
             "     ),不要走 mcp_call —— MCP binance 网关只有公开行情/账户/交易端点，没有发广场的能力，OAuth 授权也帮不上**。\n"
+            "   **『帮我做个定时任务 / 每天 9 点分析妖币 / 每天早上定时扫描 / 每隔 30 分钟扫一次 / 加个日报 / 加个定时提醒 / cron / 自动定时』→ 立即用 schedule_task(action='create', name=…, time=…, task=…) 在后台真实注册 cron / interval 任务（不是给一句手动话术，也不要走 mcp_call 写系统级 cron）**。time 支持 `09:00`/`9 点`/`0 9 * * *`/`interval:30m`；task 默认 daily_scan_report，做妖币雷达就传 meme_scan_report。任务到点自动跑，结果写入『BAZZ Agent 日报』会话（不需要用户在场）。**\n"
             "2) **绝不要先用文字叙述『我先调用 xxx』或『正在调用 xxx』！**\n"
             "   直接在 reply 之外、以 tool_calls 形式调用；用户必须看到真实数据。\n"
             "   调完拿到数据后再用中文总结结论；不要在 text 里编造数字。\n"
@@ -206,7 +210,8 @@ def _detect(message: str) -> str:
     if re.search(r"记住|笔记|记录|记一下|存一下", message): return "memory_write"
     if re.search(r"你?记得|记忆|我之前|我的偏好|我告诉过你", message): return "memory_read"
     if any(k in t for k in ["并行", "全面扫描", "所有板块", "板块", "parallel"]): return "parallel"
-    if any(k in t for k in ["定时", "cron", "日报", "schedule", "自动扫描"]): return "cron"
+    if (re.search(r"定时|cron|每隔|日报|schedule|自动定时|自动.{0,4}扫描|帮我做.*定时|每天.{0,5}点|定时提醒", t)
+            or re.search(r"每天.{0,8}(分析|扫|检查|看|提醒|推送)", message)): return "cron"
     if any(k in t for k in ["scan", "扫描", "数据", "分析", "异常", "看看",
                             "行情", "市场", "大盘", "涨跌", "涨幅", "异动", "波动", "走势"]): return "scan"
     if any(k in t for k in ["risk", "风险", "风控", "check"]): return "risk"
@@ -223,6 +228,7 @@ def _detect(message: str) -> str:
     if any(k in t for k in ["pay", "支付", "x402", "b402", "402"]): return "payment"
     if any(k in t for k in ["install", "安装", "add skill"]): return "install"
     if any(k in t for k in ["chain", "链上", "defi", "质押", "wallet", "钱包"]): return "onchain"
+    if re.search(r"妖币|meme|启动前|埋伏|蓄势|将爆发|蓄势待发|潜力币|百倍币|十倍币", t): return "meme"
     if any(k in t for k in ["skill", "skills", "技能"]): return "skills"
     if any(k in t for k in ["tool", "tools", "mcp", "工具", "接口"]): return "tools"
     if any(k in t for k in ["help", "帮助", "功能", "怎么用"]): return "help"
@@ -307,6 +313,119 @@ def _run_risk():
     return {"reply": format_risk_report(best.get("symbol", "?"), tips), "tools": tools}
 
 
+def _run_meme_watch(mode: str = "both"):
+    """「妖币 / 启动前 / 埋伏 / meme」：直接调行情模块 Monster Radar 同源数据
+    (scanner.get_ignition_coins + get_monster_coins)，与「行情→妖币雷达」展示
+    内容 100% 一致。
+
+    mode:
+      - "ignition" → 仅启动前·埋伏（用户说"启动前/埋伏/蓄势/点火前/吸筹"）
+      - "takeoff"  → 仅起飞中·追涨（用户说"起飞中/追涨/已爆发/拉升中/暴涨中/加速"）
+      - "both"     → 两组都给（默认）
+    """
+    from scanner import get_ignition_coins, get_monster_coins
+
+    # 启动前·埋伏（主推）
+    try:
+        ig_full = get_ignition_coins(force=False, top_n=120, min_qv=2e6) or {}
+    except Exception as e:
+        return {"reply": (f"⚠️ 拉取 Monster Radar「启动前」数据失败：{e}\n\n"
+                          "请确认后端服务正常，或直接打开「行情」页看 Monster Radar。"),
+                "tools": [{"icon": "🪙", "name": "妖币雷达", "status": "error", "detail": str(e)[:140]}]}
+    # 起飞中·追涨
+    try:
+        tk_full = get_monster_coins(force=False, top_n=120, min_qv=2e6) or {}
+    except Exception as e:
+        tk_full = {"coins": [], "env": "n/a"}
+
+    env = ig_full.get("env") or tk_full.get("env") or "n/a"
+    updated = ig_full.get("updated_at") or tk_full.get("updated_at") or 0
+
+    m = (mode or "both").lower()
+    if m not in ("ignition", "takeoff", "both"):
+        m = "both"
+
+    if m == "ignition":
+        ig_coins = ig_full.get("coins", []) or []
+        tk_coins = []
+        head_ig = ""
+        head_tk = None
+    elif m == "takeoff":
+        ig_coins = []
+        tk_coins = tk_full.get("coins", []) or []
+        head_ig = None
+        head_tk = ""
+    else:
+        ig_coins = ig_full.get("coins", []) or []
+        tk_coins = tk_full.get("coins", []) or []
+        head_ig = ""
+        head_tk = ""
+
+    def _lines_for(coins, head, note_takeoff=False):
+        out = [head]
+        if not coins:
+            out.append("（暂无符合的标的）")
+            return out
+        for c in coins[:8]:
+            sym = c.get("symbol", "?")
+            price = c.get("price")
+            d7 = c.get("change7d_pct") or 0.0
+            d30 = c.get("change30d_pct") or 0.0
+            dd = c.get("drawdown_pct") or 0.0
+            fl = c.get("from_low_pct") or 0.0
+            qv = c.get("quote_volume") or 0
+            vr = c.get("vol_ratio") or 0.0
+            score = c.get("score") or 0.0
+            tag = c.get("tag", "")
+            side = c.get("side", "")
+            note = c.get("note", "")
+            qv_m = qv / 1e6
+            price_str = f"`{price}`" if price is not None else "n/a"
+            out.append(
+                f"- **{sym}** · 现价 {price_str} · 7d {d7:+.2f}% · 30d {d30:+.2f}% · "
+                f"回撤 {dd:+.2f}% · 距低位 {fl:+.2f}% · 24h 量 {qv_m:.2f}M · "
+                f"量比 {vr:.2f} · 评分 **{score:.1f}** · {tag} ({side}) — {note}"
+            )
+        return out
+
+    lines = [
+        f"**妖币雷达 · Monster Radar**（与「行情→妖币雷达」页面同源数据 · mode=`{m}`）",
+        "",
+        f"· 扫描池：成交额前 120 个 USDT 现货 · 大盘币按当前 24h 成交额**动态**识别（非固定）",
+        f"· 大盘状态：`{env}` · 缓存更新时间戳：{updated}",
+        "",
+    ]
+    if head_ig is not None:
+        lines.append("## 1) 启动前·埋伏（主推 / 点火前）")
+        lines += _lines_for(ig_coins, head_ig)
+        lines.append("")
+    if head_tk is not None:
+        lines.append("## 2) 起飞中·追涨（高风险 / 已爆发）")
+        lines += _lines_for(tk_coins, head_tk, note_takeoff=True)
+        lines.append("")
+    lines += [
+        "**下一步建议**：让我对感兴趣的某个币做——",
+        "- `market_quote(symbol='XXX')` 查实时行情；",
+        "- `propose_trade(symbol='XXX', direction='BULLISH'|'BEARISH')` 生成带止损/止盈的下单方案（需你确认才会真实下单）；",
+        "- 或继续读其他维度的辅助：run_skill('meme-rush') 拉官方 meme 榜单；"
+        " run_skill('crypto-market-rank') 拉市场排行；",
+        "- 也可直接点行情页 Monster Radar 里任意币的「现货买入 / 合约做事」跳到对话。",
+    ]
+
+    tools = [
+        {"icon": "🪙", "name": "妖币雷达·启动前·埋伏", "status": "success" if ig_coins else "warn",
+         "detail": f"{len(ig_coins)} 个埋伏候选（与行情页同源）"},
+        {"icon": "🚀", "name": "妖币雷达·起飞中·追涨", "status": "success" if tk_coins else "warn",
+         "detail": f"{len(tk_coins)} 个已爆发跟踪"},
+    ]
+    return {
+        "reply": "\n".join(lines),
+        "tools": tools,
+        "data": {"ignition": ig_coins[:12], "takeoff": tk_coins[:12],
+                 "env": env, "updated_at": updated},
+    }
+
+
 def _run_execute(confirm: bool = False, signal: dict = None, message: str = ""):
     if confirm and signal:
         res = confirm_and_place(signal, confirm=True)
@@ -383,6 +502,79 @@ def _run_payment():
         lines.append(f"**{s['step']}. {s['title']}**\n> {s['detail']}")
     lines.append("\n买家离线 EIP-712 签名 → Facilitator 验证 → 链上结算（gas 由 B402 代付）。")
     return {"reply": "\n".join(lines), "tools": tools, "data": flow}
+
+
+def _run_schedule_tool(action: str = "list", name: str = "", time_spec: str = "", task: str = "daily_scan_report",
+                      job_id: str = "", enabled: bool = True):
+    """调度任务工具：list/create/delete/toggle/run。后端守护线程到点自动执行，报告写入『BAZZ Agent 日报』会话。"""
+    try:
+        from scheduler import (add_job, remove_job, set_job_enabled, get_job, run_job,
+                              parse_time_to_spec, get_jobs)
+    except Exception as e:
+        return {"reply": f"调度器不可用：{e}", "tools": [{"icon": "📅", "name": "定时任务", "status": "error",
+                                                          "detail": str(e)}]}
+    action = (action or "list").strip()
+    if action == "list":
+        jobs = get_jobs()
+        lines = ["**当前定时任务**", ""]
+        for j in jobs:
+            st = "🟢" if j.get("enabled") else "⚪"
+            nxt = j.get("next_run") or 0
+            nxt_s = time.strftime("%Y-%m-%d %H:%M", time.localtime(nxt)) if nxt else "—"
+            lines.append(f"- {st} `{j.get('id','?')}` **{j.get('name','?')}** · "
+                         f"`{j.get('schedule','?')}` · {j.get('task','?')} · next={nxt_s}")
+        return {"reply": "\n".join(lines), "tools": [{"icon": "📅", "name": "定时任务", "status": "info",
+                                                       "detail": f"{len(jobs)} 个任务"}], "intent": "cron",
+                "data": {"jobs": jobs}}
+    if action == "create":
+        if not name or not time_spec:
+            return {"reply": "缺少 name 或 time 参数。", "tools": [{"icon": "📅", "name": "定时任务", "status": "error",
+                                                                   "detail": "name+time 必填"}]}
+        spec = parse_time_to_spec(time_spec)
+        if not spec:
+            return {"reply": f"无法解析时间规格：`{time_spec}`（支持 `09:00` / `0 9 * * *` / `interval:30m`）",
+                    "tools": [{"icon": "📅", "name": "定时任务", "status": "error", "detail": "time 格式无效"}]}
+        try:
+            jid = add_job(name=name, schedule=spec,
+                          task=task if task in ("daily_scan_report", "meme_scan_report") else "daily_scan_report",
+                          enabled=bool(enabled), persona="")
+        except Exception as e:
+            return {"reply": f"创建失败：{e}", "tools": [{"icon": "📅", "name": "定时任务", "status": "error",
+                                                          "detail": str(e)}]}
+        nxt = (get_job(jid) or {}).get("next_run") or 0
+        nxt_s = time.strftime("%Y-%m-%d %H:%M", time.localtime(nxt)) if nxt else "—"
+        return {"reply": (f"已创建定时任务：**{name}**\n"
+                          f"规格：`{spec}` · 任务类型：`{task}`\n"
+                          f"下次执行：{nxt_s}（到点会自动跑，结果写入『BAZZ Agent 日报』会话，不需要你在线）"),
+                "tools": [{"icon": "📅", "name": "定时任务", "status": "success", "detail": f"{spec} · {task}"}],
+                "intent": "cron", "data": {"job_id": jid, "schedule": spec, "task": task}}
+    if action == "delete":
+        if not job_id:
+            return {"reply": "缺少 job_id。", "tools": [{"icon": "📅", "name": "定时任务", "status": "error", "detail": "job_id 必填"}]}
+        remove_job(job_id)
+        return {"reply": f"已删除定时任务：`{job_id}`", "tools": [{"icon": "📅", "name": "定时任务", "status": "success",
+                                                                  "detail": job_id}], "intent": "cron"}
+    if action == "toggle":
+        if not job_id:
+            return {"reply": "缺少 job_id。", "tools": [{"icon": "📅", "name": "定时任务", "status": "error", "detail": "job_id 必填"}]}
+        set_job_enabled(job_id, bool(enabled))
+        return {"reply": f"已{'启用' if enabled else '暂停'}定时任务：`{job_id}`",
+                "tools": [{"icon": "📅", "name": "定时任务", "status": "success", "detail": f"{job_id} -> {enabled}"}],
+                "intent": "cron"}
+    if action == "run":
+        if not job_id:
+            return {"reply": "缺少 job_id。", "tools": [{"icon": "📅", "name": "定时任务", "status": "error", "detail": "job_id 必填"}]}
+        job = get_job(job_id)
+        if not job:
+            return {"reply": f"找不到任务 `{job_id}`。", "tools": [{"icon": "📅", "name": "定时任务", "status": "error", "detail": "not found"}]}
+        try:
+            summary = run_job(job)
+        except Exception as e:
+            return {"reply": f"执行失败：{e}", "tools": [{"icon": "📅", "name": "定时任务", "status": "error", "detail": str(e)}]}
+        return {"reply": f"已立即执行：`{job.get('name')}`\n\n{summary[:1000]}",
+                "tools": [{"icon": "📅", "name": "定时任务", "status": "success", "detail": job_id}],
+                "intent": "cron", "data": {"ran": job_id, "summary": summary[:2000]}}
+    return {"reply": f"未知 action：{action}", "tools": [{"icon": "📅", "name": "定时任务", "status": "error", "detail": action}]}
 
 
 def _run_onchain():
@@ -781,6 +973,17 @@ def _dispatch_tool(name: str, args: dict, confirmed: bool = False) -> Dict[str, 
         return _run_find_skills(args.get("keyword") or "")
     if name == "onchain_ops":
         return _run_onchain()
+    if name == "meme_watch":
+        return _run_meme_watch(mode=(args.get("mode") or "both"))
+    if name == "schedule_task":
+        return _run_schedule_tool(
+            action=args.get("action") or "list",
+            name=args.get("name") or "",
+            time_spec=args.get("time") or "",
+            task=args.get("task") or "daily_scan_report",
+            job_id=args.get("job_id") or "",
+            enabled=args.get("enabled", True),
+        )
     if name == "memory_write":
         return _run_memory_write("记住：" + (args.get("text", "") or ""))
     if name == "fetch_url":
@@ -960,10 +1163,11 @@ def _intent_to_tool(intent: str) -> Optional[str]:
         "execute": "propose_trade",
         "payment": "explain_x402",
         "onchain": "onchain_ops",
+        "meme": "meme_watch",
         "skills": "list_skills",
         "memory_write": "memory_write",
         "memory_read": "memory_write",
-        "cron": "list_skills",
+        "cron": "schedule_task",
     }
     return m.get(intent)
 
