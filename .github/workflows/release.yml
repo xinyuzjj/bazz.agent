@@ -1,0 +1,118 @@
+# ============================================================
+# BAZZ.AGENT — Windows 便携版自动打包 & Release 发布
+#   触发：
+#     · push tag v*        （推荐：git tag v1.2.1 && git push origin v1.2.1）
+#     · workflow_dispatch  （手动，可填版本号，默认 1.2.1）
+#   产物：BAZZ.AGENT-v<版本>-win32-x64-portable.zip → 同名 Release（Latest）
+# ============================================================
+name: release-portable
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（如 1.2.1，不带 v）。留空默认 1.2.1"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    env:
+      BAZZ_STAGE: ${{ github.workspace }}/dist
+      BAZZ_PROJ: ${{ github.workspace }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 计算版本 / tag / zip 路径
+        shell: pwsh
+        run: |
+          $raw = ""
+          if ("${{ github.event_name }}" -eq "push") {
+            $raw = "${{ github.ref_name }}"
+          } elseif ("${{ inputs.version }}") {
+            $raw = "${{ inputs.version }}"
+          }
+          if ([string]::IsNullOrWhiteSpace($raw)) { $raw = "1.2.1" }
+          $v = $raw.TrimStart('v')
+          Add-Content -Path $env:GITHUB_ENV -Value "BAZZ_VERSION=$v"
+          Add-Content -Path $env:GITHUB_ENV -Value "BAZZ_TAG=v$v"
+          Add-Content -Path $env:GITHUB_ENV -Value "BAZZ_ZIP=$env:BAZZ_STAGE/BAZZ.AGENT-v$v-win32-x64-portable.zip"
+          Write-Host "BAZZ_VERSION=$v  BAZZ_TAG=v$v"
+          Write-Host "BAZZ_ZIP=$env:BAZZ_STAGE/BAZZ.AGENT-v$v-win32-x64-portable.zip"
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Python 依赖（含 PyInstaller 收集清单）
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller `
+            pillow sqlalchemy aiohttp websockets cryptography httpx `
+            charset-normalizer certifi idna anyio sniffio h11 httpcore `
+            click docutils jinja2 markupsafe itsdangerous werkzeug `
+            PyYAML packaging pluggy
+
+      - name: 前端构建（npm ci 含 electron 31.7.7 二进制下载）
+        working-directory: frontend
+        shell: pwsh
+        run: |
+          npm ci
+          npm run build
+          if (-not (Test-Path "node_modules/electron/dist/electron.exe")) { throw "electron dist 缺失" }
+
+      - name: PyInstaller 冻后端
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean `
+            --distpath "$env:BAZZ_STAGE/dist_py" `
+            --workpath "$env:BAZZ_STAGE/build_py" `
+            ScoutBackend.spec
+          if (-not (Test-Path "$env:BAZZ_STAGE/dist_py/ScoutBackend/ScoutBackend.exe")) { throw "ScoutBackend.exe 未生成" }
+
+      - name: 安装 @electron/packager
+        shell: pwsh
+        run: |
+          npm install --no-save --no-package-lock @electron/packager@20.3.0
+
+      - name: 组装桌面便携版并打 zip
+        shell: pwsh
+        run: |
+          node build-desktop.js
+          if (-not (Test-Path $env:BAZZ_ZIP)) { throw "便携 zip 未生成: $env:BAZZ_ZIP" }
+
+      - name: 发布 / 更新 GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = $env:BAZZ_TAG
+          $zip = $env:BAZZ_ZIP
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag 已存在 → 覆盖上传资产"
+            gh release upload $tag $zip --repo $env:GITHUB_REPOSITORY --clobber
+            if ($LASTEXITCODE -ne 0) { throw "release upload 失败" }
+          } else {
+            Write-Host "创建 Release $tag（含变更摘要 --generate-notes）"
+            gh release create $tag $zip --repo $env:GITHUB_REPOSITORY `
+              --title "BAZZ.AGENT $tag" --generate-notes
+            if ($LASTEXITCODE -ne 0) { throw "release create 失败" }
+          }
+          gh release view $tag --repo $env:GITHUB_REPOSITORY
