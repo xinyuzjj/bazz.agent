@@ -148,7 +148,7 @@ export function ChatView({
       names = agents.map((a) => a.name);
     }
     const all: { name: string; avatar: string; color: string; title: string }[] = [];
-    if (inRoom && roomInfo && names.length) all.push({ name: "everyone", avatar: "👥", color: "#F0B90B", title: "全体成员 · 每人发言一轮" });
+    if (inRoom && roomInfo && names.length) all.push({ name: "everyone", avatar: "👥", color: "#F0B90B", title: t("chat.memberAll") });
     for (const n of names) {
       const ag = agents.find((a) => a.name === n);
       all.push({ name: n, avatar: ag?.avatar ?? "👤", color: ag?.color ?? "#8B8F98", title: ag?.title ?? "Agent" });
@@ -207,20 +207,20 @@ export function ChatView({
     loadHistory(c.id);
   };
   const createRoom = async () => {
-    if (!gName.trim()) { setRoomMsg("房间需要一个名字"); return; }
-    if (gPicked.length < 2) { setRoomMsg("至少勾选 2 个 Agent 加入群聊"); return; }
+    if (!gName.trim()) { setRoomMsg(t("chat.roomNeedName")); return; }
+    if (gPicked.length < 2) { setRoomMsg(t("chat.roomNeed2")); return; }
     try {
       const r: any = await api.createRoom({ name: gName.trim(), members: gPicked });
       setGroupFormOpen(false); setRoomMsg("");
       setConvId(r.id);
       refreshList();
       loadHistory(r.id);
-    } catch (e: any) { setRoomMsg(`创建失败: ${e?.message ?? e}`); }
+    } catch (e: any) { setRoomMsg(t("chat.roomCreateFail", { err: e?.message ?? e })); }
   };
   const togglePick = (name: string) =>
     setGPicked((prev) => prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]);
   const delRoom = async (rid: string) => {
-    if (!window.confirm("删除该群聊房间（含全部成员记录）？")) return;
+    if (!window.confirm(t("chat.confirmDelRoom"))) return;
     try { await api.deleteRoom(rid); } catch {}
     refreshList();
     if (convId === rid) { setConvId(null); setMessages([]); }
@@ -231,7 +231,7 @@ export function ChatView({
   };
   const loadHistory = async (cid: string) => {
     setLoadingHist(true);
-    pushLog(`LOAD > 会话 ${cid.slice(0, 8)}`);
+    pushLog(`LOAD > ${t("chat.logLoad", { id: cid.slice(0, 8) })}`);
     try {
       const r: any = await api.getConversation(cid);
       const msgs: ChatMsg[] = (r?.messages ?? []).map((m: any, i: number) => ({
@@ -278,7 +278,7 @@ export function ChatView({
   };
   const delConv = async (cid: string) => {
     if (streaming) return;
-    if (!window.confirm("删除该会话及全部消息？")) return;
+    if (!window.confirm(t("chat.confirmDelSession"))) return;
     try { await api.deleteConversation(cid); } catch {}
     setConvMenu(null);
     refreshList();
@@ -302,7 +302,7 @@ export function ChatView({
   // ============ Bots（Hermes 式 Agent 档案）============
   const loadAgents = async () => {
     try { const d: any = await api.bots(); setAgents(Array.isArray(d?.agents) ? d.agents : []); }
-    catch (e: any) { setBotMsg(`加载 Bots 失败: ${e?.message ?? e}`); }
+    catch (e: any) { setBotMsg(t("chat.loadBotsFail", { err: e?.message ?? e })); }
   };
   useEffect(() => { loadAgents(); }, []);
   useEffect(() => { if (leftTab === "bots") loadAgents(); /* eslint-disable-line */ }, [leftTab]);
@@ -381,17 +381,17 @@ export function ChatView({
              tools: Array.isArray(c.tools) ? c.tools : [], prompt: c.prompt ?? "" });
   };
   const saveAgent = async () => {
-    if (!form.name.trim()) { setBotMsg("需要一个名字（Name）"); return; }
+    if (!form.name.trim()) { setBotMsg(t("chat.botNeedName")); return; }
     const payload = { ...form, name: form.name.trim(), config: cfg };
     try {
       if (editBot === "new") await api.addBot(payload);
       else if (editBot) await api.updateBot(editBot.id, payload);
       setEditBot(null); setBotMsg("");
       await loadAgents();
-    } catch (e: any) { setBotMsg(`保存失败: ${e?.message ?? e}`); }
+    } catch (e: any) { setBotMsg(t("chat.botSaveFail", { err: e?.message ?? e })); }
   };
   const removeAgent = async (b: Agent) => {
-    if (!window.confirm(`删除 Agent「${b.name}」？`)) return;
+    if (!window.confirm(t("chat.confirmDelAgent", { name: b.name }))) return;
     try { await api.deleteBot(b.id); if (activeBot?.id === b.id) setActiveBot(null); await loadAgents(); }
     catch (e: any) { setBotMsg(String(e?.message ?? e)); }
   };
@@ -404,7 +404,7 @@ export function ChatView({
       const a = document.createElement("a");
       a.href = url; a.download = `bot-${b.id}.md`; a.click();
       setTimeout(() => URL.revokeObjectURL(url), 3000);
-    } catch (e: any) { setBotMsg(`导出失败: ${e?.message ?? e}`); }
+    } catch (e: any) { setBotMsg(t("chat.botExportFail", { err: e?.message ?? e })); }
   };
   // 导入 Bot 包（读取本地 .md 文本 → 写盘）
   const importAgent = async (file?: File) => {
@@ -418,9 +418,9 @@ export function ChatView({
     const md = await pick.text();
     try {
       const ag: any = await api.importBot(md);
-      setBotMsg(`已导入 Agent「${ag?.name ?? ""}」`);
+      setBotMsg(t("chat.botImported", { name: ag?.name ?? "" }));
       await loadAgents();
-    } catch (e: any) { setBotMsg(`导入失败: ${e?.message ?? e}`); }
+    } catch (e: any) { setBotMsg(`${t("chat.importFail")}: ${e?.message ?? e}`); }
   };
   // 点 Bot = 进入该 bot 的专属界面：会话列表只显示它自己的记录，并自动打开它最近的一段
   const talkWith = async (b: Agent) => {
@@ -516,7 +516,7 @@ export function ChatView({
     const W: any = window as any;
     const Rec = W.SpeechRecognition || W.webkitSpeechRecognition;
     if (!Rec) {
-      pushLog("MIC_ERR > 当前浏览器不支持 Web Speech API（请用 Chrome / Edge）");
+      pushLog(`MIC_ERR > ${t("chat.micUnsupported")}`);
       return;
     }
     if (listening) {
@@ -541,7 +541,7 @@ export function ChatView({
     rec.start();
     recRef.current = rec;
     setListening(true);
-    pushLog("MIC > 录音中… 再次点击停止");
+    pushLog(`MIC > ${t("chat.micRec")}`);
   };
 
   // 附件：调起原生文件选择器；图片（image/*）压缩成 dataURL 显示预览+可被模型直读/OCR
@@ -555,10 +555,10 @@ export function ChatView({
   // 图片降采样 → JPEG dataURL（限制最大边长，控制 base64 体积）
   const fileToDataUrl = (f: File): Promise<string> => new Promise((resolve, reject) => {
     const rd = new FileReader();
-    rd.onerror = () => reject(new Error("图片读取失败"));
+    rd.onerror = () => reject(new Error(t("chat.imgReadErr")));
     rd.onload = () => {
       const img = new Image();
-      img.onerror = () => reject(new Error("图片解码失败"));
+      img.onerror = () => reject(new Error(t("chat.imgDecodeErr")));
       img.onload = () => {
         const MAX = 1280;
         let { width: w, height: h } = img;
@@ -569,7 +569,7 @@ export function ChatView({
         const cv = document.createElement("canvas");
         cv.width = w; cv.height = h;
         const ctx = cv.getContext("2d");
-        if (!ctx) { reject(new Error("canvas 不可用")); return; }
+        if (!ctx) { reject(new Error(t("chat.canvasErr"))); return; }
         ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h); // 透明 PNG → 白底
         ctx.drawImage(img, 0, 0, w, h);
         resolve(cv.toDataURL("image/jpeg", 0.85));
@@ -631,34 +631,34 @@ export function ChatView({
           if (!ln.trim()) continue;
           try {
             const ev = JSON.parse(ln);
-            if (ev.type === "room") pushLog(`ROOM ${ev.room} · ${ev.members.length} 成员 · 至多 ${ev.rounds} 轮`);
+            if (ev.type === "room") pushLog(`ROOM ${ev.room} · ${t("chat.membersN", { n: ev.members.length })} · ${t("chat.roundsN", { n: ev.rounds })}`);
             else if (ev.type === "transfer" && ev.from && ev.to) {
               const payload = (ev.text ?? "").slice(0, 60) + ((ev.text ?? "").length > 60 ? "…" : "");
-              setMessages((arr) => [...arr, { id: crypto.randomUUID(), role: "assistant", text: "", note: `⇄ @${ev.from} → @${ev.to} 转交任务${payload ? `：${payload}` : ""}`, ts: Date.now() }]);
-              pushLog(`ROOM > 转交 @${ev.from} → @${ev.to}`);
+              setMessages((arr) => [...arr, { id: crypto.randomUUID(), role: "assistant", text: "", note: `⇄ @${ev.from} → @${ev.to} ${t("chat.transferTask")}${payload ? `：${payload}` : ""}`, ts: Date.now() }]);
+              pushLog(`ROOM > ${t("chat.handoff", { from: ev.from, to: ev.to })}`);
             }
             else if (ev.type === "bot" && ev.name) {
               setMessages((arr) => [...arr, { id: crypto.randomUUID(), role: "assistant", text: ev.text ?? "", persona: ev.name, ts: Date.now() }]);
-              pushLog(`ROOM > @${ev.name} 发言`);
+              pushLog(`ROOM > ${t("chat.spoke", { name: ev.name })}`);
             } else if (ev.type === "round" && ev.name && ev.status === "pass") {
               const reason = ev.reason ? ` · ${ev.reason}` : "";
-              pushLog(`ROOM > @${ev.name} 本轮 (pass)${reason}`);
+              pushLog(`ROOM > ${t("chat.passRound", { name: ev.name })}${reason}`);
             } else if (ev.type === "warn") {
               pushLog(`ROOM_WARN > ${ev.detail ?? ""}`);
-              setMessages((arr) => [...arr, { id: crypto.randomUUID(), role: "assistant", text: "⚠ " + (ev.detail ?? "群聊无响应"), ts: Date.now() }]);
+              setMessages((arr) => [...arr, { id: crypto.randomUUID(), role: "assistant", text: "⚠ " + (ev.detail ?? t("chat.roomNoResp")), ts: Date.now() }]);
             } else if (ev.type === "text" || ev.type === "delta") {
               setMessages((arr) => [...arr, { id: crypto.randomUUID(), role: "assistant", text: (ev.delta ?? ev.text ?? ""), ts: Date.now() }]);
             } else if (ev.type === "error") {
               setMessages((arr) => [...arr, { id: crypto.randomUUID(), role: "assistant", text: "⚠ " + (ev.detail ?? ""), ts: Date.now() }]);
             } else if (ev.type === "done") {
-              pushLog(`DONE > room closed (${ev.spoke_total ?? 0} 条发言)`);
+              pushLog(`DONE > room closed (${ev.spoke_total ?? 0} ${t("chat.turnUnit")})`);
             }
           } catch {}
         }
       }
     } catch (e: any) {
       pushLog(`ROOM_ERR > ${e?.message ?? e}`);
-      setMessages((arr) => [...arr, { id: crypto.randomUUID(), role: "assistant", text: "⚠ 群聊连接失败：" + (e?.message ?? e), ts: Date.now() }]);
+      setMessages((arr) => [...arr, { id: crypto.randomUUID(), role: "assistant", text: t("chat.roomFail", { err: e?.message ?? e }), ts: Date.now() }]);
     } finally {
       setGrouping(false);
       refreshList();
@@ -681,20 +681,20 @@ export function ChatView({
           try {
             const up: any = await api.uploadFile(f.file);
             if (up?.ok && up.is_text && up.excerpt) {
-              content += (content ? "\n\n" : "") + `[附件 ${up.name} 内容摘录]\n${up.excerpt.slice(0, 4000)}`;
+              content += (content ? "\n\n" : "") + `[${t("chat.attExcerpt", { name: up.name })}]\n${up.excerpt.slice(0, 4000)}`;
             } else if (up?.ok) {
-              content += (content ? "\n\n" : "") + `[附件 ${up.name} · 二进制文件 ${(up.size/1024).toFixed(1)}KB，已存 ${up.path}]`;
+              content += (content ? "\n\n" : "") + `[${t("chat.attBin", { name: up.name, kb: (up.size/1024).toFixed(1), path: up.path })}]`;
             } else {
-              content += (content ? "\n\n" : "") + `[附件 ${f.name} 上传失败：${up?.error ?? "未知错误"}]`;
+              content += (content ? "\n\n" : "") + `[${t("chat.attFail", { name: f.name, err: up?.error ?? t("chat.unknownErr") })}]`;
             }
           } catch (e: any) {
-            content += (content ? "\n\n" : "") + `[附件 ${f.name} 上传失败：${e?.message ?? e}]`;
+            content += (content ? "\n\n" : "") + `[${t("chat.attFail", { name: f.name, err: e?.message ?? e })}]`;
           }
         }
       } finally { setUploading(false); }
     }
     // 纯图片无文字：给后端一个占位正文（否则 /chat/stream 400）；图片本身随 images 传递
-    if (imgUrls.length && !content.trim()) content = "📷 图片消息";
+    if (imgUrls.length && !content.trim()) content = t("chat.imgMsg");
 
     // 群聊房间：消息进房间 → 服务端逐成员轮次（Hermes room log）
     if (inRoom) { await roomSend(content); clearAttachments(); return; }
@@ -773,11 +773,11 @@ export function ChatView({
       }
     } catch (e: any) {
       if (e?.name === "AbortError") {
-        pushLog("STOP > 已中断本次生成");
-        setMessages((m) => m.map((x) => x.id === asstId ? { ...x, text: (x.text || "") + "\n\n⏹ (已停止)", pending: false } : x));
+        pushLog(`STOP > ${t("chat.stopDone")}`);
+        setMessages((m) => m.map((x) => x.id === asstId ? { ...x, text: (x.text || "") + "\n\n⏹ " + t("chat.stopped"), pending: false } : x));
       } else {
         pushLog(`ERR > ${e?.message ?? e}`);
-        setMessages((m) => m.map((x) => x.id === asstId ? { ...x, text: "⚠ 流式连接失败：" + (e?.message ?? e), pending: false } : x));
+        setMessages((m) => m.map((x) => x.id === asstId ? { ...x, text: t("chat.streamFail", { err: e?.message ?? e }), pending: false } : x));
       }
     } finally { setStreaming(false); abortRef.current = null; refreshList(); }
   };
@@ -877,8 +877,10 @@ export function ChatView({
     pushLog(`APPROVE${wl ? "+WL" : ""} > ${ap?.label ?? ap?.title ?? ap?.action}`);
     approvalRef.current = wl ? { ...ap, whitelist: true } : ap; // 确认的审批负载随下一条消息发回后端，由 dispatch 精确执行
     const tag = ap.label ?? ap.title ?? ap.action;
-    setMessages((m) => [...m, { id: crypto.randomUUID(), role: "user", text: `${wl ? "信任并执行" : "确认执行"}：${tag}`, ts: Date.now() }]);
-    send(`${wl ? "信任并执行" : "确认执行"}：${tag}`);
+    const modeTxt = wl ? t("chat.trustExec") : t("chat.confirmExecBtn");
+    const msg = t("chat.approveMsg", { mode: modeTxt, tag });
+    setMessages((m) => [...m, { id: crypto.randomUUID(), role: "user", text: msg, ts: Date.now() }]);
+    send(msg);
   };
 
   // Files tab
@@ -916,19 +918,19 @@ export function ChatView({
 
   const isEmpty = messages.length === 0;
   const fmtSize = (n?: number) => n === undefined || n === null ? "" : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K` : `${n}B`;
-  const fmtWhen = (t?: number) => {
-    if (!t) return "";
-    const d = new Date(t * 1000); const today = new Date(); today.setHours(0, 0, 0, 0);
+  const fmtWhen = (ts?: number) => {
+    if (!ts) return "";
+    const d = new Date(ts * 1000); const today = new Date(); today.setHours(0, 0, 0, 0);
     const that = new Date(d); that.setHours(0, 0, 0, 0);
     const day = Math.round((today.getTime() - that.getTime()) / 864e5);
     if (day <= 0) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    if (day === 1) return "昨天"; if (day < 7) return `${day}天前`;
+    if (day === 1) return t("chat.yesterday"); if (day < 7) return t("chat.daysAgo", { day });
     return d.toLocaleDateString();
   };
   const fmtHM = (ts?: number) => (ts ? new Date(ts > 1e12 ? ts : ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "");
-  const copyText = async (t: string) => {
-    if (!t) return;
-    try { await navigator.clipboard.writeText(t); pushLog(`COPY > ${t.slice(0, 50).replace(/\n/g, " ")}…`); } catch { pushLog("COPY_ERR > 剪贴板不可用"); }
+  const copyText = async (textToCopy: string) => {
+    if (!textToCopy) return;
+    try { await navigator.clipboard.writeText(textToCopy); pushLog(`COPY > ${textToCopy.slice(0, 50).replace(/\n/g, " ")}…`); } catch { pushLog("COPY_ERR > clipboard unavailable"); }
   };
   // 判断某条消息是否是「当前展示列表的最后一条」（用于 Regenerate / 编辑重发的入口限定）
   const isLastTurn = (m: any) => {
@@ -977,7 +979,7 @@ export function ChatView({
                 <div className="flex items-center gap-2 px-1 pb-1">
                   {(() => { const ab = agents.find((a) => a.name === scopeName); return ab ? <AgentAvatar avatar={ab.avatar} name={ab.name} color={ab.color} size={20} ring={false} /> : null; })()}
                   <span className="font-mono text-[11px] text-ink truncate">{t("sessions.scope", { name: scopeName })}</span>
-                  <button onClick={exitBot} title="退出，回到默认会话"
+                  <button onClick={exitBot} title={t("chat.exitToDefault")}
                     className="ml-auto shrink-0 rounded p-0.5 hover:bg-elevated text-ink-dim"><I.X size={11} /></button>
                 </div>
               ) : (
@@ -985,7 +987,7 @@ export function ChatView({
                   <span className="text-gold">{t("sessions.master")}</span>
                   <span className="text-ink-mute">·</span>
                   <span className="text-ink-dim">{t("sessions.allAround")}</span>
-                  {autoExec && <span className="ml-auto inline-flex items-center gap-1 px-1 py-px rounded text-[9px] text-gold border border-gold/40 bg-gold/5">🌟 全能</span>}
+                  {autoExec && <span className="ml-auto inline-flex items-center gap-1 px-1 py-px rounded text-[9px] text-gold border border-gold/40 bg-gold/5">🌟 {t("chat.omni")}</span>}
                 </div>
               )}
               <button onClick={newConv}
@@ -1040,16 +1042,16 @@ export function ChatView({
                       <button onClick={() => archiveConv(c.id, !c.archived)}
                         className="w-full text-left px-3 py-1.5 hover:bg-elevated flex items-center gap-2 text-ink">
                         <I.Pin size={11} className="text-ink-mute" />
-                        {c.archived ? "取消归档" : "归档"}
+                        {c.archived ? t("chat.unarchive") : t("chat.archive")}
                       </button>
                       <button onClick={() => { setRenamingId(c.id); setRenameDraft(c.title || ""); setConvMenu(null); }}
                         className="w-full text-left px-3 py-1.5 hover:bg-elevated flex items-center gap-2 text-ink">
-                        <I.Gear size={11} className="text-ink-mute" />重命名
+                        <I.Gear size={11} className="text-ink-mute" />{t("chat.rename")}
                       </button>
                       <div className="my-1 border-t border-line" />
                       <button onClick={() => delConv(c.id)}
                         className="w-full text-left px-3 py-1.5 hover:bg-red/15 flex items-center gap-2 text-red">
-                        <I.Trash size={11} />删除
+                        <I.Trash size={11} />{t("chat.delete")}
                       </button>
                     </div>
                   )}
@@ -1062,12 +1064,12 @@ export function ChatView({
                   <button onClick={() => setShowArchived(v => !v)}
                     className="w-full text-left mt-2 px-2 py-1.5 rounded text-[10.5px] font-mono text-ink-mute hover:text-ink hover:bg-elevated/60 flex items-center gap-1.5">
                     <I.Lock size={10} />
-                    {showArchived ? "收起已归档" : `查看已归档（${archCnt}）`}
+                    {showArchived ? t("chat.hideArchived") : t("chat.viewArchived", { n: archCnt })}
                   </button>
                 );
               })()}
               {loadingHist && <div className="shimmer h-8 mt-1" />}
-              {sessConvs.length === 0 && <div className="text-[12px] text-ink-mute text-center py-6 font-mono">{scopeName ? "该 Agent 还没有专属会话，发一条就开始" : "暂无会话，点 + 新建"}</div>}
+              {sessConvs.length === 0 && <div className="text-[12px] text-ink-mute text-center py-6 font-mono">{scopeName ? t("chat.noConvsBot") : t("chat.noConvs")}</div>}
             </div>
           )}
 
@@ -1098,7 +1100,7 @@ export function ChatView({
                           <I.Users size={13} className="text-gold shrink-0" />
                           <div className="min-w-0 flex-1">
                             <div className="font-mono text-[11.5px] text-ink truncate">{r.title}</div>
-                            <div className="font-mono text-[9px] text-ink-mute truncate">{r.members?.length ?? 0} 成员 · {fmtWhen(r.updated_at)}</div>
+                            <div className="font-mono text-[9px] text-ink-mute truncate">{t("chat.roomMeta", { n: r.members?.length ?? 0, when: fmtWhen(r.updated_at) })}</div>
                           </div>
                           <div className="flex shrink-0 -space-x-1.5">
                             {(r.members ?? []).slice(0, 4).map((mn: string) => {
@@ -1134,8 +1136,8 @@ export function ChatView({
                           <div className="font-mono text-[9.5px] text-ink-mute truncate">{b.title || b.id.slice(0, 8)}</div>
                           <div className="font-mono text-[9px] text-ink-mute/70 truncate">
                             {(conversations ?? []).some((c: any) => c.persona === b.name)
-                              ? `${(conversations ?? []).filter((c: any) => c.persona === b.name).length} 会话 · 最后 ${fmtWhen((conversations ?? []).filter((c: any) => c.persona === b.name).sort((x: any, y: any) => (y.updated_at ?? 0) - (x.updated_at ?? 0))[0]?.updated_at)}`
-                              : "尚无专属会话"}
+                              ? t("chat.agentMeta", { n: (conversations ?? []).filter((c: any) => c.persona === b.name).length, when: fmtWhen((conversations ?? []).filter((c: any) => c.persona === b.name).sort((x: any, y: any) => (y.updated_at ?? 0) - (x.updated_at ?? 0))[0]?.updated_at) })
+                              : t("chat.noConvsYet")}
                           </div>
                         </div>
                         {unread > 0 && (
@@ -1153,7 +1155,7 @@ export function ChatView({
                     </div>
                   );
                 })}
-                {agents.length === 0 && <div className="text-center py-8 font-mono text-[11.5px] text-ink-mute">还没有 Agent，点右上 + 新建</div>}
+                {agents.length === 0 && <div className="text-center py-8 font-mono text-[11.5px] text-ink-mute">{t("chat.noAgents")}</div>}
               </div>
               <div className="mt-2 grid grid-cols-3 gap-1.5">
                 <button onClick={() => openAgentEditor("new")}
@@ -1162,11 +1164,11 @@ export function ChatView({
                 </button>
                 <button onClick={() => importAgent()}
                   className="rounded-md border border-dashed border-line py-2 font-mono text-[11px] text-ink-dim hover:border-gold/50 hover:text-gold transition-colors flex items-center justify-center gap-1">
-                  <I.Download size={11} /> 导入
+                  <I.Download size={11} /> {t("bots.import")}
                 </button>
                 <button onClick={() => { setGName(""); setGPicked([]); setRoomMsg(""); setGroupFormOpen(true); }}
                   className="rounded-md border border-dashed border-line py-2 font-mono text-[11px] text-ink-dim hover:border-gold/50 hover:text-gold transition-colors flex items-center justify-center gap-1">
-                  <I.Users size={11} /> 群聊
+                  <I.Users size={11} /> {t("chat.groupBtn")}
                 </button>
               </div>
             </div>
@@ -1178,7 +1180,7 @@ export function ChatView({
               <div className="flex items-center gap-1.5 px-1 mb-1.5">
                 <button onClick={() => refreshFiles("")}
                   className={`font-mono text-[11px] hover:underline ${fileCwd ? "text-ink-mute" : "text-gold"}`}>
-                  项目根
+                  {t("chat.projectRoot")}
                 </button>
                 {fileCwd.split("/").filter(Boolean).map((seg, i, arr) => (
                   <span key={i} className="flex items-center gap-1.5">
@@ -1191,7 +1193,7 @@ export function ChatView({
                   </span>
                 ))}
                 {fileCwd && (
-                  <button onClick={goUp} title="上一级"
+                  <button onClick={goUp} title={t("chat.upLevel")}
                     className="ml-auto rounded p-0.5 hover:bg-elevated text-ink-dim">
                     <I.Arrow size={11} />
                   </button>
@@ -1215,13 +1217,13 @@ export function ChatView({
                   )}
                 </button>
               ))}
-              <div className="text-[10px] text-ink-mute px-1 pt-1 font-mono">点击目录进入 · 点击文件查看 · 不含 .git/.venv/node_modules</div>
+              <div className="text-[10px] text-ink-mute px-1 pt-1 font-mono">{t("chat.filesHint")}</div>
             </div>
           )}
 
           {leftTab === "terminal" && (
             <div className="font-mono text-[11px] leading-relaxed">
-              {log.length === 0 && <div className="text-ink-mute text-center py-6">终端空闲，开始对话以查看日志…</div>}
+              {log.length === 0 && <div className="text-ink-mute text-center py-6">{t("chat.termIdle")}</div>}
               {log.map((l, i) => (
                 <div key={i} className="flex gap-2 text-ink-dim">
                   <span className="text-ink-mute tabular">{l.ts}</span><span className="text-ink">{l.line}</span>
@@ -1233,10 +1235,10 @@ export function ChatView({
 
         <div className="px-3 py-2 border-t border-line flex items-center justify-between font-mono text-[10px] text-ink-mute">
           <span>{leftTab.toUpperCase()} · {scopeName ? `@${scopeName}` : "master"} · {leftTab === "sessions" ? (sessConvs.filter((c:any)=>!c.archived).length) : leftTab === "bots" ? agents.length : leftTab === "files" ? `${files.length}${fileCwd ? ` @ ${fileCwd}` : ""}` : log.length}</span>
-          {leftTab === "bots" && <button onClick={loadAgents} className="text-gold hover:underline">刷新</button>}
+          {leftTab === "bots" && <button onClick={loadAgents} className="text-gold hover:underline">{t("chat.refresh")}</button>}
           {leftTab === "files" && (
-            <button onClick={() => refreshFiles()} title="刷新" className="text-gold hover:underline flex items-center gap-1">
-              <I.Refresh size={10} />刷新
+            <button onClick={() => refreshFiles()} title={t("chat.refresh")} className="text-gold hover:underline flex items-center gap-1">
+              <I.Refresh size={10} />{t("chat.refresh")}
             </button>
           )}
         </div>
@@ -1249,11 +1251,11 @@ export function ChatView({
           <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg border border-gold/40 bg-gold/5">
             <AgentAvatar avatar={activeBot.avatar} name={activeBot.name} color={activeBot.color} size={28} />
             <div className="min-w-0">
-              <div className="font-mono text-[12px] text-ink truncate">与 {activeBot.name} 的对话 <span className="text-ink-mute">· {activeBot.title}</span></div>
+              <div className="font-mono text-[12px] text-ink truncate">{t("chat.chatWith", { name: activeBot.name })} <span className="text-ink-mute">· {activeBot.title}</span></div>
               <div className="font-mono text-[10px] text-ink-dim truncate">{activeBot.description}</div>
             </div>
             <RoutinesInline bot={activeBot} />
-            <button onClick={exitBot} title={`退出 @${activeBot.name}，回到默认会话`}
+            <button onClick={exitBot} title={t("chat.exitBotTip", { name: activeBot.name })}
               className="ml-auto shrink-0 rounded p-1 hover:bg-elevated text-ink-dim"><I.X size={12} /></button>
           </div>
         )}
@@ -1263,14 +1265,14 @@ export function ChatView({
           <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg border border-gold/40 bg-gold/5">
             <I.Users size={16} className="text-gold shrink-0" />
             <div className="min-w-0">
-              <div className="font-mono text-[12px] text-ink truncate">群聊房间 · {roomInfo.title}</div>
+              <div className="font-mono text-[12px] text-ink truncate">{t("chat.roomBar", { name: roomInfo.title })}</div>
               <div className="flex items-center gap-1 mt-0.5">
                 {(roomInfo.members ?? []).map((mn: string) => {
                   const ag = (agents ?? []).find((a) => a.name === mn);
                   if (!ag) return null;
                   return (
-                    <button key={mn} title={`移除 @${mn}`} onClick={async () => {
-                      if (!window.confirm(`把 @${mn} 移出该群聊？`)) return;
+                    <button key={mn} title={t("chat.kickMember", { name: mn })} onClick={async () => {
+                      if (!window.confirm(t("chat.confirmKick", { name: mn }))) return;
                       try { await api.roomMembers(roomInfo.id, "remove", mn); refreshList(); } catch (e: any) { setRoomMsg(String(e?.message ?? e)); }
                     }}
                       className="flex items-center gap-1 pr-1.5 py-0.5 rounded-full border border-line bg-card/60 hover:border-red/50 group/mem" style={{ borderColor: `${ag.color}44` }}>
@@ -1281,7 +1283,7 @@ export function ChatView({
                   );
                 })}
                 {(agents ?? []).filter((a) => !(roomInfo.members ?? []).includes(a.name)).length > 0 && (
-                  <button title="把下一个未加入的 Agent 拉进群聊"
+                  <button title={t("chat.pullAgentTip")}
                     onClick={() => {
                       const nx = (agents ?? []).find((a) => !(roomInfo.members ?? []).includes(a.name));
                       if (nx) { api.roomMembers(roomInfo.id, "add", nx.name).then(() => refreshList()).catch((e: any) => setRoomMsg(String(e?.message ?? e))); }
@@ -1291,7 +1293,7 @@ export function ChatView({
               </div>
             </div>
             {roomMsg && <span className="font-mono text-[9px] text-red shrink-0">{roomMsg}</span>}
-            <button onClick={() => { setConvId(null); setMessages([]); }} title="退出群聊"
+            <button onClick={() => { setConvId(null); setMessages([]); }} title={t("chat.leaveRoom")}
               className="ml-auto shrink-0 rounded p-1 hover:bg-elevated text-ink-dim"><I.X size={12} /></button>
           </div>
         )}
@@ -1322,13 +1324,11 @@ export function ChatView({
               </div>
               {activeBot && !inRoom ? (
                 <p className="mt-5 max-w-2xl text-ink-dim text-[14px] leading-relaxed">
-                  {activeBot.description || "以该 Agent 身份开始对话。"} 在左侧 Bots 里可切换 / 新建 / 编辑你的 Agents。
+                  {activeBot.description || t("bots.startHint")} {t("bots.switchHint")}
                 </p>
               ) : inRoom && roomInfo ? (
                 <p className="mt-5 max-w-2xl text-ink-dim text-[14px] leading-relaxed">
-                  群聊房间「{roomInfo.title}」共 {(roomInfo.members ?? []).length} 位成员。发消息即全员依次讨论；
-                  用 @成员名 定向提问、@everyone 全员回答。成员间会互 @ 协作，收/发「帮我…/查下…」即自动转交任务（转交条显示 ⇄）。
-                  每位成员的视角各自独立记录在自己的档案里。
+                  {t("chat.roomEmptyHint", { name: roomInfo.title, n: (roomInfo.members ?? []).length })}
                 </p>
               ) : (
                 <p className="mt-6 max-w-2xl text-ink-dim text-[14px] leading-relaxed">
@@ -1336,7 +1336,7 @@ export function ChatView({
                 </p>
               )}
               <div className="mt-6 flex flex-wrap items-center justify-center gap-2 font-mono text-[11px]">
-                {!inRoom && ["扫描行情异常", "套利路径求解", "BNB 24h 复盘", "当前持仓对冲", "风险暴露压力测试"].map(s => (
+                {!inRoom && [t("chat.qScanAnomaly"), t("chat.qArbPath"), t("chat.qBnbReview"), t("chat.qHedge"), t("chat.qRiskTest")].map(s => (
                   <button key={s} onClick={() => send(s)} className="pill pill-dim hover:border-gold/40 hover:text-gold transition-colors">⚡ {s}</button>
                 ))}
               </div>
@@ -1363,14 +1363,14 @@ export function ChatView({
                               <span className="font-mono text-[11px]" style={{ color: from.color }}>@{from.name}</span></>
                             : <><span className="dot dot-gold live" /><span className="prefix">{activeBot ? `${activeBot.avatar} ${activeBot.name}` : "BAZZ AGENT"}</span></>}
                           <span className="ml-auto flex items-center gap-1.5 shrink-0 opacity-40 group-hover:opacity-100 transition-opacity">
-                            {m.model && <span className="font-mono text-[9px] text-ink-mute max-w-[150px] truncate" title="实际命中的模型">{m.model}</span>}
+                            {m.model && <span className="font-mono text-[9px] text-ink-mute max-w-[150px] truncate" title={t("chat.modelHit")}>{m.model}</span>}
                             <span className="font-mono text-[9px] text-ink-mute tabular">{fmtHM(m.ts)}</span>
                             {m.text && !m.pending && isLastTurn(m) && (
                               <button onClick={() => send(undefined, { regenerate: true })}
-                                title="重新生成回复" className="p-0.5 rounded text-ink-mute hover:text-gold hover:bg-elevated transition-colors"><span className="font-mono text-[10px]">↻</span></button>
+                                title={t("chat.regenerate")} className="p-0.5 rounded text-ink-mute hover:text-gold hover:bg-elevated transition-colors"><span className="font-mono text-[10px]">↻</span></button>
                             )}
                             {m.text && !m.pending && (
-                              <button onClick={() => copyText(m.text)} title="复制回复"
+                              <button onClick={() => copyText(m.text)} title={t("chat.copyReply")}
                                 className="p-0.5 rounded text-ink-mute hover:text-gold hover:bg-elevated transition-colors"><I.Copy size={11} /></button>
                             )}
                           </span>
@@ -1385,9 +1385,9 @@ export function ChatView({
                         <details className="mb-2 rounded-md border border-gold/30 bg-gold/[0.04] overflow-hidden group/r">
                           <summary className="cursor-pointer list-none flex items-center gap-2 px-3 py-2 font-mono text-[10.5px] text-gold hover:bg-gold/[0.08] transition-colors">
                             <I.Cpu size={11} className={m.pending ? "text-gold status-live" : ""} />
-                            <span className="font-semibold tracking-[0.08em]">深度思考</span>
-                            <span className="text-gold/70">· {steps.length} 步</span>
-                            <span className="text-gold/60">· {m.reasoning.length} 字</span>
+                            <span className="font-semibold tracking-[0.08em]">{t("chat.thinkingTitle")}</span>
+                            <span className="text-gold/70">· {t("chat.thinkingSteps", { n: steps.length })}</span>
+                            <span className="text-gold/60">· {t("chat.thinkingChars", { n: m.reasoning.length })}</span>
                             {elapsed > 0 && <span className="text-gold/60">· {elapsed}s</span>}
                             {m.pending && <span className="text-gold/90 text-[9px] animate-pulse">thinking</span>}
                             {m.model && <span className="text-ink-dim/80">· {m.model}</span>}
@@ -1405,21 +1405,21 @@ export function ChatView({
                         </details>
                       );
                     })()}
-                    {(m.tools ?? []).map((t, i) => {
-                      const running = t.ok === undefined || t.ok === null;
-                      const failed = t.ok === false;
+                    {(m.tools ?? []).map((tl, i) => {
+                      const running = tl.ok === undefined || tl.ok === null;
+                      const failed = tl.ok === false;
                       return (
                         <div key={i}
                           className={`mb-2 rounded-md border bg-elevated/50 p-2.5 transition-colors ${running ? "border-gold/60 tool-running" : failed ? "border-red/40" : "border-line"}`}>
                           <div className="flex items-center gap-2">
                             <I.Cpu size={12} className={`text-gold ${running ? "tool-spin" : ""}`} />
-                            <span className="font-mono text-[11px] text-gold tracking-wider">TOOL::{t.name}</span>
+                            <span className="font-mono text-[11px] text-gold tracking-wider">TOOL::{tl.name}</span>
                             <span className={`pill ${running ? "pill-gold" : failed ? "pill-red" : "pill-green"}`}>
-                              {running ? "调用中…" : failed ? "失败" : "OK"}
+                              {running ? t("chat.toolRunning") : failed ? t("chat.failed") : "OK"}
                             </span>
                             {running && <span className="ml-1 think-dots shrink-0"><span /><span /><span /></span>}
                           </div>
-                          {t.detail && <div className="mt-1.5 text-[12px] text-ink-dim font-mono">{t.detail}</div>}
+                          {tl.detail && <div className="mt-1.5 text-[12px] text-ink-dim font-mono">{tl.detail}</div>}
                         </div>
                       );
                     })}
@@ -1427,7 +1427,7 @@ export function ChatView({
                       {m.pending && !m.text && !m.reasoning ? (
                         // 完全空 → 思考中：跳动点
                         <span className="inline-flex items-center gap-2 text-ink-mute">
-                          <span className="font-mono text-[12px]">AI 思考中</span>
+                          <span className="font-mono text-[12px]">{t("chat.aiThinking")}</span>
                           <span className="think-dots"><span /><span /><span /></span>
                         </span>
                       ) : m.pending ? (
@@ -1447,8 +1447,8 @@ export function ChatView({
                     {m.role === "user" && !m.pending && isLastTurn(m) && (
                       <div className="mt-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity justify-end">
                         <button onClick={() => { setInput(m.text ?? ""); setEditSel({ id: m.id, text: m.text ?? "" }); inputRef.current?.focus(); }}
-                          title="编辑并重新生成（改完按发送）" className="p-1 rounded text-ink-mute hover:text-gold hover:bg-elevated transition-colors flex items-center gap-1">
-                          <I.Gear size={10} /><span className="font-mono text-[9.5px]">编辑重发</span>
+                          title={t("chat.editResendTip")} className="p-1 rounded text-ink-mute hover:text-gold hover:bg-elevated transition-colors flex items-center gap-1">
+                          <I.Gear size={10} /><span className="font-mono text-[9.5px]">{t("chat.editResend")}</span>
                         </button>
                       </div>
                     )}
@@ -1459,20 +1459,20 @@ export function ChatView({
                           <span className="font-mono text-[11px] text-gold truncate">NEEDS_APPROVAL · {m.approval.title ?? m.approval.label}</span>
                         </div>
                         <div className="flex flex-wrap gap-2">
-                          <button onClick={() => approve(m.approval)} className="btn-gold"><I.Check size={12} /> 确认执行</button>
+                          <button onClick={() => approve(m.approval)} className="btn-gold"><I.Check size={12} /> {t("chat.confirmExecBtn")}</button>
                           {m.approval.action === "local_exec" && (
                             <button onClick={() => approve(m.approval, { whitelist: true })}
                               className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-mono border border-gold/60 bg-gold/15 text-gold hover:bg-gold/25 transition-colors">
-                              <I.Pin size={12} /> 信任并执行
+                              <I.Pin size={12} /> {t("chat.trustExec")}
                             </button>
                           )}
                           <button onClick={() => { wlItems.length === 0 && loadWl(); setWlOpen(true); }}
-                            className="ml-auto btn-ghost" title="管理已信任的操作（下次自动执行）">
-                            <I.Gear size={11} /> 白名单 {wlItems.length > 0 ? `(${wlItems.length})` : ""}
+                            className="ml-auto btn-ghost" title={t("chat.wlManageTip")}>
+                            <I.Gear size={11} /> {t("chat.whitelist")} {wlItems.length > 0 ? `(${wlItems.length})` : ""}
                           </button>
                         </div>
                         {m.approval.action === "local_exec" && (
-                          <div className="mt-1.5 font-mono text-[10px] text-ink-dim">信任并执行 = 本次执行 + 记入白名单，下次同样操作自动放行</div>
+                          <div className="mt-1.5 font-mono text-[10px] text-ink-dim">{t("chat.trustExplained")}</div>
                         )}
                       </div>
                     )}
@@ -1489,7 +1489,7 @@ export function ChatView({
           {mention && mentionPool.length > 0 && (
             <div className="absolute bottom-full left-3 right-3 mb-1.5 z-40 overflow-hidden rounded-md border border-line/80 bg-card shadow-xl shadow-black/40" style={{ backdropFilter: "blur(10px)" }}>
               <div className="px-3 py-1.5 border-b border-line/50 font-mono text-[9.5px] text-ink-mute flex items-center justify-between">
-                <span>@{mention.q || "…"} 提及 Agent · ↑↓ 选择 · Enter 确认 · Esc 关闭</span>
+                <span>@{mention.q || t("chat.mentionEllipsis")} {t("chat.mentionHint")}</span>
                 <span className="text-gold">{mentionPool.length}</span>
               </div>
               <div className="max-h-56 overflow-auto py-1">
@@ -1508,7 +1508,7 @@ export function ChatView({
             </div>
           )}
           <div className="flex items-center gap-1.5 px-2.5 pt-2 pb-1.5">
-            <button onClick={pickFiles} className="btn-ghost" title="附件"><I.Download size={14} /></button>
+            <button onClick={pickFiles} className="btn-ghost" title={t("chat.attach")}><I.Download size={14} /></button>
             <input ref={fileRef} type="file" multiple hidden onChange={handleFilePick} />
             <input ref={inputRef} value={input}
               onChange={(e) => { const v = e.target.value; setInput(v); scanMention(v); }}
@@ -1518,17 +1518,17 @@ export function ChatView({
                 if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
               }}
               placeholder={inRoom && roomInfo
-                ? `发给「${roomInfo.title}」… @everyone 全员 / @成员名 定向提问`
+                ? t("chat.phRoom", { name: roomInfo.title })
                 : activeBot
-                  ? `发给 @${activeBot.name}…`
-                  : "随便问点什么"}
+                  ? t("chat.phToBot", { name: activeBot.name })
+                  : t("chat.phDefault")}
               className="flex-1 bg-transparent font-mono text-[14px] text-ink placeholder-ink-mute outline-none" />
             <button onClick={submit} disabled={streaming}
-              className={`btn-gold ${streaming ? "opacity-50 cursor-not-allowed" : ""}`} title={editSel ? "保存编辑并重新生成" : "发送"}>
+              className={`btn-gold ${streaming ? "opacity-50 cursor-not-allowed" : ""}`} title={editSel ? t("chat.saveResend") : t("chat.send")}>
               <I.Send size={12} />
             </button>
             {streaming && (
-              <button onClick={stopGen} title="停止生成"
+              <button onClick={stopGen} title={t("chat.stopGen")}
                 className="shrink-0 w-8 h-8 rounded-md border border-red/40 text-red hover:bg-red/10 flex items-center justify-center transition-colors">
                 <span className="w-2 h-2 bg-red rounded-[2px]" />
               </button>
@@ -1536,17 +1536,17 @@ export function ChatView({
           </div>
           {/* 模块行：会话状态 / 权限模式 / 模型下拉 / 语音 / 代码块 — 全跟 WorkBuddy 紧凑布局对齐 */}
           <div className="flex items-center gap-1.5 px-2.5 pb-2 border-t border-line/30 pt-1.5">
-            <span className="ml-auto inline-flex items-center gap-1 font-mono text-[10px] text-ink-mute px-1.5 py-0.5 rounded-md border border-line/50 leading-none" title={activeBot ? `当前 Bot: @${activeBot.name}` : "默认主会话"}>
+            <span className="ml-auto inline-flex items-center gap-1 font-mono text-[10px] text-ink-mute px-1.5 py-0.5 rounded-md border border-line/50 leading-none" title={activeBot ? t("chat.curBotTip", { name: activeBot.name }) : t("chat.defaultSessionTip")}>
               <span className="text-ink">↗</span>
               <span className="text-ink">{activeBot ? `@${activeBot.name}` : "master"}</span>
             </span>
             <span className="inline-flex items-center gap-1 font-mono text-[10px] px-1.5 py-0.5 rounded-md border border-line/50 leading-none"
-              title={autoExec ? "当前：全能模式（沙箱工具自动放行；交易类仍需确认）" : "当前：安全模式（沙箱类与本地执行每次需要审批）"}>
+              title={autoExec ? t("chat.modeOmniTitle") : t("chat.modeSafeTitle")}>
               <span className={autoExec ? "text-gold" : "text-ink-mute"}>⊙</span>
-              <span className={autoExec ? "text-gold" : "text-ink-mute"}>{autoExec ? "全能模式" : "安全模式"}</span>
-              <button onClick={() => setAutoExec((v) => { const n = !v; api.setAutoExec(n); return n; })} className={`tgl ml-1 ${autoExec ? "on" : ""}`} title="切换模式" />
+              <span className={autoExec ? "text-gold" : "text-ink-mute"}>{autoExec ? t("chat.modeOmni") : t("chat.modeSafe")}</span>
+              <button onClick={() => setAutoExec((v) => { const n = !v; api.setAutoExec(n); return n; })} className={`tgl ml-1 ${autoExec ? "on" : ""}`} title={t("chat.toggleMode")} />
             </span>
-            <span className="flex items-center gap-1 font-mono whitespace-nowrap" title="选择本会话使用的模型（覆盖全局默认）">
+            <span className="flex items-center gap-1 font-mono whitespace-nowrap" title={t("chat.modelPickTip")}>
               <select value={sessionModel}
                 onChange={(e) => setSessionModel(e.target.value)}
                 className="appearance-none bg-elevated/60 border border-line/60 rounded-md pl-1.5 pr-5 py-0.5 font-mono text-[10px] text-gold outline-none hover:border-gold/40 focus:border-gold transition-colors cursor-pointer leading-none max-w-[180px]"
@@ -1556,9 +1556,9 @@ export function ChatView({
                 ))}
               </select>
             </span>
-            <button onClick={toggleMic} className={`btn-ghost ${listening ? "text-red" : ""}`} title={listening ? "停止录音" : "语音输入"}><I.Mic size={14} /></button>
-            <button onClick={insertCodeBlock} className="btn-ghost" title="插入代码块"><span className="font-mono text-[12px]">{"</>"}</span></button>
-            <button onClick={toggleWallet} className={`btn-ghost relative ${walletOpen ? "text-gold" : ""}`} title="钱包：Agent 钱包（扫码）/ 链上钱包（API Key）">
+            <button onClick={toggleMic} className={`btn-ghost ${listening ? "text-red" : ""}`} title={listening ? t("chat.stopMic") : t("chat.voiceInput")}><I.Mic size={14} /></button>
+            <button onClick={insertCodeBlock} className="btn-ghost" title={t("chat.insertCode")}><span className="font-mono text-[12px]">{"</>"}</span></button>
+            <button onClick={toggleWallet} className={`btn-ghost relative ${walletOpen ? "text-gold" : ""}`} title={t("chat.walletBtnTip")}>
               <I.Wallet size={14} />
               {(walletAgentConn || walletCexCfg) && (
                 <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-green" style={{ boxShadow: "0 0 4px rgba(14,203,129,0.9)" }} />
@@ -1567,8 +1567,8 @@ export function ChatView({
           </div>
           {editSel && (
             <div className="flex items-center gap-2 px-3 pb-2 font-mono text-[10px] text-gold">
-              <I.Gear size={10} /> 正在编辑上一条消息 · 发送后将从此处重新生成
-              <button onClick={() => { setEditSel(null); setInput(""); }} className="ml-auto text-ink-mute hover:text-ink flex items-center gap-1"><I.X size={10} /> 取消</button>
+              <I.Gear size={10} /> {t("chat.editingLast")}
+              <button onClick={() => { setEditSel(null); setInput(""); }} className="ml-auto text-ink-mute hover:text-ink flex items-center gap-1"><I.X size={10} /> {t("chat.cancel")}</button>
             </div>
           )}
           {attachments.length > 0 && (
@@ -1591,38 +1591,38 @@ export function ChatView({
               style={{ backdropFilter: "blur(12px)" }}>
               <div className="flex items-center gap-2 border-b border-line/60 px-3 py-2">
                 <I.Wallet size={13} className="text-gold" />
-                <span className="font-mono text-[12px] tracking-wider text-ink">钱包</span>
-                <span className="pill pill-dim text-[9px]">双钱包 · 快捷</span>
+                <span className="font-mono text-[12px] tracking-wider text-ink">{t("chat.walletTitle")}</span>
+                <span className="pill pill-dim text-[9px]">{t("chat.walletQuick")}</span>
                 {walletBusy && <span className="ml-1 inline-flex text-gold"><Spin /></span>}
-                <button onClick={() => setWalletOpen(false)} className="ml-auto rounded p-0.5 hover:bg-elevated text-ink-dim" title="关闭"><I.X size={12} /></button>
+                <button onClick={() => setWalletOpen(false)} className="ml-auto rounded p-0.5 hover:bg-elevated text-ink-dim" title={t("chat.closeTip")}><I.X size={12} /></button>
               </div>
               <div className="max-h-[66vh] overflow-auto p-3 space-y-4">
                 {/* Agent 钱包（MPC 扫码） */}
                 <div className="space-y-2.5">
                   <div className="flex items-center gap-2">
                     <I.Hex size={13} className="text-gold" />
-                    <span className="font-mono text-[12px] text-ink">Agent 钱包</span>
+                    <span className="font-mono text-[12px] text-ink">{t("chat.agentWallet")}</span>
                     {walletAgent ? (
                       <span className={`pill ${walletAgentConn ? "pill-green" : walletAgent?.cli?.installed ? "pill-red" : "pill-dim"}`}>
                         <span className={`dot ${walletAgentConn ? "dot-green live" : "dot-red"}`} />
-                        {walletAgentConn ? "已登录 · MPC" : walletAgent?.cli?.installed ? "未登录" : "CLI 未安装"}
+                        {walletAgentConn ? t("chat.walletSignedIn") : walletAgent?.cli?.installed ? t("chat.walletNotLogin") : t("chat.walletCliMissing")}
                       </span>
-                    ) : <span className="pill pill-dim">状态读取中…</span>}
-                    <button onClick={() => { setWalletOpen(false); onNav?.("wallet"); }} className="ml-auto btn-ghost text-[10.5px] py-1 text-gold">完整页 ↗</button>
+                    ) : <span className="pill pill-dim">{t("chat.statusLoading")}</span>}
+                    <button onClick={() => { setWalletOpen(false); onNav?.("wallet"); }} className="ml-auto btn-ghost text-[10.5px] py-1 text-gold">{t("chat.fullPage")} ↗</button>
                   </div>
                   {!walletAgent ? (
-                    <div className="rounded-md border border-line bg-elevated/30 px-3 py-2 font-mono text-[10.5px] text-ink-mute">正在读取 baw 状态（后端有缓存，秒回）…</div>
+                    <div className="rounded-md border border-line bg-elevated/30 px-3 py-2 font-mono text-[10.5px] text-ink-mute">{t("chat.walletReading")}</div>
                   ) : !walletAgent?.cli?.installed ? (
                     <div className="rounded-md border border-red/30 bg-red/5 px-3 py-2 font-mono text-[10.5px] text-red leading-relaxed">
-                      baw CLI 未安装 → 到「钱包 Hub」一键安装 @binance/agentic-wallet。
+                      {t("chat.walletBawMissing")}
                     </div>
                   ) : walletAgentConn ? (
                     <div className="rounded-md border border-green/30 bg-green/5 px-3 py-2 font-mono text-[10.5px] text-green leading-relaxed">
-                      MPC 会话已连接。转账 / 兑换 / 限价单等写操作受 Binance App 内每日限额与安全规则约束。
+                      {t("chat.walletMpcNote")}
                     </div>
                   ) : (
                     <>
-                      <p className="text-[10.5px] text-ink-mute leading-relaxed">下方生成二维码，用 <b className="text-gold">Binance App</b> 扫码并核对配对码即登录（无需私钥）。</p>
+                      <p className="text-[10.5px] text-ink-mute leading-relaxed">{t("chat.walletScanHintA")}<b className="text-gold">{t("chat.binanceApp")}</b>{t("chat.walletScanHintB")}</p>
                       <AgentSigninCard compact onDone={() => loadWalletLite()} />
                     </>
                   )}
@@ -1634,22 +1634,22 @@ export function ChatView({
                 <div className="space-y-2.5">
                   <div className="flex items-center gap-2">
                     <I.Cex size={13} className="text-gold" />
-                    <span className="font-mono text-[12px] text-ink">链上钱包 <sup className="text-[8.5px] text-ink-mute">BX- Wallet 网关</sup></span>
+                    <span className="font-mono text-[12px] text-ink">{t("chat.chainWallet")} <sup className="text-[8.5px] text-ink-mute">{t("chat.walletGwTag")}</sup></span>
                     {walletCex ? (
                       <span className={`pill ${walletCexCfg ? "pill-green" : "pill-dim"}`}>
                         <span className={`dot ${walletCexCfg ? "dot-green live" : "dot-red"}`} />
-                        {walletCexCfg ? "已连接" : "未连接"}
+                        {walletCexCfg ? t("chat.connected") : t("chat.disconnected")}
                       </span>
-                    ) : <span className="pill pill-dim">状态读取中…</span>}
-                    <button onClick={() => { setWalletOpen(false); onNav?.("wallet"); }} className="ml-auto btn-ghost text-[10.5px] py-1 text-gold">完整页 ↗</button>
+                    ) : <span className="pill pill-dim">{t("chat.statusLoading")}</span>}
+                    <button onClick={() => { setWalletOpen(false); onNav?.("wallet"); }} className="ml-auto btn-ghost text-[10.5px] py-1 text-gold">{t("chat.fullPage")} ↗</button>
                   </div>
                   <ChainWalletPanel compact onChanged={() => loadWalletLite()} />
                 </div>
 
                 <div className="border-t border-line/40" />
                 <p className="text-[10px] text-ink-mute leading-relaxed px-0.5">
-                  提示：7 个只读 Wallet Skills（代币审计 / 排行 / 信号等）无需连接钱包，去左侧「技能库」直接运行；
-                  仅写操作（转账 / 兑换 / 限价单）需要 Agent 钱包扫码连接。
+                  {t("chat.walletTip1")}
+                  {t("chat.walletTip2")}
                 </p>
               </div>
             </div>
@@ -1674,23 +1674,23 @@ export function ChatView({
                 const q = palQ.trim().toLowerCase();
                 const items: { icon: string; label: string; sub: string; run: () => void }[] = [];
                 // 快捷动作（q 为空时置顶）
-                items.push({ icon: "＋", label: "新建会话", sub: "清空当前聊天窗", run: () => newConv() });
-                items.push({ icon: "👤", label: "新建 Agent", sub: "打开 Bots 档案编辑器", run: () => { setLeftTab("bots"); openAgentEditor("new"); } });
-                items.push({ icon: "👥", label: "新建群聊", sub: "选 2+ 成员进入房间", run: () => { setGName(""); setGPicked([]); setRoomMsg(""); setGroupFormOpen(true); } });
-                items.push({ icon: "🛰️", label: "网关状态", sub: "Settings 页查看连接", run: () => { setLeftTab("sessions"); onNav?.("settings"); } });
+                items.push({ icon: "＋", label: t("chat.palNewConv"), sub: t("chat.palNewConvSub"), run: () => newConv() });
+                items.push({ icon: "👤", label: t("chat.palNewBot"), sub: t("chat.palNewBotSub"), run: () => { setLeftTab("bots"); openAgentEditor("new"); } });
+                items.push({ icon: "👥", label: t("chat.palNewGroup"), sub: t("chat.palNewGroupSub"), run: () => { setGName(""); setGPicked([]); setRoomMsg(""); setGroupFormOpen(true); } });
+                items.push({ icon: "🛰️", label: t("chat.palGateway"), sub: t("chat.palGatewaySub"), run: () => { setLeftTab("sessions"); onNav?.("settings"); } });
                 // Bots
                 for (const b of agents ?? []) {
                   if (!q || b.name.toLowerCase().includes(q) || (b.title ?? "").toLowerCase().includes(q))
-                    items.push({ icon: b.avatar, label: `Bot · ${b.name}`, sub: b.title || b.id, run: () => { setLeftTab("bots"); talkWith(b); } });
+                    items.push({ icon: b.avatar, label: t("chat.palBotLabel") + b.name, sub: b.title || b.id, run: () => { setLeftTab("bots"); talkWith(b); } });
                 }
                 // 会话
                 const scoped = (conversations ?? []).filter((c: any) => c.persona === (scopeName ?? "") && c.kind !== "room");
                 for (const c of scoped.slice(0, 60)) {
                   if (!q || (c.title ?? "").toLowerCase().includes(q) || (c.preview ?? "").toLowerCase().includes(q))
-                    items.push({ icon: "◈", label: `会话 · ${c.title || c.id.slice(0, 8)}`, sub: c.preview ?? "", run: () => { setLeftTab("sessions"); selectConv(c.id); } });
+                    items.push({ icon: "◈", label: t("chat.palConvLabel") + (c.title || c.id.slice(0, 8)), sub: c.preview ?? "", run: () => { setLeftTab("sessions"); selectConv(c.id); } });
                 }
                 const shown = items.slice(0, 30);
-                if (!shown.length) return <div className="px-4 py-6 font-mono text-[11px] text-ink-mute text-center">无匹配结果</div>;
+                if (!shown.length) return <div className="px-4 py-6 font-mono text-[11px] text-ink-mute text-center">{t("chat.palNoMatch")}</div>;
                 return shown.map((it, i) => (
                   <button key={i} onClick={() => { setPalOpen(false); setPalQ(""); it.run(); }}
                     className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-gold/10 transition-colors">
@@ -1717,24 +1717,24 @@ export function ChatView({
               <AgentAvatar avatar={form.avatar} name={form.name || "New Agent"} color={form.color} size={36} />
               <div className="min-w-0 flex-1">
                 <div className="font-mono text-[13px] font-bold tracking-wide text-ink truncate">{editBot === "new" ? t("bots.newAgent") : `Edit · ${form.name || "Agent"}`}</div>
-                <div className="font-mono text-[10px] text-ink-mute mt-0.5">BAZZ Agent Profile · 任意字段可滚动</div>
+                <div className="font-mono text-[10px] text-ink-mute mt-0.5">{t("chat.profileHint")}</div>
               </div>
               <button onClick={() => setEditBot(null)} className="ml-auto text-ink-mute hover:text-ink"><I.X size={16} /></button>
             </div>
             {/* 表单主体（可滚动） */}
             <div className="flex-1 overflow-auto px-5 py-4 space-y-3">
               <div><label className="prefix block mb-1">Name *</label>
-                <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="例如 趋势猎手" className="field" /></div>
+                <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t("chat.phAgentName")} className="field" /></div>
               <div><label className="prefix block mb-1">{t("bots.formTitle")}</label>
-                <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="例如 Trend Hunter" className="field" /></div>
+                <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder={t("chat.phAgentTitle")} className="field" /></div>
               <div><label className="prefix block mb-1">{t("bots.formDescription")}</label>
                 <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={4}
-                  placeholder="这个 Agent 的身份 / 擅长什么…" className="field resize-y min-h-[5.5rem]" /></div>
+                  placeholder={t("chat.phAgentDesc")} className="field resize-y min-h-[5.5rem]" /></div>
               <div>
                 <label className="prefix block mb-1.5">{t("bots.formAvatar")}</label>
                 <div className="flex items-center gap-1.5 mb-2">
                   <button onClick={() => setForm({ ...form, avatar: "blobatar" })}
-                    className={`px-2.5 py-1 rounded-md font-mono text-[10.5px] border ${form.avatar.startsWith("blobatar") ? "bg-gold text-canvas border-gold" : "border-line text-ink-dim hover:text-ink"}`}>SVG 软体脸</button>
+                    className={`px-2.5 py-1 rounded-md font-mono text-[10.5px] border ${form.avatar.startsWith("blobatar") ? "bg-gold text-canvas border-gold" : "border-line text-ink-dim hover:text-ink"}`}>{t("chat.svgFace")}</button>
                   <button onClick={() => setForm({ ...form, avatar: "🤖" })}
                     className={`px-2.5 py-1 rounded-md font-mono text-[10.5px] border ${!form.avatar.startsWith("blobatar") ? "bg-gold text-canvas border-gold" : "border-line text-ink-dim hover:text-ink"}`}>{t("bots.formEmoji")}</button>
                 </div>
@@ -1742,10 +1742,10 @@ export function ChatView({
                   <div className="flex items-center gap-3">
                     <div style={{ width: 56, height: 56 }}><Blobatar seed={form.avatar.split(":")[1] || form.name || "agent"} color={form.color} size={56} /></div>
                     <div className="text-[11px] text-ink-dim leading-relaxed">
-                      从名字生成的确定性软体脸。<br />改名字会换脸；点 🎲 锁定一个随机 seed。
+                      {t("chat.blobHint1")}<br />{t("chat.blobHint2")}
                     </div>
                     <button onClick={() => setForm({ ...form, avatar: "blobatar:" + Math.random().toString(36).slice(2, 8) })}
-                      className="ml-auto btn-ghost text-[11px] px-2 py-1">🎲 随机</button>
+                      className="ml-auto btn-ghost text-[11px] px-2 py-1">🎲 {t("chat.random")}</button>
                   </div>
                 ) : (
                   <div className="flex flex-wrap gap-1.5">
@@ -1773,18 +1773,18 @@ export function ChatView({
                   <span className="ml-auto text-gold text-[10px]">▾</span>
                 </summary>
                 <div className="px-3 pb-3 pt-1 space-y-3 border-t border-line/50">
-                  <div><label className="prefix block mb-1">Model（偏好模型）</label>
+                  <div><label className="prefix block mb-1">{t("chat.cfgModel")}</label>
                     <input value={cfg.model} onChange={(e) => setCfg({ ...cfg, model: e.target.value })}
-                      placeholder="例如 gpt-5.4-mini / deepseek-v4-pro / 留空=默认" className="field" /></div>
-                  <div><label className="prefix block mb-1">Tone（语气与风格）</label>
+                      placeholder={t("chat.phCfgModel")} className="field" /></div>
+                  <div><label className="prefix block mb-1">{t("chat.cfgTone")}</label>
                     <textarea value={cfg.tone} onChange={(e) => setCfg({ ...cfg, tone: e.target.value })} rows={3}
-                      placeholder="例如：犀利简洁，先给结论再解释；话少但精确" className="field resize-y min-h-[4.5rem]" /></div>
-                  <div><label className="prefix block mb-1">System Prompt（bot.md 专属正文）</label>
+                      placeholder={t("chat.phCfgTone")} className="field resize-y min-h-[4.5rem]" /></div>
+                  <div><label className="prefix block mb-1">{t("chat.cfgSystem")}</label>
                     <textarea value={cfg.prompt ?? ""} onChange={(e) => setCfg({ ...cfg, prompt: e.target.value })} rows={8}
-                      placeholder="这段会追加到系统提示：定义该 Agent 的独有规则、工具用法、知识边界…" className="field font-mono text-[11px] resize-y min-h-[12rem]" />
-                    <div className="font-mono text-[10px] text-ink-mute mt-1 text-right">{(cfg.prompt ?? "").length} 字 · 可拖右下角放大</div></div>
+                      placeholder={t("chat.phCfgSystem")} className="field font-mono text-[11px] resize-y min-h-[12rem]" />
+                    <div className="font-mono text-[10px] text-ink-mute mt-1 text-right">{t("chat.promptLen", { n: (cfg.prompt ?? "").length })}</div></div>
                   <div>
-                    <label className="prefix block mb-1">Tools 子集（Hermes bots 白名单）</label>
+                    <label className="prefix block mb-1">{t("chat.cfgTools")}</label>
                     <div className="flex flex-wrap gap-1 max-h-32 overflow-auto pr-1 mb-1.5">
                       {AGENT_TOOLS.map((t) => {
                         const on = cfg.tools.includes(t);
@@ -1800,17 +1800,17 @@ export function ChatView({
                     </div>
                     <div className="flex items-center gap-2">
                       <button onClick={() => setCfg({ ...cfg, tools: [] })}
-                        className="font-mono text-[9.5px] text-red/80 hover:text-red underline underline-offset-2">清空（=全部可用）</button>
+                        className="font-mono text-[9.5px] text-red/80 hover:text-red underline underline-offset-2">{t("chat.toolsClear")}</button>
                       <button onClick={() => setCfg({ ...cfg, tools: [...AGENT_TOOLS] })}
-                        className="font-mono text-[9.5px] text-ink-mute hover:text-ink underline underline-offset-2">全选</button>
-                      <span className="font-mono text-[9.5px] text-ink-mute">风控官无下单权这类差异就靠它 demo</span>
+                        className="font-mono text-[9.5px] text-ink-mute hover:text-ink underline underline-offset-2">{t("chat.toolsAll")}</button>
+                      <span className="font-mono text-[9.5px] text-ink-mute">{t("chat.toolsHint")}</span>
                     </div>
                   </div>
                   <div>
-                    <label className="prefix block mb-1.5">技能 Skills（统一在左侧「技能库」安装 / 移除 / 运行）</label>
+                    <label className="prefix block mb-1.5">{t("chat.cfgSkills")}</label>
                     <p className="font-mono text-[10.5px] text-ink-mute leading-relaxed">
-                      本 Agent 通过 <span className="text-gold">run_skill</span> 工具即可调用已装技能（binance-web3 链上 / binance 交易组），无需在此逐个勾选。
-                      去技能库可直接运行预设面板；当前已装 {availSkills.length} 个。
+                      {t("chat.skillsDesc1")} <span className="text-gold">run_skill</span> {t("chat.skillsDesc2")}
+                      {t("chat.skillsDesc3", { n: availSkills.length })}
                     </p>
                   </div>
                 </div>
@@ -1818,9 +1818,9 @@ export function ChatView({
             </div>
             {/* 底部（固定） */}
             <div className="px-5 py-3 border-t border-line flex items-center justify-end gap-2">
-              <span className="mr-auto font-mono text-[10px] text-ink-mute">滚轮上下滚动 · Esc 关闭</span>
-              <button onClick={() => setEditBot(null)} className="btn-ghost">取消</button>
-              <button onClick={saveAgent} className="btn-gold"><I.Check size={12} /> 保存</button>
+              <span className="mr-auto font-mono text-[10px] text-ink-mute">{t("chat.scrollHint")}</span>
+              <button onClick={() => setEditBot(null)} className="btn-ghost">{t("chat.cancel")}</button>
+              <button onClick={saveAgent} className="btn-gold"><I.Check size={12} /> {t("chat.save")}</button>
             </div>
           </div>
         </div>
@@ -1839,8 +1839,8 @@ export function ChatView({
               <div className="min-w-0 flex-1">
                 <div className="font-mono text-[13px] font-bold text-ink truncate">{fileModal.name}</div>
                 <div className="font-mono text-[10px] text-ink-mute truncate">
-                  {fileModal.path || "（根目录）"} · {fmtSize(fileModal.size) || "—"}
-                  {fileModal.is_text ? " · 文本" : fileModal.size > 0 ? " · 二进制" : ""}
+                  {fileModal.path || t("chat.fileRoot")} · {fmtSize(fileModal.size) || "—"}
+                  {fileModal.is_text ? t("chat.fileText") : fileModal.size > 0 ? t("chat.fileBin") : ""}
                 </div>
               </div>
               <button onClick={closeFileModal} className="ml-auto text-ink-mute hover:text-ink"><I.X size={16} /></button>
@@ -1851,20 +1851,20 @@ export function ChatView({
               ) : fileModal.error ? (
                 <div className="font-mono text-[12px] text-red">⚠ {fileModal.error}</div>
               ) : fileModal.too_large ? (
-                <div className="font-mono text-[12px] text-ink-mute">文件过大，已跳过展示。路径：<span className="text-ink">{fileModal.path}</span></div>
+                <div className="font-mono text-[12px] text-ink-mute">{t("chat.fileTooLarge")}<span className="text-ink">{fileModal.path}</span></div>
               ) : !fileModal.is_text ? (
-                <div className="font-mono text-[12px] text-ink-mute">二进制文件，不可文本预览（共 {fmtSize(fileModal.size)}）。</div>
+                <div className="font-mono text-[12px] text-ink-mute">{t("chat.fileBinPrev", { size: fmtSize(fileModal.size) })}</div>
               ) : (
                 <pre className="font-mono text-[11.5px] leading-relaxed text-ink whitespace-pre-wrap break-all">
-                  {fileModal.content || "（空文件）"}
+                  {fileModal.content || t("chat.fileEmpty")}
                 </pre>
               )}
             </div>
             <div className="px-5 py-2.5 border-t border-line flex items-center justify-between">
-              <span className="font-mono text-[10px] text-ink-mute">按 Esc / 点击空白关闭</span>
+              <span className="font-mono text-[10px] text-ink-mute">{t("chat.escHint")}</span>
               <button onClick={() => copyText(fileModal.content)}
                 className="btn-ghost text-[11px]" disabled={!fileModal.is_text || fileModal.loading}>
-                <I.Copy size={11} /> 复制全文
+                <I.Copy size={11} /> {t("chat.copyAll")}
               </button>
             </div>
           </div>
@@ -1881,21 +1881,21 @@ export function ChatView({
             <div className="flex items-center gap-2.5 px-5 py-3 border-b border-line">
               <I.Pin size={16} className="text-gold" />
               <div className="min-w-0 flex-1">
-                <div className="font-mono text-[13px] font-bold text-ink">审批白名单</div>
-                <div className="font-mono text-[10px] text-ink-mute">已信任的操作下次自动执行，不再弹审批</div>
+                <div className="font-mono text-[13px] font-bold text-ink">{t("chat.wlTitle")}</div>
+                <div className="font-mono text-[10px] text-ink-mute">{t("chat.wlSub")}</div>
               </div>
               <button onClick={() => setWlOpen(false)} className="text-ink-mute hover:text-ink"><I.X size={16} /></button>
             </div>
             <div className="flex-1 overflow-auto p-4 space-y-1.5">
               {wlItems.length === 0 ? (
                 <div className="font-mono text-[11px] text-ink-mute text-center py-8">
-                  暂无白名单规则<br /><span className="text-[10px]">在审批卡点「信任并执行」即可添加</span>
+                  {t("chat.wlEmpty")}<br /><span className="text-[10px]">{t("chat.wlEmptyHint")}</span>
                 </div>
               ) : wlItems.map((r) => (
                 <div key={r} className="flex items-center gap-2 rounded-md border border-line bg-card/40 px-3 py-2 group/wl">
                   <I.Lock size={11} className="text-gold shrink-0" />
                   <span className="font-mono text-[11px] text-ink flex-1 break-all">{r}</span>
-                  <button onClick={() => removeWl(r)} title="移除信任"
+                  <button onClick={() => removeWl(r)} title={t("chat.wlRemove")}
                     className="shrink-0 rounded p-1 text-red/70 hover:text-red hover:bg-red/10 opacity-40 group-hover/wl:opacity-100 transition-opacity">
                     <I.Trash size={11} />
                   </button>
@@ -1903,8 +1903,8 @@ export function ChatView({
               ))}
             </div>
             <div className="px-5 py-3 border-t border-line flex items-center justify-between">
-              <span className="font-mono text-[10px] text-ink-mute">cmd:命令 / write:路径 / skill:技能</span>
-              <button onClick={() => { loadWl(); }} className="btn-ghost text-[11px]"><I.Refresh size={11} /> 刷新</button>
+              <span className="font-mono text-[10px] text-ink-mute">{t("chat.wlFmt")}</span>
+              <button onClick={() => { loadWl(); }} className="btn-ghost text-[11px]"><I.Refresh size={11} /> {t("chat.refresh")}</button>
             </div>
           </div>
         </div>
@@ -1918,15 +1918,15 @@ export function ChatView({
               <I.Users size={20} className="text-gold" />
               <div>
                 <div className="font-mono text-[13px] font-bold tracking-wide text-ink">{t("bots.newGroupTitle")}</div>
-                <div className="font-mono text-[10px] text-ink-mute mt-0.5">选 2 个以上 Agent 加入 · 每人各自独立会话记录</div>
+                <div className="font-mono text-[10px] text-ink-mute mt-0.5">{t("chat.groupSub")}</div>
               </div>
               <button onClick={() => setGroupFormOpen(false)} className="ml-auto text-ink-mute hover:text-ink"><I.X size={16} /></button>
             </div>
             {roomMsg && <div className="mb-3 rounded-md border border-red/40 bg-red/5 px-3 py-2 font-mono text-[11px] text-red break-all">{roomMsg}</div>}
-            <div><label className="prefix block mb-1">群聊名称</label>
-              <input value={gName} onChange={(e) => setGName(e.target.value)} placeholder="例如 市场策略会 / 风控评审" className="field" /></div>
+            <div><label className="prefix block mb-1">{t("chat.groupName")}</label>
+              <input value={gName} onChange={(e) => setGName(e.target.value)} placeholder={t("chat.phGroupName")} className="field" /></div>
             <div className="mt-3">
-              <label className="prefix block mb-1.5">成员（{gPicked.length} 已选 · 至少 2）</label>
+              <label className="prefix block mb-1.5">{t("chat.membersSel", { n: gPicked.length })}</label>
               <div className="grid grid-cols-1 max-h-56 overflow-auto pr-1 gap-1">
                 {agents.map((ag) => {
                   const on = gPicked.includes(ag.name);
@@ -1945,8 +1945,8 @@ export function ChatView({
               </div>
             </div>
             <div className="mt-5 flex items-center justify-end gap-2">
-              <button onClick={() => setGroupFormOpen(false)} className="btn-ghost">取消</button>
-              <button onClick={createRoom} className="btn-gold"><I.Check size={12} /> 创建并进入</button>
+              <button onClick={() => setGroupFormOpen(false)} className="btn-ghost">{t("chat.cancel")}</button>
+              <button onClick={createRoom} className="btn-gold"><I.Check size={12} /> {t("chat.createEnter")}</button>
             </div>
           </div>
         </div>
@@ -1957,6 +1957,7 @@ export function ChatView({
 
 /* Routines —— 绑定到当前 Agent 的定时任务（Hermes Routines tile） */
 function RoutinesInline({ bot }: { bot: Agent }) {
+  const t = useT();
   const [jobs, setJobs] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -1994,29 +1995,29 @@ function RoutinesInline({ bot }: { bot: Agent }) {
         <span className="ml-auto text-gold text-[9px]">▾</span>
       </summary>
       <div className="border-t border-line/50 px-2 py-1.5 space-y-1">
-        {jobs.length === 0 && <div className="font-mono text-[9.5px] text-ink-mute px-1 py-1">暂无该 Agent 的定时任务</div>}
+        {jobs.length === 0 && <div className="font-mono text-[9.5px] text-ink-mute px-1 py-1">{t("chat.noCron")}</div>}
         {jobs.map((j) => (
           <div key={j.id} className="flex items-center gap-1.5 py-1 px-1 rounded hover:bg-elevated/50">
             <div className="min-w-0 flex-1">
               <div className="font-mono text-[10px] text-ink truncate">{j.name}</div>
               <div className="font-mono text-[8.5px] text-ink-mute">{j.schedule} · next {fmtNext(j.next_run)}</div>
             </div>
-            <button onClick={() => toggle(j)} className={`tgl ${j.enabled ? "on" : ""} scale-75`} title="启停" />
+            <button onClick={() => toggle(j)} className={`tgl ${j.enabled ? "on" : ""} scale-75`} title={t("chat.tglRun")} />
             <button onClick={() => remove(j)} className="text-red hover:bg-red/10 rounded p-0.5"><I.Trash size={10} /></button>
           </div>
         ))}
         {adding ? (
           <div className="space-y-1 pt-1">
-            <input value={rName} onChange={(e) => setRName(e.target.value)} placeholder="任务名，如 每日早报" className="field text-[10px] py-1" />
-            <input value={rCron} onChange={(e) => setRCron(e.target.value)} placeholder="cron 如 0 9 * * *" className="field text-[10px] py-1" />
+            <input value={rName} onChange={(e) => setRName(e.target.value)} placeholder={t("chat.phCronName")} className="field text-[10px] py-1" />
+            <input value={rCron} onChange={(e) => setRCron(e.target.value)} placeholder={t("chat.phCron")} className="field text-[10px] py-1" />
             <div className="flex gap-1">
-              <button onClick={add} className="btn-gold flex-1 text-[10px] py-1"><I.Check size={10} /> 保存</button>
-              <button onClick={() => setAdding(false)} className="btn-ghost text-[10px] py-1">取消</button>
+              <button onClick={add} className="btn-gold flex-1 text-[10px] py-1"><I.Check size={10} /> {t("chat.save")}</button>
+              <button onClick={() => setAdding(false)} className="btn-ghost text-[10px] py-1">{t("chat.cancel")}</button>
             </div>
           </div>
         ) : (
           <button onClick={() => setAdding(true)} className="w-full rounded border border-dashed border-line py-1 font-mono text-[9.5px] text-ink-dim hover:text-gold hover:border-gold/40 transition-colors flex items-center justify-center gap-1">
-            <I.Plus size={9} /> 添加 Routine
+            <I.Plus size={9} /> {t("chat.addRoutine")}
           </button>
         )}
       </div>
@@ -2150,6 +2151,7 @@ function renderMdBlock(seg: string, keyBase: string): React.ReactNode[] {
 
 /** 代码卡片：语言徽标 + 复制 + 超长自动折叠（Hermes shiki 卡片形态的轻量版） */
 function CodeCard({ lang, code }: { lang: string; code: string }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   const [fold, setFold] = useState(code.split("\n").length > 40);
   const lineCount = code.split("\n").length;
@@ -2160,18 +2162,18 @@ function CodeCard({ lang, code }: { lang: string; code: string }) {
     <div className="my-2 rounded-md border border-line bg-canvas overflow-hidden">
       <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-line/60 bg-elevated/40">
         <span className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-gold">{lang || "code"}</span>
-        <span className="font-mono text-[9px] text-ink-mute">{lineCount} 行</span>
+        <span className="font-mono text-[9px] text-ink-mute">{t("chat.linesN", { n: lineCount })}</span>
         {fold && (
-          <button onClick={() => setFold(false)} className="ml-auto font-mono text-[9.5px] text-ink-mute hover:text-ink transition-colors">展开全部</button>
+          <button onClick={() => setFold(false)} className="ml-auto font-mono text-[9.5px] text-ink-mute hover:text-ink transition-colors">{t("chat.expandAll")}</button>
         )}
         <button onClick={copy} className={`${fold ? "" : "ml-auto"} flex items-center gap-1 font-mono text-[9.5px] ${copied ? "text-green" : "text-ink-mute hover:text-ink"} transition-colors`}>
-          {copied ? "✓ 已复制" : "复制"}
+          {copied ? t("chat.copiedOk") : t("chat.copy")}
         </button>
       </div>
       {fold ? (
         <button onClick={() => setFold(false)} className="block w-full text-left font-mono text-[11.5px] text-green/90 px-3 py-2 leading-relaxed hover:bg-elevated/30 whitespace-pre-wrap transition-colors">
           {code.split("\n").slice(0, 6).join("\n")}
-          {lineCount > 6 ? `\n…（共 ${lineCount} 行 · 点击展开）` : ""}
+          {lineCount > 6 ? `\n${t("chat.foldHint", { n: lineCount })}` : ""}
         </button>
       ) : (
         <pre className="p-3 overflow-auto font-mono text-[12px] text-green/90 leading-relaxed max-h-[480px] whitespace-pre">{code}</pre>

@@ -34,8 +34,8 @@ export function CouncilView({ onDispatch }: { onDispatch?: (symbol: string) => v
         <span className="font-mono text-[10px] text-ink-dim ml-2">SESSION: #20250220-09</span>
         <span className="pill pill-gold"><I.Shield size={10} /> SUPERMAJORITY_RATIFIED 3/4</span>
         <div className="ml-2">
-          <div className="font-mono text-[18px] font-bold text-ink">{symbol.replace("USDT", "")} / USDT 突破与多空博弈联合研判</div>
-          <div className="font-mono text-[11px] text-ink-dim mt-1">4 人设，并行同种问题精解读多空双方仓定，基于链上筹码扫掘、奥姆订单簿深度流与冷摆指标合成连贯可操作策略。</div>
+          <div className="font-mono text-[18px] font-bold text-ink">{t("council.jointTitle", { symbol: symbol.replace("USDT", "") })}</div>
+          <div className="font-mono text-[11px] text-ink-dim mt-1">{t("council.subtitle")}</div>
         </div>
         <div className="ml-auto">
           <div className="prefix">{t("council.statutory")}</div>
@@ -46,9 +46,9 @@ export function CouncilView({ onDispatch }: { onDispatch?: (symbol: string) => v
           <div className="font-mono text-[10px] text-green mt-0.5">CONFIDENCE: 88.5%</div>
           <div className="font-mono text-[10px] text-ink-mute">MPC Enclave Verified</div>
         </div>
-        <button onClick={run} disabled={running} className="btn-gold"><I.Council size={12} /> {running ? "审议中…" : "提交审议执行"} <span className="ml-1 text-[10px]">2-STEP SIGN</span></button>
+        <button onClick={run} disabled={running} className="btn-gold"><I.Council size={12} /> {running ? t("council.deliberating") : t("council.submit")} <span className="ml-1 text-[10px]">2-STEP SIGN</span></button>
         {onDispatch && (
-          <button onClick={() => onDispatch(symbol)} className="btn-ghost"><I.Cex size={12} /> 裁决 → 派发到 CEX</button>
+          <button onClick={() => onDispatch(symbol)} className="btn-ghost"><I.Cex size={12} /> {t("council.dispatchCex")}</button>
         )}
       </div>
 
@@ -71,7 +71,7 @@ export function CouncilView({ onDispatch }: { onDispatch?: (symbol: string) => v
           <span className="prefix">LATENCY: 42ms // DECENTRALIZED SYNC</span>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-          {personas(symbol).map((p, i) => (
+          {personas(symbol, t).map((p, i) => (
             <div key={i} className={`glass p-3.5 transition-all ${active === i || active >= 3 ? "" : running ? "opacity-60" : ""}`}>
               <div className="flex items-center gap-2">
                 <span className="font-mono text-[11px] text-ink-dim tracking-wider">{p.code}</span>
@@ -102,22 +102,22 @@ export function CouncilView({ onDispatch }: { onDispatch?: (symbol: string) => v
       {/* Adjudication Matrix */}
       <div className="glass p-4">
         <div className="flex items-center justify-between mb-3">
-          <span className="prefix">结构化裁决参数矩阵 (Adjudication Matrix)</span>
+          <span className="prefix">{t("council.matrixTitle")}</span>
           <span className="pill pill-gold">STATUS: LOCKED_FOR_EXECUTION</span>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <Mat label="做多方向 (DIRECTION)" value="↗ LONG" sub="做多" detail="Consensus: Unanimous Bullish" />
-          <Mat label="时间周期 (HORIZON)" value={`${tf} ~ 24H`} sub="Short-term Swing Protocol" />
-          <Mat label="仓位配比与杠杆" value="15% / 3x LEV" sub="0.500 USDT 按仓 | ISOLATED" />
-          <Mat label="条件性执行约束" value="TWAP $88,350 ↘ 50股  $89,100 ↗ 50股" sub="Split Slice Duration: 120s" />
-          <Mat label="熔断风控阈值" value="-2.0% / $87,400" sub="HARD SL (NO TRAILING DELAY)" warn />
+          <Mat label={t("council.matDirection")} value="↗ LONG" sub={t("council.matDirSub")} detail="Consensus: Unanimous Bullish" />
+          <Mat label={t("council.matHorizon")} value={`${tf} ~ 24H`} sub="Short-term Swing Protocol" />
+          <Mat label={t("council.matPosition")} value="15% / 3x LEV" sub={t("council.matPositionSub")} />
+          <Mat label={t("council.matExecution")} value={t("council.matExecVal")} sub="Split Slice Duration: 120s" />
+          <Mat label={t("council.matBreaker")} value="-2.0% / $87,400" sub="HARD SL (NO TRAILING DELAY)" warn />
         </div>
         <div className="mt-3 rounded-md border border-line bg-elevated/40 p-3 flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3">
             <I.Bolt className="text-gold" size={16} />
             <div>
-              <div className="text-[13px] text-ink">双阶段 TWAP 算 法路由器 (Smart Order Routing)</div>
-              <div className="font-mono text-[10px] text-ink-mute mt-0.5">挂单将联通 V2 Binance VIP2 FIX API 异步推送，推动分散滑点至深度仓位对冲点。</div>
+              <div className="text-[13px] text-ink">{t("council.sorTitle")}</div>
+              <div className="font-mono text-[10px] text-ink-mute mt-0.5">{t("council.sorDesc")}</div>
             </div>
           </div>
           <div className="flex items-center gap-3 font-mono text-[11px]">
@@ -132,15 +132,19 @@ export function CouncilView({ onDispatch }: { onDispatch?: (symbol: string) => v
         <div className="glass p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
-              <span className="font-mono text-[12px] text-ink">30 天议会 Alpha 净值曲线与胜率归因</span>
-              <span className="tabs ml-2"><button>30D</button><button>90D</button><button>ALL</button></span>
+              <span className="font-mono text-[12px] text-ink">{t("council.equityTitle")}</span>
+              <span className="tabs ml-2">
+                <button>{t("council.tab30d")}</button>
+                <button>{t("council.tab90d")}</button>
+                <button>{t("council.tabAll")}</button>
+              </span>
             </div>
           </div>
           <div className="grid grid-cols-4 gap-3 font-mono text-[11px]">
-            <Metric label="历史胜率 (WIN PROBACY)" value="78.4%" delta="+8.2% vs BP" up />
-            <Metric label="期望盈利 (EXPECTANCY)" value="+1.85 R" delta="Risk/Reward: 1:2.8" up />
-            <Metric label="胜率 · 准确率分" value="0.14" delta="Optimal Calibration" up />
-            <Metric label="高机会类策略" value="+38.64%" delta="Max DD: -4.1%" up />
+            <Metric label={t("council.mWinRate")} value="78.4%" delta="+8.2% vs BP" up />
+            <Metric label={t("council.mExpectancy")} value="+1.85 R" delta="Risk/Reward: 1:2.8" up />
+            <Metric label={t("council.mAcc")} value="0.14" delta="Optimal Calibration" up />
+            <Metric label={t("council.mHighOpp")} value="+38.64%" delta="Max DD: -4.1%" up />
           </div>
           <EquityCurve />
           <div className="mt-3">
@@ -150,7 +154,7 @@ export function CouncilView({ onDispatch }: { onDispatch?: (symbol: string) => v
                 { m: "DeepSeek-R1", a: "+18.4% Alpha" },
                 { m: "Claude 3.5",  a: "+9.8% Alpha" },
                 { m: "Hermes-L2",   a: "+11.2% Alpha" },
-                { m: "GPT-4o",      a: "8 次连胜稳固" },
+                { m: "GPT-4o",      a: t("council.streakStable") },
               ].map((x, i) => (
                 <div key={i} className="rounded-md border border-line bg-elevated/40 px-2 py-1.5 text-center">
                   <div className="text-ink-dim">{x.m}</div>
@@ -163,10 +167,10 @@ export function CouncilView({ onDispatch }: { onDispatch?: (symbol: string) => v
 
         <div className="glass p-4">
           <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2"><I.Star className="text-gold" size={14} /><span className="font-mono text-[12px] text-ink">历史裁决归档与胜负检视</span></div>
-            <span className="pill pill-gold">RECENTS</span>
+            <div className="flex items-center gap-2"><I.Star className="text-gold" size={14} /><span className="font-mono text-[12px] text-ink">{t("council.archiveTitle")}</span></div>
+            <span className="pill pill-gold">{t("council.recents")}</span>
           </div>
-          {archive().map((r, i) => (
+          {archive(t).map((r, i) => (
             <div key={i} className={`grid grid-cols-3 gap-2 py-2 border-b border-line/60 last:border-0 items-center`}>
               <div>
                 <div className="flex items-center gap-2">
@@ -181,7 +185,7 @@ export function CouncilView({ onDispatch }: { onDispatch?: (symbol: string) => v
           ))}
           <div className="mt-3 flex items-center justify-between font-mono text-[10px] text-ink-dim">
             <span>AUDIT LOG HASH: e4b2..97e9</span>
-            <button className="text-gold hover:underline">查看完整上级明标记 →</button>
+            <button className="text-gold hover:underline">{t("council.viewFull")}</button>
           </div>
         </div>
       </div>
@@ -221,22 +225,22 @@ function Metric({ label, value, delta, up }: { label: string; value: string; del
   );
 }
 
-function personas(_sym: string) {
+function personas(_sym: string, t: any) {
   return [
-    { code: "AGENT_01", model: "DeepSeek-R1", title: "趋势明式", subtitle: "技术专家 · DeepSeek-R1", body: "4H EMA20 形态末端确认，K 线收盘在增长斜率上轨，RSI 增强，成交量保持于多头洗透位。成功宽放增幅 240%，伴随强烈买盘信号。", conf: 94.2, weight: 0.30, synapse: "ACTIVE" },
-    { code: "AGENT_02", model: "Claude-3.5", title: "宏观与巨鯨追踪者", subtitle: "深度思维链 · Sonnet", body: "全网中心化交易所出现 3,200 BTC 净流出，未观测到续跌延展，工与军期巨鲸地址转出多空，实数据出货增长近 14 日极低水平。", conf: 88.0, weight: 0.25, synapse: "ACTIVE" },
-    { code: "GUARDRAIL", model: "GPT-4o", title: "法务风险审核", subtitle: "法务专家 · GPT-4o", body: "盯本应未在余繁项会索索提货 (+0.028%)，智能线熔赔资金流动性为盈，抑制触发护仓护金。仓位收益提款 3%，严格熔幅止损于 1.8% 以内。", conf: 72.5, weight: 0.25, synapse: "ENFORCED" },
-    { code: "AGENT_04", model: "Hermes-L2", title: "微观结构与深度", subtitle: "量化执行 · Cere L2", body: "历史调度 ±0.5% 范围内的重提交加仓位 2.4 单，在 $88,100-$88,350 区域给出 480 BTC 冲击鱼费护严委托带栏。", conf: 91.0, weight: 0.25, synapse: "ACTIVE" },
+    { code: "AGENT_01", model: "DeepSeek-R1", title: t("council.p1Title"), subtitle: t("council.p1Sub"), body: t("council.p1Body"), conf: 94.2, weight: 0.30, synapse: "ACTIVE" },
+    { code: "AGENT_02", model: "Claude-3.5", title: t("council.p2Title"), subtitle: t("council.p2Sub"), body: t("council.p2Body"), conf: 88.0, weight: 0.25, synapse: "ACTIVE" },
+    { code: "GUARDRAIL", model: "GPT-4o", title: t("council.p3Title"), subtitle: t("council.p3Sub"), body: t("council.p3Body"), conf: 72.5, weight: 0.25, synapse: "ENFORCED" },
+    { code: "AGENT_04", model: "Hermes-L2", title: t("council.p4Title"), subtitle: t("council.p4Sub"), body: t("council.p4Body"), conf: 91.0, weight: 0.25, synapse: "ACTIVE" },
   ];
 }
 
-function archive() {
+function archive(t: any) {
   return [
-    { date: "20250227-04", bias: "WIN", symbol: "ETH/USDT", summary: "LONG 5X · 调度 4/4 · $2,789 Yesterday", delta: "+1,260" },
-    { date: "20250226-08", bias: "WIN", symbol: "SOL/USDT", summary: "SHORT 3X · 调度 4/4 · 叠口道量 24h", delta: "+790" },
-    { date: "20250225-02", bias: "VETOED", symbol: "BNB/USDT", summary: "LONG · 2/4 员 · 风险雷·主事（衡性存在）", delta: "0" },
-    { date: "20250224-11", bias: "LOSS", symbol: "AVAX/USDT", summary: "LONG · 3/4 员 · 调望 -1.8% · 机上偏差锚", delta: "-215" },
-    { date: "20250223-01", bias: "WIN", symbol: "BTC/USDT", summary: "LONG 3X · 调度 4/4 · 烟雾量 50 BTC", delta: "+2,480" },
+    { date: "20250227-04", bias: "WIN", symbol: "ETH/USDT", summary: t("council.arch1"), delta: "+1,260" },
+    { date: "20250226-08", bias: "WIN", symbol: "SOL/USDT", summary: t("council.arch2"), delta: "+790" },
+    { date: "20250225-02", bias: "VETOED", symbol: "BNB/USDT", summary: t("council.arch3"), delta: "0" },
+    { date: "20250224-11", bias: "LOSS", symbol: "AVAX/USDT", summary: t("council.arch4"), delta: "-215" },
+    { date: "20250223-01", bias: "WIN", symbol: "BTC/USDT", summary: t("council.arch5"), delta: "+2,480" },
   ];
 }
 

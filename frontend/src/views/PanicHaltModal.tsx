@@ -21,10 +21,10 @@ export function PanicHaltModal({ isOpen, onClose, halted, onConfirm, onResume }:
           </span>
           <div>
             <div className={`font-mono text-[13px] font-bold tracking-wider ${halted ? "text-red" : "text-ink"}`}>
-              {halted ? `系统已挂起 (${t("panic.haltedTitle")})` : `紧急熔断 (${t("panic.haltTitle")})`}
+              {t("panic.haltedTitle")}
             </div>
             <div className="font-mono text-[10px] text-ink-mute mt-0.5">
-              CIRCUIT BREAKER // 全局执行通道
+              {t("panic.subtitle")}
             </div>
           </div>
           <button onClick={onClose} className="ml-auto text-ink-mute hover:text-ink transition-colors">
@@ -37,19 +37,19 @@ export function PanicHaltModal({ isOpen, onClose, halted, onConfirm, onResume }:
           {!halted ? (
             <>
               <div className="font-mono text-[12px] text-ink leading-relaxed">
-                确认后系统将 <span className="text-red font-bold">立即挂起全部执行通道</span>：
+                {t("panic.confirmLead")} <span className="text-red font-bold">{t("panic.confirmEm")}</span>：
               </div>
               <ul className="mt-2.5 space-y-1.5 font-mono text-[11px] text-ink-dim">
-                <li className="flex items-center gap-2"><I.X size={11} className="text-red" /> 撤销所有未成交挂单 (Open Orders)</li>
-                <li className="flex items-center gap-2"><I.X size={11} className="text-red" /> 拒绝新的开仓/加仓指令</li>
-                <li className="flex items-center gap-2"><I.X size={11} className="text-red" /> 现货 / 合约 / baw MPC 通道全部冻结</li>
-                <li className="flex items-center gap-2"><I.X size={11} className="text-red" /> 多 Agent 议会停止派发执行指令</li>
+                <li className="flex items-center gap-2"><I.X size={11} className="text-red" /> {t("panic.listCancel")}</li>
+                <li className="flex items-center gap-2"><I.X size={11} className="text-red" /> {t("panic.listReject")}</li>
+                <li className="flex items-center gap-2"><I.X size={11} className="text-red" /> {t("panic.listFreeze")}</li>
+                <li className="flex items-center gap-2"><I.X size={11} className="text-red" /> {t("panic.listStop")}</li>
               </ul>
             </>
           ) : (
             <>
               <div className="font-mono text-[12px] text-ink leading-relaxed">
-                熔断已生效 — 所有执行通道已挂起。<span className="text-gold">仅在你确认风险解除后</span> 恢复操作。
+                {t("panic.active1")} <span className="text-gold">{t("panic.active2")}</span> {t("panic.active3")}
               </div>
               <div className="mt-2.5 font-mono text-[10px] text-ink-mute">{t("panic.haltTime")}: {new Date().toLocaleTimeString()} // {t("panic.logRef")}: CB-{String(Date.now()).slice(-6)}</div>
             </>
@@ -60,13 +60,13 @@ export function PanicHaltModal({ isOpen, onClose, halted, onConfirm, onResume }:
         <div className="mt-5 flex items-center gap-3 justify-end">
           {!halted ? (
             <>
-              <button onClick={onClose} className="btn-ghost">取消</button>
-              <button onClick={onConfirm} className="btn-halt"><I.Stop size={12} /> 确认熔断</button>
+              <button onClick={onClose} className="btn-ghost">{t("panic.btnCancel")}</button>
+              <button onClick={onConfirm} className="btn-halt"><I.Stop size={12} /> {t("panic.btnHalt")}</button>
             </>
           ) : (
             <>
-              <button onClick={onClose} className="btn-ghost">保持挂起</button>
-              <button onClick={onResume} className="btn-gold"><I.Refresh size={12} /> RESUME · 恢复系统</button>
+              <button onClick={onClose} className="btn-ghost">{t("panic.btnHeld")}</button>
+              <button onClick={onResume} className="btn-gold"><I.Refresh size={12} /> {t("panic.btnResume")}</button>
             </>
           )}
         </div>

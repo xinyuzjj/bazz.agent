@@ -165,8 +165,23 @@ def memory_context() -> str:
     return "\n".join(blocks) + "\n" if blocks else ""
 
 
-def _system_prompt() -> str:
-    return (SOUL + "\n\n你是 Binance Agent OS 的中文交易助手(BAZZ Agent)。\n"
+_EN_LANG_BLOCK = ("[LANGUAGE & OUTPUT RULES - HIGHEST PRIORITY]\n"
+  "- The product UI is in English. Write your ENTIRE reply - conclusions, tables, bullets and follow-ups - in English.\n"
+  "- Keep tickers and technical terms as-is (BTC/USDT, funding rate, APY, RWA...).\n"
+  "- If the user writes in another language (e.g. Chinese), still reply in English unless they explicitly ask otherwise.\n"
+  "- Every number must come from tool results; never invent prices, APYs or statistics.\n"
+  "- Tools return raw data, not final copy: rewrite it into a natural English answer - tables only when they help, keep sentences tight.\n"
+  "- Never open with filler like \"I'll...\" / \"Let me...\"; call the tool or state the conclusion directly.\n"
+  "- The routing rules below (Chinese examples like 启动前/起飞中) still apply when the user describes those situations in any wording.\n\n")
+
+
+def _lang(locale: str = None) -> str:
+    """'en' when locale starts with en, else 'zh'."""
+    return "en" if locale and str(locale).lower().startswith("en") else "zh"
+
+
+def _system_prompt(locale: str = "zh") -> str:
+    s = (SOUL + "\n\n你是 Binance Agent OS 的中文交易助手(BAZZ Agent)。\n"
             "你拥有一组工具（function calling），用它们完成用户的真实请求。\n"
             "【强制规则 — 必须遵守】\n"
             "1) 涉及行情/异常 → 立即调用 scan_market；问某币价格/合约行情/资金费率 → market_quote；\n"
@@ -210,6 +225,9 @@ def _system_prompt() -> str:
             "   缺哪补哪（market_quote 逐项补 / scan_market 看大盘背景 / run_skill 查链上与官方榜单），补齐后再给结构化结论；\n"
             "   用户只要『报个价/一句话快答』、或所需数据已齐全时则立即收尾——不要为凑轮数空转。\n"
             + memory_context())
+    if _lang(locale) == "en":
+        s = _EN_LANG_BLOCK + s
+    return s
 
 
 def _detect(message: str) -> str:
@@ -1140,13 +1158,17 @@ def _tool_propose_trade(symbol: str, direction: str = "BULLISH"):
     return _run_execute(message=msg)
 
 
-def _emit_llm_unavailable(message: str):
+def _emit_llm_unavailable(message: str, locale: str = "zh"):
     """已接入 LLM 但模型调用失败时：给出明确提示，绝不回退规则引擎的固定话术。"""
     tip = ("⚠️ 已接入 LLM，但本次模型调用失败（请检查 API Key / 网络 / 模型名是否可用）。\n"
            "未接入 LLM 时才会自动使用内置回答；当前已接入，故不回退固定话术。")
+    if _lang(locale) == "en":
+        tip = ("⚠️ LLM is configured but this call failed (check API Key / network / model name).\n"
+               "Built-in replies only kick in when no LLM is configured; since it is, we do not fall back to canned text.")
+        tname = "LLM call failed"
     yield {"type": "text", "delta": tip}
     yield {"type": "done", "intent": "llm", "reply": tip,
-           "tools": [{"icon": "⚠️", "name": "LLM 调用失败", "ok": False,
+           "tools": [{"icon": "⚠️", "name": tname if _lang(locale) == "en" else "LLM 调用失败", "ok": False,
                       "detail": llm.get_llm_config().get("model")}]}
 
 
@@ -1183,8 +1205,8 @@ def _intent_to_tool(intent: str) -> Optional[str]:
     return m.get(intent)
 
 
-def _build_system(persona: dict = None) -> str:
-    base = _system_prompt()
+def _build_system(persona: dict = None, locale: str = "zh") -> str:
+    base = _system_prompt(locale)
     if persona and persona.get("name"):
         cfg = persona.get("config") or {}
         tone = (cfg.get("tone") or "").strip()
@@ -1630,7 +1652,7 @@ def _history_blocks(history: list, llm_cfg: dict = None):
 
 def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, approval: dict = None,
                    persona: dict = None, llm_cfg: dict = None, images: list = None,
-                   auto_exec: bool = False, history: list = None):
+                   auto_exec: bool = False, history: list = None, locale: str = "zh"):
     """真 LLM 接上（Hermes 风格 function-calling 循环）。
 
     1) LLM 看 system + 历史上下文(history) + 用户消息 + TOOLS(含插件命令)，决定调用哪些工具；
@@ -1649,7 +1671,7 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
         except Exception:
             llm_cfg["deep_thinking"] = True
     yield {"type": "meta", "intent": "llm", "persona": (persona or {}).get("name") or PERSONA_NAME}
-    system = _build_system(persona)
+    system = _build_system(persona, locale)
     user_content, img_notes = _build_user_message(message, images, llm_cfg)
     if img_notes:
         yield {"type": "reasoning", "text": img_notes[0]}
@@ -1679,7 +1701,7 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
             # 模型调用失败：先尝试一次纯对话兜底（仍是 LLM 自己回答），
             # 仍失败才给出明确提示——绝不回退规则引擎的固定话术。
             try:
-                plain = llm.chat(_build_system(persona), message, llm_cfg=llm_cfg)
+                plain = llm.chat(_build_system(persona, locale), message, llm_cfg=llm_cfg)
             except Exception:
                 plain = None
             if plain:
@@ -1690,7 +1712,7 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
                        "tools": [{"icon": "💬", "name": "LLM 对话", "status": "success",
                                   "detail": model_used}]}
                 return
-            yield from _emit_llm_unavailable(message)
+            yield from _emit_llm_unavailable(message, locale)
             return
         content = resp.get("content") or ""
         tool_calls = resp.get("tool_calls") or []
@@ -1813,23 +1835,35 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_msg})
     # 超过轮次保护：明确提示，并给具体可换路径清单，不让用户陷入死胡同
     if ever_failed:
-        tip = ("我已经连续尝试多轮仍未拿到完整结果（工具持续报错或自愈次数已用尽）。\n\n"
+        if _lang(locale) == "en":
+            tip = ("I tried multiple rounds but still couldn't get a complete result (tools kept failing or the heal budget ran out).\n\n"
+                   "**Next steps** (pick one and I'll retry, or try it yourself and tell me):\n"
+                   "1) The coin may not be on SPOT and only on USDT-margined PERPETUALS - query it via the public `fapi /fapi/v1/ticker/24hr?symbol=XXX` endpoint (plus `/fapi/v1/premiumIndex` for funding), no auth needed. Say \"try the fapi public endpoint again\";\n"
+                   "2) Use `run_skill` with an installed skill such as `binance-agentic-wallet` / `binance-leaderboard` / `trading-signal` for its contract / on-chain data;\n"
+                   "3) Use `fetch_url` to hit `fapi.binance.com/fapi/v1/ticker/24hr?symbol=XXX` or the exchange announcement page to verify it exists;\n"
+                   "4) Use `run_command` to let my local Python call the public fapi endpoint directly (no API Key), bypassing the tool chain.\n"
+                   "Tell me which path, or rephrase the question so I can try a different route.")
+            tools_tip = [{"icon": "⚠️", "name": "Multiple attempts failed", "ok": False,
+                          "detail": "Max turns reached · see suggestions"}]
+        else:
+            tip = ("我已经连续尝试多轮仍未拿到完整结果（工具持续报错或自愈次数已用尽）。\n\n"
                "**下一步建议**（你可直接选一条让我重试，或你自己操作后告诉我）：\n"
                "1) 该币可能在 SPOT 没上、只上了 U 本位永续 —— 我会用 `fapi /fapi/v1/ticker/24hr?symbol=XXX` 这条公开免授权接口直接拿合约价量+资金费率（前面已尝试过的话可以再说一次『用 fapi 公开端点再试一次』）；\n"
                "2) 用 `run_skill` 调官方 `binance-agentic-wallet` / `binance-leaderboard` / `trading-signal` 等已装技能查它的合约/链上数据；\n"
                "3) 用 `fetch_url` 直接抓 `fapi.binance.com/fapi/v1/ticker/24hr?symbol=XXX` 或交易所公告页验证存在性；\n"
                "4) 用 `run_command` 让我本地 Python 直接请求 fapi 公开接口（无需 API Key），绕过工具链路。\n"
                "告诉我用哪条，或换种问法让我换条路再试。")
+            tools_tip = [{"icon": "⚠️", "name": "多次尝试失败", "ok": False,
+                          "detail": "已达最大轮次 · 见建议清单"}]
         yield {"type": "text", "delta": tip}
         yield {"type": "done", "intent": "llm", "reply": tip, "model": model_used,
-               "tools": [{"icon": "⚠️", "name": "多次尝试失败", "ok": False,
-                          "detail": "已达最大轮次 · 见建议清单"}]}
+               "tools": tools_tip}
         return
-    yield from _emit_llm_unavailable(message)
+    yield from _emit_llm_unavailable(message, locale)
 
 
 def dispatch(message: str, confirm: bool = False, signal: dict = None,
-             approval: dict = None, auto_exec: bool = False) -> Dict[str, Any]:
+             approval: dict = None, auto_exec: bool = False, locale: str = "zh") -> Dict[str, Any]:
     """规则引擎入口。auto_exec=True 时沙箱类工具跳过审批直接执行。"""
     # 审批回调：用户确认了某个待审批动作
     if approval:
@@ -1878,18 +1912,24 @@ def dispatch(message: str, confirm: bool = False, signal: dict = None,
 
     # 闲聊：有 LLM 走 LLM，否则规则兜底
     if llm.is_configured():
-        narr = llm.chat(_system_prompt(), message)
+        narr = llm.chat(_system_prompt(locale), message)
         if narr:
             return {"intent": "chat", "reply": narr,
                     "tools": [{"icon": "💬", "name": "LLM 对话", "status": "success",
                                "detail": llm.get_llm_config().get("model")}]}
+    if _lang(locale) == "en":
+        intro = "I'm BAZZ Agent, connected to Binance Agent OS. Type \"help\" to see all skills, or try \"scan / parallel scan / scheduled scan\"."
+        tname, tdet = "Chat", "Rule engine"
+    else:
+        intro = "我是 BAZZ Agent，已接入 Binance Agent OS。输入「帮助」查看全部能力，或试试「扫描 / 并行扫描 / 定时扫描」。"
+        tname, tdet = "对话", "规则引擎"
     return {"intent": "chat",
-            "reply": "我是 BAZZ Agent，已接入 Binance Agent OS。输入「帮助」查看全部能力，或试试「扫描 / 并行扫描 / 定时扫描」。",
-            "tools": [{"icon": "💬", "name": "对话", "status": "info", "detail": "规则引擎"}]}
+            "reply": intro,
+            "tools": [{"icon": "💬", "name": tname, "status": "info", "detail": tdet}]}
 
 
-def handle(message: str) -> dict:
-    return dispatch(message)
+def handle(message: str, locale: str = "zh") -> dict:
+    return dispatch(message, locale=locale)
 
 
 def _chunk_text(text: str, size: int = 6) -> Iterator[str]:
@@ -1935,27 +1975,29 @@ def _strip_preamble(text: str) -> str:
 def run_stream(message: str, confirm: bool = False, signal: dict = None,
                approval: dict = None, persona: dict = None, llm_cfg: dict = None,
                images: list = None, auto_exec: bool = False,
-               history: list = None) -> Iterator[Dict[str, Any]]:
+               history: list = None, locale: str = "zh") -> Iterator[Dict[str, Any]]:
     """产出 NDJSON 事件流。persona 可选：来自 Bots 页的 Agent 档案（身份/口吻）。
     llm_cfg 可选：会话级 provider 快照（防漂移）。images 可选：用户附图 dataURL 列表。
     auto_exec：全能模式（首页默认），沙箱工具跳过审批直接执行；交易类仍需确认。
     history：同会话前序消息（记住上下文）。"""
     # 审批回调（用户确认了某个待审批动作）始终走规则引擎精确处理
     if approval:
-        yield from _emit_dispatch(dispatch(message, confirm=confirm, signal=signal, approval=approval, auto_exec=auto_exec))
+        yield from _emit_dispatch(dispatch(message, confirm=confirm, signal=signal, approval=approval,
+                                           auto_exec=auto_exec, locale=locale))
         return
 
     # 真 LLM 已配置 → 走 function-calling agent 循环（Hermes 风格）
     if llm.is_configured(llm_cfg):
         yield from _run_llm_agent(message, confirm=confirm, signal=signal, approval=approval,
                                   persona=persona, llm_cfg=llm_cfg, images=images,
-                                  auto_exec=auto_exec, history=history)
+                                  auto_exec=auto_exec, history=history, locale=locale)
         return
 
     # 未配置 LLM → 规则引擎
     msg_for_rule, _notes = _build_user_message(message, images, None)
     msg_for_rule = msg_for_rule if isinstance(msg_for_rule, str) else message
-    out = dispatch(msg_for_rule, confirm=confirm, signal=signal, approval=approval, auto_exec=auto_exec)
+    out = dispatch(msg_for_rule, confirm=confirm, signal=signal, approval=approval,
+                   auto_exec=auto_exec, locale=locale)
     yield from _emit_dispatch(out)
 
 

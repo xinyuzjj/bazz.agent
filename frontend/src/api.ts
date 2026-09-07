@@ -1,4 +1,6 @@
 // 统一 API 层。开发（Vite 5173 代理）与生产（后端 8080 同源）都用相对 /api。
+import { getLocale } from "./i18n/i18n";
+
 const BASE = "/api";
 
 async function jget(path: string) {
@@ -164,7 +166,7 @@ export async function streamChat(body: any, signal?: AbortSignal): Promise<Respo
   return fetch(BASE + "/chat/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...body, locale: getLocale() }),
     signal,
   });
 }

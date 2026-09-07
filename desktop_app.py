@@ -146,6 +146,8 @@ async def chat_stream(req: Request):
         images = [s for s in images if isinstance(s, str) and s][:6]  # 最多 6 张
     else:
         images = []
+    # 界面语言（前端随每条消息带上：zh / en），英文时 agent 回复按英文输出
+    locale = str(body.get("locale") or "zh")[:16]
     # 全能模式（首页默认开启）：沙箱类工具（run_command/write_file/run_skill）跳过审批直接执行；
     # 交易类（propose_trade/execute_order）仍需用户显式确认。
     if "auto_exec" in body:
@@ -235,7 +237,7 @@ async def chat_stream(req: Request):
                 history = None
         for ev in agent_core.run_stream(message, confirm=confirm, signal=signal, approval=approval,
                                         persona=persona, llm_cfg=llm_cfg, images=images,
-                                        auto_exec=auto_exec, history=history):
+                                        auto_exec=auto_exec, history=history, locale=locale):
             # 把 conversation_id 注入首事件与 done 事件，前端能持续复用同一会话
             if (not first_meta_injected) or ev.get("type") == "done":
                 ev = {**ev, "conversation_id": conv_id}

@@ -8,18 +8,19 @@ export type NavId = "chat" | "markets" | "wallet" | "skills" | "cex" | "council"
 // 仅当 desktop（preload 暴露了 bazzWindow）时显示窗口控制按钮
 function WindowControls() {
   const w: any = (typeof window !== "undefined") ? (window as any) : null;
+  const { t } = useI18n();
   if (!w?.bazzWindow) return null;
   const btn = "w-9 h-9 flex items-center justify-center rounded-md text-ink-dim hover:bg-elevated hover:text-ink transition-colors app-no-drag";
   const close = "w-9 h-9 flex items-center justify-center rounded-md text-ink-dim hover:bg-red-500/85 hover:text-white transition-colors app-no-drag";
   return (
     <div className="flex items-center gap-0.5 ml-1">
-      <button onClick={() => w.bazzWindow.minimize()} className={btn} title="最小化" aria-label="最小化">
+      <button onClick={() => w.bazzWindow.minimize()} className={btn} title={t("shell.min")} aria-label={t("shell.min")}>
         <svg width="10" height="10" viewBox="0 0 10 10"><rect x="1" y="5" width="8" height="1" fill="currentColor"/></svg>
       </button>
-      <button onClick={() => w.bazzWindow.toggleMaximize()} className={btn} title="最大化" aria-label="最大化">
+      <button onClick={() => w.bazzWindow.toggleMaximize()} className={btn} title={t("shell.max")} aria-label={t("shell.max")}>
         <svg width="10" height="10" viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1"/></svg>
       </button>
-      <button onClick={() => w.bazzWindow.close()} className={close} title="关闭" aria-label="关闭">
+      <button onClick={() => w.bazzWindow.close()} className={close} title={t("shell.close")} aria-label={t("shell.close")}>
         <svg width="10" height="10" viewBox="0 0 10 10">
           <path d="M1.5 1.5 L8.5 8.5 M8.5 1.5 L1.5 8.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" fill="none"/>
         </svg>

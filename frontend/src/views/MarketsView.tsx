@@ -28,7 +28,7 @@ type MarketData = {
 
 const PAGE = 120; // 每批展示行数（"加载更多"）
 type SortKey = "price" | "change_pct" | "quote_volume";
-const SORT_META: Record<SortKey, string> = { price: "现价", change_pct: "24h 涨跌", quote_volume: "24h 成交额" };
+const SORT_META: Record<SortKey, string> = { price: "markets.h.price", change_pct: "markets.h.change", quote_volume: "markets.h.quotevol" };
 
 type OrderMode = "spot-long" | "futures-long" | "futures-short";
 /* 妖币雷达行：ignition(启动前) 与 takeoff(起飞中) 共用，可选字段按模式出现 */
@@ -39,13 +39,13 @@ type RadarRow = {
   change3d_pct?: number; position_pct?: number; floor_rising?: boolean;
 };
 const SIDE_META: Record<RadarRow["side"], { label: string; cls: string }> = {
-  LONG: { label: "做多窗口", cls: "pill-green" },
-  WATCH_SHORT: { label: "做空观察", cls: "pill-red" },
-  WATCH: { label: "观望", cls: "pill-dim" },
+  LONG: { label: "markets.sideLong", cls: "pill-green" },
+  WATCH_SHORT: { label: "markets.sideShort", cls: "pill-red" },
+  WATCH: { label: "markets.sideWatch", cls: "pill-dim" },
 };
 const RADAR_COLS = {
-  ignition: { tpl: "2.2fr 0.9fr 0.9fr 0.9fr 1fr 0.9fr 1fr 2.3fr", head: ["标的 / 状态", "现价", "3D", "30D", "90日位置", "量比", "研判", "操作"] },
-  takeoff:  { tpl: "2fr 0.9fr 0.9fr 0.9fr 0.9fr 1.1fr 0.8fr 1fr 2.2fr", head: ["标的 / 状态", "现价", "7D", "30D", "距高点", "24h 成交额", "放量", "研判", "操作"] },
+  ignition: { tpl: "2.2fr 0.9fr 0.9fr 0.9fr 1fr 0.9fr 1fr 2.3fr", head: ["markets.col.symbol", "markets.h.price", "3D", "30D", "markets.col.pos90", "markets.col.volratio", "markets.col.verdict", "markets.col.action"] },
+  takeoff:  { tpl: "2fr 0.9fr 0.9fr 0.9fr 0.9fr 1.1fr 0.8fr 1fr 2.2fr", head: ["markets.col.symbol", "markets.h.price", "7D", "30D", "markets.col.fromhigh", "markets.h.quotevol", "markets.col.surge", "markets.col.verdict", "markets.col.action"] },
 } as const;
 
 export function MarketsView({ onTrade, onOrder }: {
@@ -156,10 +156,10 @@ export function MarketsView({ onTrade, onOrder }: {
           <I.Market className="text-gold" size={20} />
           <span className="font-mono text-[15px] font-bold tracking-wide text-ink">{t("markets.title")}</span>
           <span className="pill pill-green"><span className="dot dot-green live" /> {t("markets.live")}</span>
-          <span className="pill pill-dim">{data?.quote ?? "USDT"} 现货 · {total} 交易对</span>
+          <span className="pill pill-dim">{data?.quote ?? "USDT"} {t("markets.spotPairs", { total })}</span>
         </div>
-        <span className="prefix ml-auto">每 30s 自动刷新 · 最后 <span className="text-ink-dim tabular">{updated}</span></span>
-        <button onClick={load} className="btn-ghost py-1 px-2.5 text-[12px]"><I.Refresh size={11} /> 刷新</button>
+        <span className="prefix ml-auto">{t("markets.autoRefreshPrefix")} <span className="text-ink-dim tabular">{updated}</span></span>
+        <button onClick={load} className="btn-ghost py-1 px-2.5 text-[12px]"><I.Refresh size={11} /> {t("markets.refresh")}</button>
       </div>
 
       {/* 妖币雷达：启动前·埋伏（量在价先） / 起飞中·追涨高风险 */}
@@ -167,12 +167,12 @@ export function MarketsView({ onTrade, onOrder }: {
         <div className="px-4 pt-3.5 pb-1">
           <div className="flex items-center gap-2 flex-wrap">
             <I.Flame className="text-gold" size={16} />
-            <span className="font-mono text-[13px] tracking-wider text-ink">妖币雷达 · Monster Radar</span>
-            {env && <span className="pill pill-gold text-[10px]" title="大盘环境（BTC 30日走势）">环境: {env}</span>}
+            <span className="font-mono text-[13px] tracking-wider text-ink">{t("markets.radarTitle")}</span>
+            {env && <span className="pill pill-gold text-[10px]" title={t("markets.envTitle")}>{t("markets.env", { env })}</span>}
             <div className="ml-auto flex items-center gap-2">
-              <span className="pill pill-dim text-[10px]">埋伏 {ign.length} · 起飞 {tk.length} · 每 5 分钟重扫</span>
+              <span className="pill pill-dim text-[10px]">{t("markets.radarCounts", { ign: ign.length, tk: tk.length })}</span>
               <button onClick={() => fetchRadar(mode, true)} disabled={mLoading} className="btn-ghost py-1 px-2.5 text-[11px]">
-                <I.Refresh size={11} className={mLoading ? "animate-spin" : ""} /> {mLoading ? "扫描中…" : "强制重扫"}
+                <I.Refresh size={11} className={mLoading ? "animate-spin" : ""} /> {mLoading ? t("markets.scanning") : t("markets.forceRescan")}
               </button>
             </div>
           </div>
@@ -181,24 +181,22 @@ export function MarketsView({ onTrade, onOrder }: {
             <button onClick={() => { setMode("ignition"); setMSide("ALL"); setMLimit(24); }}
               className={`px-3.5 py-1.5 rounded-md font-mono text-[12px] tracking-wide border transition-colors
                 ${mode === "ignition" ? "bg-gold text-canvas border-gold font-semibold" : "border-transparent text-ink-dim hover:text-ink"}`}>
-              启动前 · 埋伏窗口 <span className="ml-0.5 opacity-70">({ign.length})</span>
+              {t("markets.modeIgnition")} <span className="ml-0.5 opacity-70">({ign.length})</span>
             </button>
             <button onClick={() => { setMode("takeoff"); setMSide("ALL"); setMLimit(24); }}
               className={`px-3.5 py-1.5 rounded-md font-mono text-[12px] tracking-wide border transition-colors
                 ${mode === "takeoff" ? "bg-gold text-canvas border-gold font-semibold" : "border-transparent text-ink-dim hover:text-ink"}`}>
-              起飞中 · 追涨高风险 <span className="ml-0.5 opacity-70">({tk.length})</span>
+              {t("markets.modeTakeoff")} <span className="ml-0.5 opacity-70">({tk.length})</span>
             </button>
             <span className="prefix ml-auto hidden md:inline">
-              {mode === "ignition"
-                ? "妖币启动前 = 低位放量吸筹、价被压制 → 点火前埋伏（小仓+破位止损）"
-                : "妖币 = 已暴涨数倍币 → 仅跟踪，追高风险大，非启动前埋伏"}
+              {mode === "ignition" ? t("markets.ignHint") : t("markets.takeoffHint")}
             </span>
           </div>
           <p className="text-[11px] text-ink-dim mt-1.5 leading-relaxed font-mono">
             {mode === "ignition" ? (
-              <>日线 90 日量价：90日位置 + 放量(量在价先) + 价格压制 + 底部抬升四因子共振 · 现货只能 <span className="text-green">买入 / 卖出持仓</span>，做空需 U 本位合约 · 无链上筹码数据，属价量近似</>
+              <>{t("markets.ignDesc1")}<span className="text-green">{t("markets.buySellSpot")}</span>{t("markets.ignDesc2")}</>
             ) : (
-              <>已启动的暴涨币跟踪：7D / 30D / 距 90 日高点 · 现货只能 <span className="text-green">买入 / 卖出持仓</span>，做空需 U 本位合约 · 明示追高风险</>
+              <>{t("markets.takeoffDesc1")}<span className="text-green">{t("markets.buySellSpot")}</span>{t("markets.takeoffDesc2")}</>
             )}
           </p>
           {mErr && <div className="rounded-md border border-red/40 bg-red/5 px-3 py-1.5 text-[11.5px] text-red font-mono mt-2">{mErr}</div>}
@@ -212,7 +210,7 @@ export function MarketsView({ onTrade, onOrder }: {
               <button key={k} onClick={() => { setMSide(k); setMLimit(24); }}
                 className={`px-3 py-1 rounded-md font-mono text-[11px] tracking-wider transition-colors border
                   ${mSide === k ? "bg-elevated text-gold border-line" : "border-transparent text-ink-dim hover:text-ink"}`}>
-                {k === "ALL" ? `全部 (${radarRows.length})` : SIDE_META[k].label}
+                {k === "ALL" ? t("markets.all", { n: radarRows.length }) : t(SIDE_META[k].label)}
               </button>
             ))}
         </div>
@@ -220,16 +218,16 @@ export function MarketsView({ onTrade, onOrder }: {
         {/* 表头 */}
         <div className="grid items-center px-4 py-2 border-t border-b border-line text-[10px] font-mono tracking-[0.08em] text-ink-dim"
           style={{ gridTemplateColumns: RADAR_COLS[mode].tpl }}>
-          {RADAR_COLS[mode].head.map((h) => <div key={h}>{h}</div>)}
+          {RADAR_COLS[mode].head.map((h) => <div key={h}>{t(h)}</div>)}
         </div>
 
         {mLoading && radarRows.length === 0 ? (
           <div className="p-4 space-y-2">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="shimmer h-9" />)}</div>
         ) : mRows.length === 0 ? (
           <div className="p-8 text-center text-ink-dim text-[12.5px] font-mono">
-            {mLoading ? "扫描中…（冷缓存约需 5-10s 拉全市场日线）"
-              : mode === "ignition" ? "暂无启动前候选：市场普涨/普跌时底部吸筹信号少，属正常（宁缺毋滥）"
-                : "暂无起飞中妖币（当前无显著暴涨币，或接口不可用）"}
+            {mLoading ? t("markets.scanningCold")
+              : mode === "ignition" ? t("markets.emptyIgn")
+                : t("markets.emptyTakeoff")}
           </div>
         ) : (
           mRows.map((m) => {
@@ -244,7 +242,7 @@ export function MarketsView({ onTrade, onOrder }: {
                     <span className="font-mono font-semibold text-ink group-hover:text-gold">{baseName(m.symbol)}</span>
                     <span className="font-mono text-[9px] text-ink-mute">/USDT</span>
                     <span className={`pill ${m.side === "LONG" ? "pill-green" : m.side === "WATCH_SHORT" ? "pill-red" : "pill-dim"} text-[9px]`} title={m.tag}>{m.tag}</span>
-                    {isIgn && m.floor_rising && <span className="pill pill-dim text-[9px]" title="近5日低点高于前期平台">底抬</span>}
+                    {isIgn && m.floor_rising && <span className="pill pill-dim text-[9px]" title={t("markets.floorRisingTitle")}>{t("markets.floorRising")}</span>}
                   </div>
                   <div className="font-mono text-[9.5px] text-ink-mute truncate mt-0.5" title={m.note}>{m.note}</div>
                 </div>
@@ -255,7 +253,7 @@ export function MarketsView({ onTrade, onOrder }: {
                     <div className={`font-mono tabular text-[12px] ${(m.change3d_pct ?? 0) >= 0 ? "up" : "down"}`}>{m.change3d_pct! >= 0 ? "+" : ""}{m.change3d_pct!.toFixed(1)}%</div>
                     <div className={`font-mono tabular text-[12px] ${(m.change30d_pct ?? 0) >= 0 ? "up" : "down"}`}>{m.change30d_pct! >= 0 ? "+" : ""}{m.change30d_pct!.toFixed(0)}%</div>
                     <div className="font-mono tabular text-ink-dim text-[11.5px]">
-                      分位 {m.position_pct?.toFixed(0)}%{m.position_pct! <= 30 ? " · 贴底" : m.position_pct! <= 45 ? " · 低位" : " · 中位"}
+                      {t("markets.positionPrefix")}{m.position_pct?.toFixed(0)}%{m.position_pct! <= 30 ? t("markets.posLow") : m.position_pct! <= 45 ? t("markets.posMidLow") : t("markets.posMid")}
                     </div>
                   </>
                 ) : (
@@ -268,23 +266,23 @@ export function MarketsView({ onTrade, onOrder }: {
                 )}
 
                 <div className="font-mono tabular text-[12px] text-ink">{m.vol_ratio >= 1 ? "+" : ""}{m.vol_ratio.toFixed(1)}x</div>
-                <div><span className={`pill ${side.cls} text-[10px]`}>{side.label}</span></div>
+                <div><span className={`pill ${side.cls} text-[10px]`}>{t(side.label)}</span></div>
                 <div className="flex items-center gap-1.5">
                   {m.side === "LONG" && (
                     <>
                       <button onClick={(e) => { e.stopPropagation(); onOrder?.(m.symbol, "spot-long"); }}
-                        className="btn-ghost text-[10.5px] py-1 border-green/40 text-green hover:border-green"><I.Check size={10} /> 现货买入</button>
+                        className="btn-ghost text-[10.5px] py-1 border-green/40 text-green hover:border-green"><I.Check size={10} /> {t("markets.spotBuy")}</button>
                       <button onClick={(e) => { e.stopPropagation(); onOrder?.(m.symbol, "futures-long"); }}
-                        className="btn-ghost text-[10.5px] py-1"><I.Bolt size={10} /> 合约做多</button>
+                        className="btn-ghost text-[10.5px] py-1"><I.Bolt size={10} /> {t("markets.futuresLong")}</button>
                     </>
                   )}
                   {m.side === "WATCH_SHORT" && (
                     <button onClick={(e) => { e.stopPropagation(); onOrder?.(m.symbol, "futures-short"); }}
-                      className="btn-ghost text-[10.5px] py-1 border-red/40 text-red hover:border-red"><I.Bolt size={10} /> 合约做空</button>
+                      className="btn-ghost text-[10.5px] py-1 border-red/40 text-red hover:border-red"><I.Bolt size={10} /> {t("markets.futuresShort")}</button>
                   )}
                   {m.side === "WATCH" && (
                     <button onClick={(e) => { e.stopPropagation(); onTrade?.(m.symbol); }}
-                      className="btn-ghost text-[10.5px] py-1"><I.Search size={10} /> 查看</button>
+                      className="btn-ghost text-[10.5px] py-1"><I.Search size={10} /> {t("markets.view")}</button>
                   )}
                 </div>
               </div>
@@ -294,7 +292,7 @@ export function MarketsView({ onTrade, onOrder }: {
         {radarRows.length > mLimit && (
           <div className="px-4 py-2 border-t border-line text-center">
             <button onClick={() => setMLimit((n) => n + 24)} className="text-gold font-mono text-[11px] hover:underline">
-              加载更多 ({radarRows.length - mLimit} 隐藏)
+              {t("markets.loadMoreHidden", { n: radarRows.length - mLimit })}
             </button>
           </div>
         )}
@@ -305,13 +303,13 @@ export function MarketsView({ onTrade, onOrder }: {
         <div className="glass overflow-hidden" style={{ borderRadius: 12 }}>
           <div className="flex items-center gap-2 px-4 pt-3 pb-1">
             <I.Bolt size={13} className="text-gold" />
-            <span className="font-mono text-[12px] tracking-wider text-ink">智能异动扫描</span>
-            <span className="pill pill-dim text-[10px]">全市场 · 成交额前 150 · 波动/资金费率异常</span>
-            <span className="pill pill-gold ml-auto text-[10px]">{data.signals.length} 条</span>
+            <span className="font-mono text-[12px] tracking-wider text-ink">{t("markets.smartScan")}</span>
+            <span className="pill pill-dim text-[10px]">{t("markets.scanPill")}</span>
+            <span className="pill pill-gold ml-auto text-[10px]">{t("markets.signalCount", { n: data.signals.length })}</span>
           </div>
           <div className="grid items-center px-4 py-2 mt-1.5 border-b border-line text-[10px] font-mono tracking-[0.08em] text-ink-dim"
             style={{ gridTemplateColumns: "1.4fr 1fr 1fr 1.1fr 1fr 0.9fr 1.9fr 0.8fr" }}>
-            <div>标的</div><div>现价</div><div>24h 涨跌</div><div>成交额</div><div>资金费率</div><div>方向</div><div>触发依据</div><div>强度</div>
+            <div>{t("markets.h.symbol")}</div><div>{t("markets.h.price")}</div><div>{t("markets.h.change")}</div><div>{t("markets.h.quotevol")}</div><div>{t("markets.h.funding")}</div><div>{t("markets.h.direction")}</div><div>{t("markets.h.reason")}</div><div>{t("markets.h.strength")}</div>
           </div>
           {data.signals.map((r, i) => (
             <div key={r.symbol + i} onClick={() => onTrade?.(r.symbol)}
@@ -327,7 +325,7 @@ export function MarketsView({ onTrade, onOrder }: {
               </div>
               <div className="font-mono tabular text-ink-dim text-[11.5px]">{fmtVol(r.volume)}</div>
               <div className={`font-mono tabular text-[11.5px] ${(r.funding_rate ?? 0) >= 0 ? "text-green" : "text-red"}`}>{fmtRate(r.funding_rate)}</div>
-              <div><span className={`pill ${up(r.change_pct) ? "pill-green" : "pill-red"}`}>{r.direction ?? (up(r.change_pct) ? "做多" : "做空")}</span></div>
+              <div><span className={`pill ${up(r.change_pct) ? "pill-green" : "pill-red"}`}>{r.direction ?? (up(r.change_pct) ? t("markets.long") : t("markets.short"))}</span></div>
               <div className="font-mono text-[11px] text-ink-dim truncate" title={r.reason}>{r.reason ?? "—"}</div>
               <div className="font-mono tabular text-gold text-[12.5px]">{(r.score ?? 0).toFixed(1)}</div>
             </div>
@@ -340,17 +338,17 @@ export function MarketsView({ onTrade, onOrder }: {
         {/* Toolbar */}
         <div className="flex items-center gap-3 flex-wrap px-4 py-2.5 border-b border-line">
           <div className="flex items-center gap-1.5">
-            {([["all", `全部 (${data?.total ?? 0})`], ["gainers", "涨幅榜"], ["losers", "跌幅榜"]] as const).map(([t, label]) => (
-              <button key={t} onClick={() => switchTab(t)}
+            {([["all", t("markets.all", { n: data?.total ?? 0 })], ["gainers", t("markets.gainers")], ["losers", t("markets.losers")]] as const).map(([key, label]) => (
+              <button key={key} onClick={() => switchTab(key)}
                 className={`px-3 py-1.5 rounded-md font-mono text-[11.5px] tracking-wider transition-colors border
-                  ${tab === t ? "bg-elevated text-gold border-line" : "border-transparent text-ink-dim hover:text-ink"}`}>
+                  ${tab === key ? "bg-elevated text-gold border-line" : "border-transparent text-ink-dim hover:text-ink"}`}>
                 {label}
               </button>
             ))}
           </div>
           <div className="ml-auto relative">
             <I.Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-mute" />
-            <input value={q} onChange={(e) => { setQ(e.target.value); setLimit(PAGE); }} placeholder="搜任意交易对：BTC / PEPE / CAT…"
+            <input value={q} onChange={(e) => { setQ(e.target.value); setLimit(PAGE); }} placeholder={t("markets.searchPlaceholder")}
               className="field pl-8 w-64 py-1.5" />
           </div>
         </div>
@@ -358,18 +356,18 @@ export function MarketsView({ onTrade, onOrder }: {
         {/* Table head */}
         <div className="grid items-center px-4 py-2.5 border-b border-line text-[10px] font-mono tracking-[0.08em] text-ink-dim select-none"
           style={{ gridTemplateColumns: "1.7fr 1fr 1.1fr 1.2fr 1fr 1fr" }}>
-          <div>标的</div>
-          <button onClick={() => toggleSort("price")} className="text-left hover:text-gold">现价 <Arrow on={sort.key === "price"} /></button>
-          <button onClick={() => toggleSort("change_pct")} className="text-left hover:text-gold">24h 涨跌 <Arrow on={sort.key === "change_pct"} /></button>
-          <button onClick={() => toggleSort("quote_volume")} className="text-left hover:text-gold">24h 成交额 <Arrow on={sort.key === "quote_volume"} /></button>
-          <div>24h 最高</div><div>24h 最低</div>
+          <div>{t("markets.h.symbol")}</div>
+          <button onClick={() => toggleSort("price")} className="text-left hover:text-gold">{t("markets.h.price")} <Arrow on={sort.key === "price"} /></button>
+          <button onClick={() => toggleSort("change_pct")} className="text-left hover:text-gold">{t("markets.h.change")} <Arrow on={sort.key === "change_pct"} /></button>
+          <button onClick={() => toggleSort("quote_volume")} className="text-left hover:text-gold">{t("markets.h.quotevol")} <Arrow on={sort.key === "quote_volume"} /></button>
+          <div>{t("markets.h.high")}</div><div>{t("markets.h.low")}</div>
         </div>
 
         {loading && rows.length === 0 ? (
           <div className="p-4 space-y-2">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="shimmer h-9" />)}</div>
         ) : rows.length === 0 ? (
           <div className="p-10 text-center text-ink-dim text-[13px]">
-            {q ? `在 ${total} 个交易对里没搜到「${q}」。试试 BTC / ETH / 币名全称。` : "暂无行情数据（接口可能不可用）。"}
+            {q ? t("markets.searchEmpty", { total, q }) : t("markets.noData")}
           </div>
         ) : (
           visible.map((r) => (
@@ -392,11 +390,11 @@ export function MarketsView({ onTrade, onOrder }: {
         )}
 
         <div className="px-4 py-2.5 flex items-center justify-between font-mono text-[10.5px] text-ink-mute">
-          <span>按 {SORT_META[sort.key]} {sort.dir === -1 ? "降序" : "升序"} · 点击列头排序</span>
+          <span>{t("markets.sortPrefix")} {t(SORT_META[sort.key])} {sort.dir === -1 ? t("markets.sort.desc") : t("markets.sort.asc")} · {t("markets.sort.hint")}</span>
           <div className="flex items-center gap-3">
-            <span>展示 {visible.length} / {rows.length}{rows.length < total ? `（共 ${total} 个 ${data?.quote ?? "USDT"} 对，按成交额取前 400）` : ""}</span>
+            <span>{t("markets.showing", { v: visible.length, r: rows.length, total, quote: data?.quote ?? "USDT" })}</span>
             {visible.length < rows.length && (
-              <button onClick={() => setLimit((n) => n + PAGE)} className="text-gold hover:underline">加载更多 +{PAGE}</button>
+              <button onClick={() => setLimit((n) => n + PAGE)} className="text-gold hover:underline">{t("markets.loadMore", { n: PAGE })}</button>
             )}
           </div>
         </div>
@@ -408,8 +406,8 @@ export function MarketsView({ onTrade, onOrder }: {
           <div className="glass p-4" style={{ borderRadius: 12 }}>
             <div className="flex items-center gap-2 mb-3">
               <I.Arrow size={12} className="text-gold" />
-              <span className="font-mono text-[12px] tracking-wider text-ink">24H 领涨</span>
-              <span className="prefix ml-auto">全市场 · 流动性过滤</span>
+              <span className="font-mono text-[12px] tracking-wider text-ink">{t("markets.topGainers")}</span>
+              <span className="prefix ml-auto">{t("markets.liqFilter")}</span>
             </div>
             <div className="space-y-1.5">
               {data.movers.gainers.map((m, i) => (
@@ -426,8 +424,8 @@ export function MarketsView({ onTrade, onOrder }: {
           <div className="glass p-4" style={{ borderRadius: 12 }}>
             <div className="flex items-center gap-2 mb-3">
               <I.Arrow size={12} className="rotate-180 text-gold" />
-              <span className="font-mono text-[12px] tracking-wider text-ink">24H 领跌</span>
-              <span className="prefix ml-auto">全市场 · 流动性过滤</span>
+              <span className="font-mono text-[12px] tracking-wider text-ink">{t("markets.topLosers")}</span>
+              <span className="prefix ml-auto">{t("markets.liqFilter")}</span>
             </div>
             <div className="space-y-1.5">
               {data.movers.losers.map((m, i) => (
@@ -446,7 +444,7 @@ export function MarketsView({ onTrade, onOrder }: {
 
       {/* Data freshness hint */}
       <div className="font-mono text-[10.5px] text-ink-mute flex items-center justify-between px-1">
-        <span>数据源: Binance 公开 API 全量 24h ticker · 点击任意交易对跳转 Binance CEX 下单 · 公开行情无需 Key</span>
+        <span>{t("markets.dataSource")}</span>
         <span className="tabular">updated_at: {updated}</span>
       </div>
     </div>

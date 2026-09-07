@@ -59,7 +59,7 @@ export function WalletView() {
   const refreshAll = async () => { setBusy("refresh"); try { await load(); await liveLoad(); } finally { setBusy(null); } };
   const install = async () => {
     setBusy("install");
-    try { const r: any = await api.walletInstall(); setErr(r?.detail ?? (r?.status === "ok" ? "" : "安装失败")); await load(); }
+    try { const r: any = await api.walletInstall(); setErr(r?.detail ?? (r?.status === "ok" ? "" : t("wallet.installFail"))); await load(); }
     catch (e: any) { setErr(e?.message ?? String(e)); } finally { setBusy(null); }
   };
   const signout = async () => {
@@ -74,9 +74,9 @@ export function WalletView() {
   const parse = (name: string) => {
     const r = live[name];
     if (!r) return null;
-    if (r.status !== "ok") return { error: true, text: r.detail || r.stderr || r.stdout || "命令失败" };
+    if (r.status !== "ok") return { error: true, text: r.detail || r.stderr || r.stdout || t("wallet.cmdFailed") };
     const raw = (r.stdout ?? "").trim();
-    if (!raw) return { error: true, text: "（空输出）" };
+    if (!raw) return { error: true, text: t("wallet.emptyOut") };
     try { const j = JSON.parse(raw); return { error: false, json: j, text: raw }; }
     catch { return { error: false, json: null, text: raw }; }
   };
@@ -98,24 +98,24 @@ export function WalletView() {
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2.5">
           <I.Hex className="text-gold" size={24} />
-          <span className="font-mono text-[15px] font-bold tracking-wide text-ink">钱包</span>
+          <span className="font-mono text-[15px] font-bold tracking-wide text-ink">{t("wallet.hubTitle")}</span>
           <span className="prefix">{mode === "agent" ? "Agentic Wallet · baw MPC"
-            : "链上钱包 · Binance Web3 Wallet API (BX-)"}</span>
+            : t("wallet.subChain")}</span>
         </div>
         {mode === "agent" && (
           <div className="ml-auto flex items-center gap-2">
             <button onClick={refreshAll} disabled={!!busy} className="btn-ghost py-1.5 px-3 text-[12px]">
-              <I.Refresh size={12} className={busy ? "animate-spin" : ""} /> {busy ? "刷新中…" : "刷新"}
+              <I.Refresh size={12} className={busy ? "animate-spin" : ""} /> {busy ? t("wallet.refreshing") : t("wallet.refresh")}
             </button>
             {connected && (
-              <button onClick={signout} disabled={!!busy} className="btn-ghost py-1.5 px-3 text-[12px] text-ink-mute hover:text-red" title="退出登录并清除会话">
-                <I.X size={11} /> 登出
+              <button onClick={signout} disabled={!!busy} className="btn-ghost py-1.5 px-3 text-[12px] text-ink-mute hover:text-red" title={t("wallet.signoutTip")}>
+                <I.X size={11} /> {t("wallet.bits.signout")}
               </button>
             )}
             {state && (
               <span className={`pill ${connected ? "pill-green" : "pill-red"}`}>
                 <span className={`dot ${connected ? "dot-green live" : "dot-red"}`} />
-                {connected ? "LIVE · 已登录" : "未登录"}
+                {connected ? `LIVE · ${t("wallet.signedIn")}` : t("wallet.signedOut")}
               </span>
             )}
           </div>
@@ -124,8 +124,8 @@ export function WalletView() {
 
       {/* Tab 切换 */}
       <div className="flex items-end gap-1 border-b border-line/60">
-        <TabBtn id="agent" icon={<I.Hex size={12} className="text-gold" />} label={<>Agent 钱包<sup className="text-[8.5px] text-gold ml-1">MPC</sup></>} />
-        <TabBtn id="chain" icon={<I.Cex size={12} className="text-gold" />} label={<>链上钱包<sup className="text-[8.5px] text-gold ml-1">BX</sup></>} />
+        <TabBtn id="agent" icon={<I.Hex size={12} className="text-gold" />} label={<>{t("wallet.tabAgent")}<sup className="text-[8.5px] text-gold ml-1">MPC</sup></>} />
+        <TabBtn id="chain" icon={<I.Cex size={12} className="text-gold" />} label={<>{t("wallet.tabChain")}<sup className="text-[8.5px] text-gold ml-1">BX</sup></>} />
       </div>
 
       {/* ============ Agent 钱包 Tab ============ */}
@@ -143,10 +143,10 @@ export function WalletView() {
             <>
               {/* 状态总览 —— 全部真实 */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <StatusTile label="CLI 安装" ok={installed} text={installed ? `baw v${version ?? "?"}` : "未安装"} />
-                <StatusTile label="Node / npm" ok={npmOk} text={npmOk ? "npm 可用" : "npm 缺失"} />
-                <StatusTile label="登录状态" ok={connected} text={connected ? "已登录" : "未登录"} warn={!connected && installed} />
-                <StatusTile label="密钥方式" ok text="MPC · 无本地私钥" sub="Binance App 扫码" />
+                <StatusTile label={t("wallet.tileCli")} ok={installed} text={installed ? `baw v${version ?? "?"}` : t("wallet.notInstalled")} />
+                <StatusTile label="Node / npm" ok={npmOk} text={npmOk ? t("wallet.npmOk") : t("wallet.npmMiss")} />
+                <StatusTile label={t("wallet.tileLogin")} ok={connected} text={connected ? t("wallet.signedIn") : t("wallet.signedOut")} warn={!connected && installed} />
+                <StatusTile label={t("wallet.tileKey")} ok text={t("wallet.mpcNoKey")} sub={t("wallet.binanceAppScan")} />
               </div>
 
               {state?.status?.detail && !connected && (
@@ -158,12 +158,12 @@ export function WalletView() {
               {/* 安装 / 登录引导 —— 按真实状态分支 */}
               {!installed ? (
                 <div className="glass p-5" style={{ borderRadius: 12 }}>
-                  <div className="font-mono text-[13px] text-ink mb-1">需要安装 Agentic Wallet CLI</div>
-                  <p className="text-[12.5px] text-ink-dim leading-relaxed mb-3">MPC 无密钥钱包（Binance Agentic Wallet）。要求 Node ≥ 18。</p>
+                  <div className="font-mono text-[13px] text-ink mb-1">{t("wallet.installNeed")}</div>
+                  <p className="text-[12.5px] text-ink-dim leading-relaxed mb-3">{t("wallet.installDesc")}</p>
                   <div className="flex items-center gap-3 flex-wrap">
                     <code className="rounded-md border border-line bg-canvas px-3 py-2 font-mono text-[12px] text-gold">{state.install_cmd ?? "npm i -g @binance/agentic-wallet"}</code>
-                    <button onClick={() => copy("install", state.install_cmd ?? "")} className="btn-ghost text-[12px] py-1.5">{copied === "install" ? "已复制" : "复制命令"}</button>
-                    <button onClick={install} disabled={!!busy} className="btn-gold"><I.Download size={12} /> 一键安装</button>
+                    <button onClick={() => copy("install", state.install_cmd ?? "")} className="btn-ghost text-[12px] py-1.5">{copied === "install" ? t("wallet.copied") : t("wallet.copyCmd")}</button>
+                    <button onClick={install} disabled={!!busy} className="btn-gold"><I.Download size={12} /> {t("wallet.installOneClick")}</button>
                   </div>
                 </div>
               ) : !connected ? (
@@ -171,12 +171,11 @@ export function WalletView() {
                 <div className="glass p-5" style={{ borderRadius: 12 }}>
                   <div className="flex items-center gap-2 mb-3">
                     <I.Qr size={15} className="text-gold" />
-                    <span className="font-mono text-[13px] text-ink">用 Binance App 扫码登录</span>
-                    <span className="pill pill-dim ml-1">MPC · 官方流程</span>
+                    <span className="font-mono text-[13px] text-ink">{t("wallet.scanTitle")}</span>
+                    <span className="pill pill-dim ml-1">{t("wallet.mpcOfficial")}</span>
                   </div>
                   <p className="text-[12.5px] text-ink-dim leading-relaxed mb-3">
-                    点下方按钮生成二维码，用<b className="text-gold"> Binance App</b> 扫码并在 App 内确认配对码，即完成登录（无需任何私钥）。
-                    首次登录会顺带完成 Agentic Wallet 创建流程。
+                    {t("wallet.scanHintA")}<b className="text-gold">{t("wallet.binanceApp")}</b>{t("wallet.scanHintB")}
                   </p>
                   <AgentSigninCard onDone={refreshAll} />
                 </div>
@@ -185,11 +184,11 @@ export function WalletView() {
                 <>
                   {/* 头部状态 */}
                   <div className="flex items-center gap-3 flex-wrap">
-                    <span className="prefix">真实数据 · 来自 baw wallet --json</span>
+                    <span className="prefix">{t("wallet.liveFrom")}</span>
                     <span className="pill pill-green"><span className="dot dot-green live" /> CONNECTED</span>
-                    {busy === "live" && <span className="pill pill-dim">同步中…</span>}
+                    {busy === "live" && <span className="pill pill-dim">{t("wallet.syncing")}</span>}
                     <button onClick={refreshAll} className="ml-auto btn-ghost py-1 px-2.5 text-[11.5px]" disabled={!!busy}>
-                      <I.Refresh size={11} className={busy === "live" ? "animate-spin" : ""} /> 一键刷新全部
+                      <I.Refresh size={11} className={busy === "live" ? "animate-spin" : ""} /> {t("wallet.refreshAllBtn")}
                     </button>
                   </div>
 
@@ -197,9 +196,9 @@ export function WalletView() {
                   <div className="glass p-4" style={{ borderRadius: 12 }}>
                     <div className="flex items-center gap-2 mb-3">
                       <I.Wallet size={13} className="text-gold" />
-                      <span className="font-mono text-[12px] tracking-wider text-ink">多链地址总览</span>
-                      <span className="pill pill-dim text-[10px]">MPC · 同一身份多链地址</span>
-                      <button onClick={() => liveLoad(["address", "chains"])} className="ml-auto text-[11px] font-mono text-gold hover:underline">重新获取</button>
+                      <span className="font-mono text-[12px] tracking-wider text-ink">{t("wallet.chainsTitle")}</span>
+                      <span className="pill pill-dim text-[10px]">{t("wallet.mpcMulti")}</span>
+                      <button onClick={() => liveLoad(["address", "chains"])} className="ml-auto text-[11px] font-mono text-gold hover:underline">{t("wallet.refetch")}</button>
                     </div>
                     <MultiChainGrid addressResult={parse("address")} chainsResult={parse("chains")} onCopy={copy} copied={copied} />
                   </div>
@@ -207,14 +206,14 @@ export function WalletView() {
                   {/* 余额 + 额度 */}
                   <div className="grid grid-cols-12 gap-4">
                     <div className="col-span-12 lg:col-span-7 glass p-4" style={{ borderRadius: 12 }}>
-                      <PanelHead icon={<I.Hex size={13} className="text-gold" />} title="代币余额" extra={
-                        <button onClick={() => liveLoad(["balance"])} className="text-[11px] font-mono text-gold hover:underline">重新获取</button>
+                      <PanelHead icon={<I.Hex size={13} className="text-gold" />} title={t("wallet.tokenBalances")} extra={
+                        <button onClick={() => liveLoad(["balance"])} className="text-[11px] font-mono text-gold hover:underline">{t("wallet.refetch")}</button>
                       } />
                       <JsonView result={parse("balance")} mode="table" onCopy={copy} copied={copied} copyKey="balance" />
                     </div>
                     <div className="col-span-12 lg:col-span-5 glass p-4" style={{ borderRadius: 12 }}>
-                      <PanelHead icon={<I.Lock size={13} className="text-gold" />} title="每日剩余额度 (Quota)" extra={
-                        <button onClick={() => liveLoad(["left-quota"])} className="text-[11px] font-mono text-gold hover:underline">重新获取</button>
+                      <PanelHead icon={<I.Lock size={13} className="text-gold" />} title={t("wallet.dailyQuotaTitle")} extra={
+                        <button onClick={() => liveLoad(["left-quota"])} className="text-[11px] font-mono text-gold hover:underline">{t("wallet.refetch")}</button>
                       } />
                       <JsonView result={parse("left-quota")} mode="kv" onCopy={copy} copied={copied} copyKey="quota" />
                     </div>
@@ -223,44 +222,44 @@ export function WalletView() {
                   {/* 新增：历史交易 / 预测 PnL */}
                   <div className="grid grid-cols-12 gap-4">
                     <LivePanel
-                      className="col-span-12 lg:col-span-7" title="历史交易" icon={<I.Arrow size={13} className="text-gold" />}
+                      className="col-span-12 lg:col-span-7" title={t("wallet.txTitle")} icon={<I.Arrow size={13} className="text-gold" />}
                       cmd="baw wallet tx-history --json"
                       live={live} setLive={setLive} copy={copy} copied={copied}
                       busy={busy} setBusy={setBusy}
                       render={(res) => <TxHistoryView result={res} onCopy={copy} copied={copied} />}
-                      emptyHint="暂无交易（活动期内若操作了 bStock，tx-history 应有记录；空属正常）。"
+                      emptyHint={t("wallet.txEmpty")}
                     />
                     <LivePanel
-                      className="col-span-12 lg:col-span-5" title="预测 PnL（Prediction）" icon={<I.Bolt size={13} className="text-gold" />}
+                      className="col-span-12 lg:col-span-5" title={t("wallet.pnlTitle")} icon={<I.Bolt size={13} className="text-gold" />}
                       cmd="baw prediction position pnl --json"
                       live={live} setLive={setLive} copy={copy} copied={copied}
                       busy={busy} setBusy={setBusy}
                       render={(res) => <PnlView result={res} onCopy={copy} copied={copied} />}
-                      emptyHint="暂无 PnL 记录。"
+                      emptyHint={t("wallet.pnlEmpty")}
                     />
                   </div>
 
                   {/* 新增：DeFi 协议 / 机会 */}
                   <div className="grid grid-cols-12 gap-4">
                     <LivePanel
-                      className="col-span-12 lg:col-span-7" title="DeFi 协议排行（TVL / APY）" icon={<I.Grid size={13} className="text-gold" />}
+                      className="col-span-12 lg:col-span-7" title={t("wallet.defiProtoTitle")} icon={<I.Grid size={13} className="text-gold" />}
                       cmd="baw defi protocol-list --json"
                       live={live} setLive={setLive} copy={copy} copied={copied}
                       busy={busy} setBusy={setBusy}
                       render={(res) => <DefiProtocolView result={res} />}
-                      emptyHint="暂无 DeFi 协议数据（接口或网络不可用时会如实显示错误）。"
+                      emptyHint={t("wallet.defiProtoEmpty")}
                     />
                     <DefiOppPanel />
                   </div>
 
                   {/* 新增：我的 DeFi 持仓 */}
                   <LivePanel
-                    className="" title="我的 DeFi 持仓（健康因子 / LP / 质押）" icon={<I.Shield size={13} className="text-gold" />}
+                    className="" title={t("wallet.defiPosTitle")} icon={<I.Shield size={13} className="text-gold" />}
                     cmd="baw defi position --json"
                     live={live} setLive={setLive} copy={copy} copied={copied}
                     busy={busy} setBusy={setBusy}
                     render={(res) => <DefiPositionView result={res} />}
-                    emptyHint="暂无 DeFi 持仓。"
+                    emptyHint={t("wallet.defiPosEmpty")}
                   />
 
                   {/* 新增：Campaign / bStock 大赛 */}
@@ -272,7 +271,7 @@ export function WalletView() {
 
           {/* 每日限额策略（后端真实配置 DAILY_CAPS） */}
           <div className="glass p-4" style={{ borderRadius: 12 }}>
-            <PanelHead icon={<I.Shield size={13} className="text-gold" />} title="Agent 每日限额策略 (Binance 设定)" extra={<span className="pill pill-dim">只读配置</span>} />
+            <PanelHead icon={<I.Shield size={13} className="text-gold" />} title={t("wallet.capsTitle")} extra={<span className="pill pill-dim">{t("wallet.readOnlyCfg")}</span>} />
             <div className="grid grid-cols-3 gap-3 mt-3">
               {Object.entries(state?.daily_caps ?? { swap: "$50,000", defi: "$100,000", x402: "$20" }).map(([k, v]) => (
                 <div key={k} className="rounded-lg border border-line bg-elevated/30 p-3">
@@ -288,9 +287,9 @@ export function WalletView() {
             <details>
               <summary className="cursor-pointer flex items-center gap-2 list-none">
                 <I.Cpu size={13} className="text-gold" />
-                <span className="prefix">baw CLI 命令参考（官方）</span>
-                <span className="pill pill-dim ml-2">{state?.commands?.length ?? 0} 条</span>
-                <span className="ml-auto text-gold font-mono text-[12px]">▾ 展开</span>
+                <span className="prefix">{t("wallet.cliRef")}</span>
+                <span className="pill pill-dim ml-2">{t("wallet.cmdCount", { n: state?.commands?.length ?? 0 })}</span>
+                <span className="ml-auto text-gold font-mono text-[12px]">▾ {t("wallet.expand")}</span>
               </summary>
               <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
                 {(state?.commands ?? []).map((c: any, i: number) => (
@@ -307,7 +306,7 @@ export function WalletView() {
           </div>
 
           <div className="font-mono text-[10.5px] text-ink-mute flex items-center justify-between px-1">
-            <span>数据源: baw CLI 真实输出 · 沙箱网络受限时命令会如实显示超时/错误，不伪造资产</span>
+            <span>{t("wallet.dataSourceNote")}</span>
             <span>{version ? `baw v${version}` : ""}</span>
           </div>
         </>
@@ -322,7 +321,7 @@ export function WalletView() {
           <ChainWalletPanel />
           <WalletSkillsGrid />
           <div className="font-mono text-[10.5px] text-ink-mute px-1">
-            链上钱包使用 Binance Web3 Wallet API（BX- Key）查链上地址 / 持仓；如需查看 / 下单 <b className="text-ink-dim">币安交易所账户</b>，请到顶导的「Binance CEX」页面填交易所 HMAC Key（两套密钥不通用）。
+            {t("wallet.chainWalletNote1")}<b className="text-ink-dim">{t("wallet.binanceExchangeAcct")}</b>{t("wallet.chainWalletNote2")}
           </div>
         </>
       )}
@@ -367,7 +366,8 @@ function JsonView({ result, mode, onCopy, copied, copyKey }: {
   copied: string;
   copyKey: string;
 }) {
-  if (!result) return <div className="py-6 text-center font-mono text-[12px] text-ink-mute">未获取，点击上方「重新获取」或等连接后自动同步。</div>;
+  const t = useT();
+  if (!result) return <div className="py-6 text-center font-mono text-[12px] text-ink-mute">{t("wallet.notFetched")}</div>;
   if (result.error) {
     return (
       <div className="rounded-md border border-red/30 bg-red/5 p-3 font-mono text-[11px] text-red leading-relaxed break-all">
@@ -416,7 +416,7 @@ function JsonView({ result, mode, onCopy, copied, copyKey }: {
               <span className="font-mono text-[12px] text-ink break-all flex-1">{val}</span>
               <button onClick={() => onCopy(`${copyKey}:${k}`, val)}
                 className="text-[10px] font-mono text-ink-dim hover:text-gold shrink-0 pt-0.5">
-                {copied === `${copyKey}:${k}` ? "已复制 ✓" : "复制"}
+                {copied === `${copyKey}:${k}` ? `${t("wallet.copied")} ✓` : t("wallet.copy")}
               </button>
             </div>
           );
@@ -445,12 +445,12 @@ function JsonView({ result, mode, onCopy, copied, copyKey }: {
                 ))}
               </div>
             ))}
-            {rows.length === 0 && <div className="text-center py-4 font-mono text-[12px] text-ink-mute">账户为空（无代币余额）</div>}
+            {rows.length === 0 && <div className="text-center py-4 font-mono text-[12px] text-ink-mute">{t("wallet.acctEmpty")}</div>}
           </div>
         </div>
       );
     }
-    if (rows.length === 0) return <div className="text-center py-4 font-mono text-[12px] text-ink-mute">余额为空</div>;
+    if (rows.length === 0) return <div className="text-center py-4 font-mono text-[12px] text-ink-mute">{t("wallet.balanceEmpty")}</div>;
   }
 
   return <RawBox text={pretty(data)} />;
@@ -483,6 +483,7 @@ function MultiChainGrid({ addressResult, chainsResult, onCopy, copied }: {
   addressResult: any; chainsResult: any;
   onCopy: (k: string, v: string) => void; copied: string;
 }) {
+  const t = useT();
   // 解析 address：可能是 [{binanceChainId, chainName, address}, ...] 或 {data: [...]}
   const unwrap = (x: any): any => {
     if (!x || typeof x !== "object") return x;
@@ -516,7 +517,7 @@ function MultiChainGrid({ addressResult, chainsResult, onCopy, copied }: {
     : chainsList.map((c) => ({ name: c, address: "" }));
 
   if (addrs.length === 0 && (chainsList.length === 0 || addressResult === null)) {
-    return <div className="py-6 text-center font-mono text-[12px] text-ink-mute">未获取，点击「重新获取」或等连接后自动同步。</div>;
+    return <div className="py-6 text-center font-mono text-[12px] text-ink-mute">{t("wallet.notFetched")}</div>;
   }
   if (addressResult?.error || chainsResult?.error) {
     const err = (addressResult?.error ? addressResult.text : "") || (chainsResult?.error ? chainsResult.text : "");
@@ -541,15 +542,15 @@ function MultiChainGrid({ addressResult, chainsResult, onCopy, copied }: {
                 <span className="font-mono text-[9px] text-ink-mute">· {v.native}</span>
               </div>
               {noAddr ? (
-                <div className="font-mono text-[11px] text-ink-mute mt-0.5">（该链未分配地址）</div>
+                <div className="font-mono text-[11px] text-ink-mute mt-0.5">{t("wallet.noAddr")}</div>
               ) : (
                 <div className="flex items-center gap-1.5 mt-0.5">
                   <code className="font-mono text-[11.5px] text-ink-dim tabular truncate" title={row.address}>{short(row.address)}</code>
-                  <button onClick={() => onCopy(`mc:${row.name}`, row.address)} className="text-ink-dim hover:text-gold shrink-0" title="复制完整地址">
+                  <button onClick={() => onCopy(`mc:${row.name}`, row.address)} className="text-ink-dim hover:text-gold shrink-0" title={t("wallet.copyAddrTip")}>
                     {copied === `mc:${row.name}` ? <I.Check size={11} className="text-green" /> : <I.Copy size={11} />}
                   </button>
                   {v.explorer(row.address) !== "#" && (
-                    <a href={v.explorer(row.address)} target="_blank" rel="noreferrer" className="text-ink-dim hover:text-gold shrink-0" title="在区块浏览器查看">
+                    <a href={v.explorer(row.address)} target="_blank" rel="noreferrer" className="text-ink-dim hover:text-gold shrink-0" title={t("wallet.viewExplorer")}>
                       <I.Link size={11} />
                     </a>
                   )}
@@ -572,6 +573,7 @@ function LivePanel({ className, title, icon, cmd, live, setLive, copy, copied, b
   busy: string | null; setBusy: React.Dispatch<React.SetStateAction<string | null>>;
   render: (res: any) => React.ReactNode; emptyHint: string;
 }) {
+  const t = useT();
   const key = cmd.replace(/\s*--json\s*$/i, "").replace(/\s+/g, ":");
   const r = live[key];
   const refreshing = busy === key;
@@ -587,10 +589,10 @@ function LivePanel({ className, title, icon, cmd, live, setLive, copy, copied, b
   // 通用 parse
   const parsed = r ? (
     r.status !== "ok"
-      ? { error: true, text: r.detail || r.stderr || r.stdout || "命令失败" }
+      ? { error: true, text: r.detail || r.stderr || r.stdout || t("wallet.cmdFailed") }
       : (() => {
         const raw = (r.stdout ?? "").trim();
-        if (!raw) return { error: true, text: "（空输出）" };
+        if (!raw) return { error: true, text: t("wallet.emptyOut") };
         try { return { error: false, json: JSON.parse(raw), text: raw }; }
         catch { return { error: false, json: null, text: raw }; }
       })()
@@ -603,7 +605,7 @@ function LivePanel({ className, title, icon, cmd, live, setLive, copy, copied, b
         <span className="font-mono text-[12px] tracking-wider text-ink">{title}</span>
         <code className="font-mono text-[10px] text-ink-mute truncate ml-1" title={cmd}>{cmd}</code>
         <button onClick={refresh} disabled={!!refreshing} className="ml-auto text-[11px] font-mono text-gold hover:underline disabled:opacity-50">
-          <I.Refresh size={11} className={`inline ${refreshing ? "animate-spin" : ""}`} /> {refreshing ? "刷新中…" : "刷新"}
+          <I.Refresh size={11} className={`inline ${refreshing ? "animate-spin" : ""}`} /> {refreshing ? t("wallet.refreshing") : t("wallet.refresh")}
         </button>
       </div>
       {!parsed ? (
@@ -661,6 +663,7 @@ function KVTable({ rows, cols, keyOf, dense }: {
 
 /* 历史交易 */
 function TxHistoryView({ result, onCopy, copied }: { result: any; onCopy: (k: string, v: string) => void; copied: string }) {
+  const t = useT();
   const unwrap = (x: any): any => {
     if (!x || typeof x !== "object") return null;
     if (Array.isArray(x)) return x;
@@ -675,16 +678,16 @@ function TxHistoryView({ result, onCopy, copied }: { result: any; onCopy: (k: st
       rows={arr}
       cols={[
         { key: "txHash", label: "TX HASH", render: (v) => <code className="text-ink-dim">{v ? `${String(v).slice(0,6)}…${String(v).slice(-4)}` : "—"}</code> },
-        { key: "type", label: "类型", render: (v) => <span className="pill pill-dim text-[9px]">{String(v ?? "—")}</span> },
-        { key: "status", label: "状态", render: (v) => {
+        { key: "type", label: t("wallet.colType"), render: (v) => <span className="pill pill-dim text-[9px]">{String(v ?? "—")}</span> },
+        { key: "status", label: t("wallet.colStatus"), render: (v) => {
             const s = String(v ?? "").toLowerCase();
             const cls = s.includes("success") || s.includes("confirm") ? "text-green" : s.includes("fail") || s.includes("pend") ? "text-red" : "text-ink-dim";
             return <span className={`font-mono ${cls}`}>{String(v ?? "—")}</span>;
           } },
-        { key: "amount", label: "金额", align: "right" },
-        { key: "asset", label: "资产" },
-        { key: "chain", label: "链" },
-        { key: "time", label: "时间", render: (v) => <span className="text-ink-mute">{v ? new Date(Number(v) * 1000 || Date.parse(String(v)) || 0).toLocaleString() : "—"}</span> },
+        { key: "amount", label: t("wallet.colAmount"), align: "right" },
+        { key: "asset", label: t("wallet.colAsset") },
+        { key: "chain", label: t("wallet.colChain") },
+        { key: "time", label: t("wallet.colTime"), render: (v) => <span className="text-ink-mute">{v ? new Date(Number(v) * 1000 || Date.parse(String(v)) || 0).toLocaleString() : "—"}</span> },
       ]}
       keyOf={(r, i) => r.txHash ?? `tx-${i}`}
     />
@@ -693,6 +696,7 @@ function TxHistoryView({ result, onCopy, copied }: { result: any; onCopy: (k: st
 
 /* 预测 PnL */
 function PnlView({ result, onCopy, copied }: { result: any; onCopy: (k: string, v: string) => void; copied: string }) {
+  const t = useT();
   const unwrap = (x: any): any => {
     if (!x || typeof x !== "object") return null;
     if (Array.isArray(x)) return x;
@@ -716,7 +720,7 @@ function PnlView({ result, onCopy, copied }: { result: any; onCopy: (k: string, 
               <span className="font-mono text-[11px] text-gold w-32 shrink-0 break-all">{k}</span>
               <span className={`font-mono tabular text-[13px] ${cls} break-all flex-1`}>{display}</span>
               <button onClick={() => onCopy(`pnl:${k}`, display)} className="text-[10px] font-mono text-ink-dim hover:text-gold shrink-0">
-                {copied === `pnl:${k}` ? "已复制 ✓" : "复制"}
+                {copied === `pnl:${k}` ? `${t("wallet.copied")} ✓` : t("wallet.copy")}
               </button>
             </div>
           );
@@ -728,11 +732,11 @@ function PnlView({ result, onCopy, copied }: { result: any; onCopy: (k: string, 
     <KVTable
       rows={d}
       cols={[
-        { key: "market", label: "市场" },
-        { key: "side", label: "方向" },
-        { key: "shares", label: "份额", align: "right" },
-        { key: "avgPrice", label: "均价", align: "right" },
-        { key: "currentPrice", label: "现价", align: "right" },
+        { key: "market", label: t("wallet.colMarket") },
+        { key: "side", label: t("wallet.colSide") },
+        { key: "shares", label: t("wallet.colShares"), align: "right" },
+        { key: "avgPrice", label: t("wallet.colAvgPrice"), align: "right" },
+        { key: "currentPrice", label: t("wallet.colCurPrice"), align: "right" },
         { key: "pnl", label: "PnL", align: "right", render: (v) => {
             const n = Number(v); if (!Number.isFinite(n)) return <span>{String(v)}</span>;
             return <span className={n >= 0 ? "text-green" : "text-red"}>{n >= 0 ? "+" : ""}{n.toFixed(2)}</span>;
@@ -744,6 +748,7 @@ function PnlView({ result, onCopy, copied }: { result: any; onCopy: (k: string, 
 
 /* DeFi 协议排行 —— 数据 shape: {data:{total, list:[{defiProtocolId,protocolName,tvl,apy,apyDisplay,apyBps,investType:[],supportedChains:[],protocolLogo}]}} */
 function DefiProtocolView({ result }: { result: any }) {
+  const t = useT();
   const unwrap = (x: any): any => {
     if (!x || typeof x !== "object") return null;
     if (Array.isArray(x)) return x;
@@ -786,7 +791,7 @@ function DefiProtocolView({ result }: { result: any }) {
       rows={sorted.map((r: any, i: number) => ({ ...r, _rank: i + 1 }))}
       cols={[
         { key: "_rank", label: "#", align: "right", render: (_v, r) => <span className="text-ink-mute">{r._rank}</span> },
-        { key: "protocolName", label: "协议", render: (v, r) => (
+        { key: "protocolName", label: t("wallet.colProtocol"), render: (v, r) => (
             <div className="flex items-center gap-1.5 min-w-0">
               {r.protocolLogo ? <img src={r.protocolLogo} alt="" className="w-4 h-4 rounded-sm shrink-0" onError={(e) => ((e.target as HTMLImageElement).style.display = "none")} /> : null}
               <span className="font-semibold text-ink truncate">{String(v ?? "—")}</span>
@@ -798,13 +803,13 @@ function DefiProtocolView({ result }: { result: any }) {
             const cls = n >= 50 ? "text-gold" : n >= 10 ? "text-green" : "text-ink-dim";
             return <span className={`tabular font-semibold ${cls}`}>{fmtApy(r)}</span>;
           } },
-        { key: "investType", label: "类别", render: (v) => {
+        { key: "investType", label: t("wallet.colCat"), render: (v) => {
             const arr = Array.isArray(v) ? v : [v];
-            return <div className="flex flex-wrap gap-1">{arr.filter(Boolean).map((t: string, i: number) => (
-              <span key={i} className={`pill ${t === "Earn" ? "pill-green" : t === "LiquidityPool" ? "pill-gold" : "pill-dim"} text-[9px]`}>{t === "LiquidityPool" ? "LP" : t}</span>
+            return <div className="flex flex-wrap gap-1">{arr.filter(Boolean).map((tt: string, i: number) => (
+              <span key={i} className={`pill ${tt === "Earn" ? "pill-green" : tt === "LiquidityPool" ? "pill-gold" : "pill-dim"} text-[9px]`}>{tt === "LiquidityPool" ? "LP" : tt}</span>
             ))}</div>;
           } },
-        { key: "supportedChains", label: "链", render: (v) => {
+        { key: "supportedChains", label: t("wallet.colChain"), render: (v) => {
             const arr = Array.isArray(v) ? v : [];
             return <span className="text-ink-dim font-mono text-[10.5px]">{arr.join(", ") || "—"}</span>;
           } },
@@ -825,7 +830,8 @@ const INVEST_TYPES: { key: "Earn" | "LiquidityPool"; label: string; cls: string 
 ];
 
 function DefiOppPanel() {
-  const [t, setT] = useState<"Earn" | "LiquidityPool">("Earn");
+  const t = useT();
+  const [itype, setItype] = useState<"Earn" | "LiquidityPool">("Earn");
   const [result, setResult] = useState<{ status: string; stdout?: string; stderr?: string; detail?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const fetchOne = async (it: "Earn" | "LiquidityPool") => {
@@ -835,14 +841,14 @@ function DefiOppPanel() {
       setResult(r);
     } finally { setBusy(false); }
   };
-  useEffect(() => { fetchOne(t); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [t]);
+  useEffect(() => { fetchOne(itype); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [itype]);
 
   const parsed = result ? (
     result.status !== "ok"
-      ? { error: true, text: result.detail || result.stderr || result.stdout || "命令失败" }
+      ? { error: true, text: result.detail || result.stderr || result.stdout || t("wallet.cmdFailed") }
       : (() => {
           const raw = (result.stdout ?? "").trim();
-          if (!raw) return { error: true, text: "（空输出）" };
+          if (!raw) return { error: true, text: t("wallet.emptyOut") };
           try { return { error: false, json: JSON.parse(raw), text: raw }; }
           catch { return { error: false, json: null, text: raw }; }
         })()
@@ -852,19 +858,19 @@ function DefiOppPanel() {
     <div className="glass p-4 col-span-12 lg:col-span-5" style={{ borderRadius: 12 }}>
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         <I.Star size={13} className="text-gold" />
-        <span className="font-mono text-[12px] tracking-wider text-ink">DeFi 机会</span>
+        <span className="font-mono text-[12px] tracking-wider text-ink">{t("wallet.deFiOpp")}</span>
         <span className="pill pill-dim text-[10px]">Earn / LP / Loan</span>
-        <code className="font-mono text-[10px] text-ink-mute truncate ml-1" title={`baw defi investment-list --investType ${t} --json`}>baw defi investment-list --investType {t} --json</code>
-        <button onClick={() => fetchOne(t)} disabled={busy} className="ml-auto text-[11px] font-mono text-gold hover:underline disabled:opacity-50">
-          <I.Refresh size={11} className={`inline ${busy ? "animate-spin" : ""}`} /> {busy ? "刷新中…" : "刷新"}
+        <code className="font-mono text-[10px] text-ink-mute truncate ml-1" title={`baw defi investment-list --investType ${itype} --json`}>baw defi investment-list --investType {itype} --json</code>
+        <button onClick={() => fetchOne(itype)} disabled={busy} className="ml-auto text-[11px] font-mono text-gold hover:underline disabled:opacity-50">
+          <I.Refresh size={11} className={`inline ${busy ? "animate-spin" : ""}`} /> {busy ? t("wallet.refreshing") : t("wallet.refresh")}
         </button>
       </div>
       {/* 过滤芯片 */}
       <div className="flex items-center gap-1.5 mb-3">
         {INVEST_TYPES.map((m) => (
-          <button key={m.key} onClick={() => setT(m.key)}
+          <button key={m.key} onClick={() => setItype(m.key)}
             className={`px-3 py-1 rounded-md font-mono text-[11px] tracking-wider transition-colors border
-              ${t === m.key ? `bg-elevated text-gold border-line` : `border-transparent text-ink-dim hover:text-ink`}`}>
+              ${itype === m.key ? `bg-elevated text-gold border-line` : `border-transparent text-ink-dim hover:text-ink`}`}>
             {m.label}
           </button>
         ))}
@@ -874,13 +880,14 @@ function DefiOppPanel() {
       ) : parsed.error ? (
         <div className="rounded-md border border-red/30 bg-red/5 p-3 font-mono text-[11px] text-red break-all">{parsed.text}</div>
       ) : (
-        <DefiOppView result={parsed} investType={t} />
+        <DefiOppView result={parsed} investType={itype} />
       )}
     </div>
   );
 }
 
 function DefiOppView({ result, investType }: { result: any; investType: "Earn" | "LiquidityPool" }) {
+  const t = useT();
   const unwrap = (x: any): any => {
     if (!x || typeof x !== "object") return null;
     if (Array.isArray(x)) return x;
@@ -929,9 +936,9 @@ function DefiOppView({ result, investType }: { result: any; investType: "Earn" |
       rows={sorted.map((r: any, i: number) => ({ ...r, _idx: i + 1 }))}
       cols={[
         { key: "_idx", label: "#", min: 30, align: "right", render: (_v, r) => <span className="text-ink-mute text-[10.5px] tabular">{r._idx}</span> },
-        { key: "protocolName", label: "协议", min: 120, render: (v) => <span className="text-ink" title={String(v ?? "")}>{String(v ?? "—")}</span> },
-        { key: "investmentName", label: "标的 / 池", min: 105, render: (v) => <span className="text-ink-dim" title={String(v ?? "")}>{String(v ?? "—")}</span> },
-        { key: "investType", label: "类型", min: 56, render: (v) => {
+        { key: "protocolName", label: t("wallet.colProto"), min: 120, render: (v) => <span className="text-ink" title={String(v ?? "")}>{String(v ?? "—")}</span> },
+        { key: "investmentName", label: t("wallet.colAsset"), min: 105, render: (v) => <span className="text-ink-dim" title={String(v ?? "")}>{String(v ?? "—")}</span> },
+        { key: "investType", label: t("wallet.colType"), min: 56, render: (v) => {
             const t = String(v ?? "");
             const meta = INVEST_TYPES.find((m) => m.key === t);
             return <span className={`pill ${meta?.cls ?? "pill-dim"} text-[9px]`}>{meta ? meta.label : t}</span>;
@@ -949,6 +956,7 @@ function DefiOppView({ result, investType }: { result: any; investType: "Earn" |
 
 /* 我的 DeFi 持仓（含健康因子）—— 数据 shape: {data:{deFiTotalValue,deFiProtocolVOList:[{protocolName,investmentName,amount,value,healthFactor,apyDisplay,...}]}} */
 function DefiPositionView({ result }: { result: any }) {
+  const t = useT();
   const unwrap = (x: any): any => {
     if (!x || typeof x !== "object") return null;
     if (Array.isArray(x)) return x;
@@ -972,7 +980,7 @@ function DefiPositionView({ result }: { result: any }) {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
             {totalVal !== undefined && (
               <div className="rounded-md border border-line bg-elevated/30 px-3 py-2">
-                <div className="prefix">DeFi 总价值 (USD)</div>
+                <div className="prefix">{t("wallet.deFiTotal")}</div>
                 <div className="font-mono tabular text-[16px] font-bold mt-1 text-gold">${Number(totalVal).toLocaleString("en-US", { maximumFractionDigits: 2 })}</div>
               </div>
             )}
@@ -981,7 +989,7 @@ function DefiPositionView({ result }: { result: any }) {
               const cls = Number.isFinite(n) ? (n >= 1.5 ? "text-green" : n >= 1.0 ? "text-gold" : "text-red") : "text-ink";
               return (
                 <div className="rounded-md border border-line bg-elevated/30 px-3 py-2">
-                  <div className="prefix">健康因子</div>
+                  <div className="prefix">{t("wallet.healthFactor")}</div>
                   <div className={`font-mono tabular text-[16px] font-bold mt-1 ${cls}`}>{String(health)}</div>
                 </div>
               );
@@ -992,10 +1000,10 @@ function DefiPositionView({ result }: { result: any }) {
           <KVTable
             rows={positions}
             cols={[
-              { key: "protocolName", label: "协议" },
-              { key: "investmentName", label: "标的" },
-              { key: "amount", label: "数量", align: "right" },
-              { key: "value", label: "价值 USD", align: "right", cls: "text-ink-dim" },
+              { key: "protocolName", label: t("wallet.colProto") },
+              { key: "investmentName", label: t("wallet.colAsset") },
+              { key: "amount", label: t("wallet.colAmount"), align: "right" },
+              { key: "value", label: t("wallet.colValueUSD"), align: "right", cls: "text-ink-dim" },
               { key: "apyDisplay", label: "APY", align: "right" },
               { key: "pnl", label: "PnL", align: "right", render: (v) => {
                   const n = Number(v); if (!Number.isFinite(n)) return <span>—</span>;
@@ -1004,7 +1012,7 @@ function DefiPositionView({ result }: { result: any }) {
             ]}
           />
         ) : (
-          <div className="text-center py-4 font-mono text-[11.5px] text-ink-mute">暂无 DeFi 持仓（账户为空或接口未返回明细）</div>
+          <div className="text-center py-4 font-mono text-[11.5px] text-ink-mute">{t("wallet.deFiPosEmpty")}</div>
         )}
       </div>
     );
@@ -1014,10 +1022,10 @@ function DefiPositionView({ result }: { result: any }) {
       <KVTable
         rows={d}
         cols={[
-          { key: "protocolName", label: "协议" },
-          { key: "investmentName", label: "标的" },
-          { key: "amount", label: "数量", align: "right" },
-          { key: "value", label: "价值", align: "right" },
+          { key: "protocolName", label: t("wallet.colProto") },
+          { key: "investmentName", label: t("wallet.colAsset") },
+          { key: "amount", label: t("wallet.colAmount"), align: "right" },
+          { key: "value", label: t("wallet.colValue"), align: "right" },
         ]}
       />
     );
@@ -1037,13 +1045,13 @@ function CampaignPanel() {
   useEffect(() => { refresh(); }, []);
   if (err) return (
     <div className="glass p-4" style={{ borderRadius: 12 }}>
-      <PanelHead icon={<I.Megaphone size={13} className="text-gold" />} title="Campaign / bStock 大赛" />
+      <PanelHead icon={<I.Megaphone size={13} className="text-gold" />} title={t("wallet.campaignTitle")} />
       <div className="rounded-md border border-red/30 bg-red/5 p-3 font-mono text-[11px] text-red">{err}</div>
     </div>
   );
   if (!state) return (
     <div className="glass p-4 space-y-2" style={{ borderRadius: 12 }}>
-      <PanelHead icon={<I.Megaphone size={13} className="text-gold" />} title="Campaign / bStock 大赛" />
+      <PanelHead icon={<I.Megaphone size={13} className="text-gold" />} title={t("wallet.campaignTitle")} />
       <div className="shimmer h-8" /><div className="shimmer h-8" />
     </div>
   );
@@ -1052,44 +1060,44 @@ function CampaignPanel() {
     <div className="glass p-4" style={{ borderRadius: 12 }}>
       <div className="flex items-center gap-2 mb-3">
         <I.Megaphone size={13} className={active ? "text-gold" : "text-ink-mute"} />
-        <span className="font-mono text-[12px] tracking-wider text-ink">Campaign / bStock 大赛</span>
+        <span className="font-mono text-[12px] tracking-wider text-ink">{t("wallet.campaignTitle")}</span>
         <span className={`pill ${active ? "pill-gold" : "pill-dim"} text-[10px]`}>
-          {active ? "● 活动进行中" : "已结束"}
+          {active ? t("wallet.campaignLive") : t("wallet.campaignEnded")}
         </span>
         <span className="pill pill-dim text-[10px]">{state.name}</span>
-        <a href={state.official_page} target="_blank" rel="noreferrer" className="ml-auto text-[11px] font-mono text-gold hover:underline">官方规则 ↗</a>
+        <a href={state.official_page} target="_blank" rel="noreferrer" className="ml-auto text-[11px] font-mono text-gold hover:underline">{t("wallet.officialRules")} ↗</a>
       </div>
 
       {/* 时间窗 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 mb-3">
         <div className="rounded-md border border-line bg-elevated/30 px-3 py-2">
-          <div className="prefix">开始 (UTC)</div>
+          <div className="prefix">{t("wallet.tileStart")}</div>
           <div className="font-mono tabular text-[12px] text-ink mt-1">{new Date(state.starts_at).toLocaleString()}</div>
         </div>
         <div className="rounded-md border border-line bg-elevated/30 px-3 py-2">
-          <div className="prefix">截止 (UTC)</div>
+          <div className="prefix">{t("wallet.tileEnd")}</div>
           <div className="font-mono tabular text-[12px] text-ink mt-1">{new Date(state.ends_at).toLocaleString()}</div>
         </div>
         <div className="rounded-md border border-line bg-elevated/30 px-3 py-2">
-          <div className="prefix">服务器当前 (UTC)</div>
+          <div className="prefix">{t("wallet.tileNow")}</div>
           <div className="font-mono tabular text-[12px] text-ink mt-1">{new Date(state.server_now).toLocaleString()}</div>
         </div>
         <div className={`rounded-md border px-3 py-2 ${active ? "border-gold/40 bg-gold/5" : "border-line bg-elevated/30"}`}>
-          <div className="prefix">距截止</div>
+          <div className="prefix">{t("wallet.tileCountdown")}</div>
           <div className={`font-mono tabular text-[16px] font-bold mt-1 ${active ? "text-gold" : "text-ink-mute"}`}>
-            {active ? `${state.days_remaining} 天` : "— 已结束 —"}
+            {active ? t("wallet.daysLeft", { n: state.days_remaining }) : t("wallet.endedDash")}
           </div>
         </div>
       </div>
 
       {/* 规则摘要（活动期内用于参考，活动期外仅留档） */}
       <div className="space-y-1.5">
-        <div className="prefix">规则摘要（来源 references/campaign.md / 官方页面）</div>
+        <div className="prefix">{t("wallet.rulesTitle")}</div>
         <ul className="font-mono text-[11.5px] text-ink-dim leading-relaxed list-disc pl-5 space-y-1">
           {state.rules_summary.map((r: string, i: number) => <li key={i}>{r}</li>)}
         </ul>
         <div className="font-mono text-[10.5px] text-ink-mute pt-2 flex items-center justify-between">
-          <span>规则文档：<code className="text-ink-dim">{state.rule_doc}</code></span>
+          <span>{t("wallet.ruleDocLabel")}<code className="text-ink-dim">{state.rule_doc}</code></span>
           <span>{state.operator}</span>
         </div>
       </div>
@@ -1101,13 +1109,13 @@ function CampaignPanel() {
 
 /* 7 个只读 Wallet Skills（来自 src/skills_client.WALLET_SKILLS） */
 const WALLET_SKILL_META: { key: string; title: string; desc: string; icon: string }[] = [
-  { key: "query-token-info",                  title: "代币详情",       desc: "按合约地址查代币信息（名称/精度/官网/社交）", icon: "ℹ" },
-  { key: "query-token-audit",                 title: "代币安全审计",   desc: "蜜罐/高税/可增发/黑名单等风险扫描",         icon: "🛡" },
-  { key: "query-address-info",                title: "地址持仓洞察",   desc: "代币/NFT 持仓 + 近期活跃度",                icon: "👤" },
-  { key: "crypto-market-rank",                title: "市场排行",       desc: "涨跌幅/市值/资金费率异常榜",                icon: "📊" },
-  { key: "meme-rush",                         title: "Meme 发射台",    desc: "追踪新发射的 meme 币热度",                  icon: "🚀" },
-  { key: "trading-signal",                    title: "聪明钱信号",     desc: "逐笔聪明钱流入/流出告警",                    icon: "⚡" },
-  { key: "binance-tokenized-securities-info", title: "代币化美股 RWA", desc: "bStock / Ondo / xStocks 美股代币行情",  icon: "🇺🇸" },
+  { key: "query-token-info",                  title: "wallet.skMeta.tokenInfo",   desc: "wallet.skMeta.tokenInfoDesc",   icon: "ℹ" },
+  { key: "query-token-audit",                 title: "wallet.skMeta.tokenAudit",  desc: "wallet.skMeta.tokenAuditDesc",  icon: "🛡" },
+  { key: "query-address-info",                title: "wallet.skMeta.addrInsight", desc: "wallet.skMeta.addrInsightDesc", icon: "👤" },
+  { key: "crypto-market-rank",                title: "wallet.skMeta.marketRank",  desc: "wallet.skMeta.marketRankDesc",  icon: "📊" },
+  { key: "meme-rush",                         title: "wallet.skMeta.memeRush",    desc: "wallet.skMeta.memeRushDesc",    icon: "🚀" },
+  { key: "trading-signal",                    title: "wallet.skMeta.smartSignal", desc: "wallet.skMeta.smartSignalDesc", icon: "⚡" },
+  { key: "binance-tokenized-securities-info", title: "wallet.skMeta.rwa",         desc: "wallet.skMeta.rwaDesc",         icon: "🇺🇸" },
 ];
 
 /* 侧栏：实时行情 + 限额进度 + Skills 快捷入口 */
@@ -1142,7 +1150,7 @@ function WalletSidebar() {
       <div className="glass p-4" style={{ borderRadius: 12 }}>
         <div className="flex items-center gap-2 mb-3">
           <I.Market size={13} className="text-gold" />
-          <span className="font-mono text-[12px] tracking-wider text-ink">实时行情</span>
+          <span className="font-mono text-[12px] tracking-wider text-ink">{t("wallet.realtime")}</span>
           <span className="pill pill-green text-[10px]"><span className="dot dot-green live" /> {t("wallet.live")}</span>
           <span className="ml-auto font-mono text-[10.5px] text-ink-mute tabular">{updated}</span>
         </div>
@@ -1175,13 +1183,13 @@ function WalletSidebar() {
       <div className="glass p-4" style={{ borderRadius: 12 }}>
         <div className="flex items-center gap-2 mb-3">
           <I.Lock size={13} className="text-gold" />
-          <span className="font-mono text-[12px] tracking-wider text-ink">每日限额（Binance 设定）</span>
+          <span className="font-mono text-[12px] tracking-wider text-ink">{t("wallet.limitsTitle")}</span>
         </div>
         <div className="space-y-2.5">
           {[
-            { k: "swap", label: "市价兑换", cap: 50000,  color: "var(--gold)",     icon: "↔" },
-            { k: "defi", label: "DeFi 操作", cap: 100000, color: "var(--green)",   icon: "◎" },
-            { k: "x402", label: "x402 支付", cap: 20,     color: "var(--ink-dim)", icon: "$" },
+            { k: "swap", label: t("wallet.capSwap"), cap: 50000,  color: "var(--gold)",     icon: "↔" },
+            { k: "defi", label: t("wallet.capDefi"), cap: 100000, color: "var(--green)",   icon: "◎" },
+            { k: "x402", label: t("wallet.capX402"), cap: 20,     color: "var(--ink-dim)", icon: "$" },
           ].map((c) => {
             return (
               <div key={c.k}>
@@ -1198,7 +1206,7 @@ function WalletSidebar() {
               </div>
             );
           })}
-          <div className="font-mono text-[10px] text-ink-mute pt-1">实时使用量需 baw wallet left-quota 返回后接入</div>
+          <div className="font-mono text-[10px] text-ink-mute pt-1">{t("wallet.capsNote")}</div>
         </div>
       </div>
 
@@ -1206,8 +1214,8 @@ function WalletSidebar() {
       <div className="glass p-4" style={{ borderRadius: 12 }}>
         <div className="flex items-center gap-2 mb-3">
           <I.Bolt size={13} className="text-gold" />
-          <span className="font-mono text-[12px] tracking-wider text-ink">Wallet Skills（7 个只读）</span>
-          <span className="pill pill-dim text-[10px]">无需钱包</span>
+          <span className="font-mono text-[12px] tracking-wider text-ink">{t("wallet.skillsTitle7")}</span>
+          <span className="pill pill-dim text-[10px]">{t("wallet.noWalletNeed")}</span>
         </div>
         <div className="grid grid-cols-1 gap-1.5">
           {WALLET_SKILL_META.map((s) => (
@@ -1215,14 +1223,14 @@ function WalletSidebar() {
               className="group flex items-center gap-2.5 rounded-md border border-line bg-elevated/30 hover:border-gold/40 px-2.5 py-2 transition-colors">
               <span className="w-6 h-6 rounded-md bg-elevated flex items-center justify-center font-mono text-[11px] font-bold text-gold shrink-0">{s.icon}</span>
               <div className="min-w-0 flex-1">
-                <div className="font-mono text-[11.5px] text-ink truncate group-hover:text-gold">{s.title}</div>
-                <div className="font-mono text-[10px] text-ink-mute truncate">{s.desc}</div>
+                <div className="font-mono text-[11.5px] text-ink truncate group-hover:text-gold">{t(s.title)}</div>
+                <div className="font-mono text-[10px] text-ink-mute truncate">{t(s.desc)}</div>
               </div>
               <I.Link size={11} className="text-ink-mute group-hover:text-gold shrink-0" />
             </a>
           ))}
         </div>
-        <div className="font-mono text-[10px] text-ink-mute mt-2.5">点击跳转技能库运行；Agent 钱包连接后还可跑 binance-agentic-wallet（转账/兑换）</div>
+        <div className="font-mono text-[10px] text-ink-mute mt-2.5">{t("wallet.sidebarSkillsNote")}</div>
       </div>
     </div>
   );
@@ -1253,8 +1261,8 @@ function WalletSkillsGrid() {
       <div className="flex items-center gap-2 mb-3">
         <I.Bolt size={13} className="text-gold" />
         <span className="font-mono text-[12px] tracking-wider text-ink">{t("wallet.skills")}</span>
-        <span className="pill pill-dim text-[10px]">官方 7 个 · 只读</span>
-        <a href="#skills" className="ml-auto text-[11px] font-mono text-gold hover:underline">技能库 ↗</a>
+        <span className="pill pill-dim text-[10px]">{t("wallet.official7")}</span>
+        <a href="#skills" className="ml-auto text-[11px] font-mono text-gold hover:underline">{t("wallet.skillsLink")}</a>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5">
         {WALLET_SKILL_META.map((s) => {
@@ -1264,20 +1272,20 @@ function WalletSkillsGrid() {
               <div className="flex items-center gap-2">
                 <span className="w-7 h-7 rounded-md bg-elevated flex items-center justify-center font-mono text-[12px] font-bold text-gold shrink-0">{s.icon}</span>
                 <div className="min-w-0 flex-1">
-                  <div className="font-mono text-[12px] text-ink truncate">{s.title}</div>
+                  <div className="font-mono text-[12px] text-ink truncate">{t(s.title)}</div>
                   <code className="font-mono text-[9.5px] text-ink-mute truncate block">{s.key}</code>
                 </div>
-                <span className={`pill ${ok ? "pill-green" : "pill-dim"} text-[9.5px] shrink-0`}>{ok ? "已装" : "未装"}</span>
+                <span className={`pill ${ok ? "pill-green" : "pill-dim"} text-[9.5px] shrink-0`}>{ok ? t("skills.installed") : t("skills.notInstalled")}</span>
               </div>
-              <div className="font-mono text-[10.5px] text-ink-dim leading-relaxed">{s.desc}</div>
+              <div className="font-mono text-[10.5px] text-ink-dim leading-relaxed">{t(s.desc)}</div>
               <div className="flex items-center gap-1.5 mt-0.5">
                 {ok ? (
-                  <a href="#skills" className="btn-ghost text-[10.5px] py-1 flex-1 justify-center"><I.Play size={10} /> 运行</a>
+                  <a href="#skills" className="btn-ghost text-[10.5px] py-1 flex-1 justify-center"><I.Play size={10} /> {t("skills.run")}</a>
                 ) : (
-                  <button onClick={() => onInstall(s.key)} className="btn-ghost text-[10.5px] py-1 flex-1 justify-center"><I.Download size={10} /> 一键安装</button>
+                  <button onClick={() => onInstall(s.key)} className="btn-ghost text-[10.5px] py-1 flex-1 justify-center"><I.Download size={10} /> {t("skills.install")}</button>
                 )}
                 <a href={`https://github.com/binance/binance-skills-hub/tree/main/skills/binance-web3/${s.key}`}
-                  target="_blank" rel="noreferrer" className="btn-ghost text-[10.5px] py-1" title="官方仓库">
+                  target="_blank" rel="noreferrer" className="btn-ghost text-[10.5px] py-1" title={t("wallet.officialRepo")}>
                   <I.Link size={10} />
                 </a>
               </div>
@@ -1286,7 +1294,7 @@ function WalletSkillsGrid() {
         })}
       </div>
       <div className="font-mono text-[10px] text-ink-mute mt-3">
-        7 个 Skill 全部「只读」：无需私钥 / API Key / 签名；query-address-info 等按需填入链上地址即可使用。
+        {t("wallet.skillsRoNote")}
       </div>
     </div>
   );

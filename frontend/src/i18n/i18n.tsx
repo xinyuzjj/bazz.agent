@@ -29,6 +29,15 @@ function persist(l: Locale) {
   try { localStorage.setItem(STORAGE_KEY, l); } catch {}
 }
 
+/** 模块级读当前 locale（供 api 层 / 非 React 代码使用） */
+export function getLocale(): Locale {
+  try {
+    const v = localStorage.getItem(STORAGE_KEY);
+    if (v === "zh" || v === "en") return v;
+  } catch {}
+  return "zh";
+}
+
 export function I18nProvider({ children }: { children: React.ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(loadInitial);
 
@@ -48,7 +57,9 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     let s = dict[key] ?? key;
     if (params) {
       for (const k of Object.keys(params)) {
-        s = s.replace(new RegExp(`@\\{${k}\\}`, "g"), String(params[k]));
+        // 同时兼容 "@{k}" 与 "{k}" 两种占位符写法
+        s = s.split(`@{${k}}`).join(String(params[k]));
+        s = s.split(`{${k}}`).join(String(params[k]));
       }
     }
     return s;

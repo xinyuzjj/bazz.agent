@@ -1,4 +1,5 @@
 ﻿import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useT } from "../i18n/i18n";
 import { api } from "../api";
 import { I } from "./icons";
 
@@ -41,6 +42,7 @@ export function AgentSigninCard({ compact, onDone, onOpenPage }: {
   onDone?: () => void;
   onOpenPage?: () => void;
 }) {
+  const t = useT();
   const [state, setState] = useState<any>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState("");
@@ -71,7 +73,7 @@ export function AgentSigninCard({ compact, onDone, onOpenPage }: {
     try {
       const r: any = await api.walletSignin();
       const qrCodeId: string | undefined = r?.qrCodeId ?? r?.qr_code_id;
-      if (!qrCodeId) throw new Error("未返回 qrCodeId");
+      if (!qrCodeId) throw new Error(t("wallet.bits.noQrCodeId"));
       const qrUrl = r?.qrUrl || r?.qr_url || r?.qrString || r?.qr_string || "";
       const qrImage = qrUrl ? await api.walletQr(qrUrl).catch(() => "") : "";
       setQr({ qrCodeId, qrImage });
@@ -104,10 +106,10 @@ export function AgentSigninCard({ compact, onDone, onOpenPage }: {
   if (connected) {
     return (
       <div className="rounded-lg border border-green/40 bg-green/5 px-4 py-3 flex items-center gap-2 font-mono text-[12px]">
-        <span className="dot dot-green live" /> Agent 钱包已登录，可调用 baw 钱包/交易/DeFi/x402 命令。
+        <span className="dot dot-green live" /> {t("wallet.bits.agentSignedIn")}
         {!compact && (
           <button onClick={signout} disabled={!!busy} className="ml-auto btn-ghost text-[11px] py-1 text-ink-mute hover:text-red">
-            <I.X size={10} /> 退出
+            <I.X size={10} /> {t("wallet.bits.signout")}
           </button>
         )}
       </div>
@@ -118,10 +120,10 @@ export function AgentSigninCard({ compact, onDone, onOpenPage }: {
     return (
       <div className="space-y-3">
         <div className="rounded-lg border border-gold/40 bg-gold/5 px-4 py-3 font-mono text-[12px] text-ink">
-          ⚠ 未检测到 Agentic Wallet（baw）CLI。可一键安装（依赖 npm 可用）。
+          {t("wallet.bits.cliNotDetected")}
         </div>
         <button onClick={install} disabled={!!busy} className="btn-gold">
-          {busy === "install" ? <span className="dot dot-gold live" /> : <I.Qr size={12} />} 安装 Agentic Wallet
+          {busy === "install" ? <span className="dot dot-gold live" /> : <I.Qr size={12} />} {t("wallet.bits.installAgenticWallet")}
         </button>
         {err && <div className="rounded-lg border border-red/40 bg-red/5 px-4 py-2 font-mono text-[11px] text-red">{err}</div>}
       </div>
@@ -135,14 +137,14 @@ export function AgentSigninCard({ compact, onDone, onOpenPage }: {
           <div className="rounded-md border border-gold/40 bg-canvas p-2 flex items-center justify-center" style={{ width: 192, height: 192 }}>
             {qr.qrImage
               ? <img src={qr.qrImage} alt="qr" className="w-full h-full object-contain" />
-              : <span className="text-[10px] font-mono text-ink-mute">无图像（前端请用 Binance App 扫码登录）</span>}
+              : <span className="text-[10px] font-mono text-ink-mute">{t("wallet.bits.noQrImage")}</span>}
           </div>
           <div className="flex-1 space-y-1.5 font-mono text-[12px]">
-            <div className="text-ink">📱 用 Binance App 扫一扫完成配对</div>
-            <div className="text-ink-mute text-[11px]">配对码：<code className="text-gold">{qr.qrCodeId}</code></div>
-            <div className="pill pill-gold mt-2 inline-flex items-center gap-1"><span className="dot dot-gold live" /> 等待 App 确认</div>
+            <div className="text-ink">{t("wallet.bits.scanToPair")}</div>
+            <div className="text-ink-mute text-[11px]">{t("wallet.bits.pairingCode")}<code className="text-gold">{qr.qrCodeId}</code></div>
+            <div className="pill pill-gold mt-2 inline-flex items-center gap-1"><span className="dot dot-gold live" /> {t("wallet.bits.waitingConfirm")}</div>
           </div>
-          <button onClick={cancelSignin} className="btn-ghost text-[11px] py-1.5">取消</button>
+          <button onClick={cancelSignin} className="btn-ghost text-[11px] py-1.5">{t("wallet.bits.cancel")}</button>
         </div>
         {err && <div className="rounded-lg border border-red/40 bg-red/5 px-4 py-2 font-mono text-[11px] text-red">{err}</div>}
       </div>
@@ -152,14 +154,14 @@ export function AgentSigninCard({ compact, onDone, onOpenPage }: {
   return (
     <div className="space-y-3">
       <div className="rounded-lg border border-line bg-elevated/20 px-4 py-3 font-mono text-[12px] text-ink-dim leading-relaxed">
-        点击下方按钮，弹出 Binance App 扫码配对二维码。登录后将自动同步地址 / 链 / 限额 / 历史交易到本应用。
+        {t("wallet.bits.scanPrompt")}
       </div>
       <div className="flex items-center gap-2">
         <button onClick={startSignin} disabled={!!busy} className="btn-gold">
-          {busy === "signin" ? <span className="dot dot-gold live" /> : <I.Qr size={12} />} 扫码登录 Agent 钱包
+          {busy === "signin" ? <span className="dot dot-gold live" /> : <I.Qr size={12} />} {t("wallet.bits.scanSignin")}
         </button>
         {onOpenPage && (
-          <button onClick={onOpenPage} className="btn-ghost text-[11px] py-1.5">打开钱包页</button>
+          <button onClick={onOpenPage} className="btn-ghost text-[11px] py-1.5">{t("wallet.bits.openWalletPage")}</button>
         )}
       </div>
       {err && <div className="rounded-lg border border-red/40 bg-red/5 px-4 py-2 font-mono text-[11px] text-red">{err}</div>}
@@ -182,6 +184,7 @@ export function ChainWalletPanel({ compact, onChanged }: {
   compact?: boolean;
   onChanged?: (connected: boolean) => void;
 }) {
+  const t = useT();
   const [status, setStatus] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -208,16 +211,16 @@ export function ChainWalletPanel({ compact, onChanged }: {
   const masked = status?.masked_key || "";
 
   const connect = async () => {
-    if (!k.trim() || !s.trim()) { setErr("BX- API Key 与 Secret 都不能为空。"); return; }
+    if (!k.trim() || !s.trim()) { setErr(t("wallet.bits.apiKeySecretEmpty")); return; }
     setBusy(true); setErr(""); setOk(""); setHint("");
     try {
       const r: any = await api.web3Connect(k.trim(), s.trim());
       if (r?.status && r.status !== "ok") {
-        setErr(r?.message || "连接失败（未保存）。");
+        setErr(r?.message || t("wallet.bits.connectFailed"));
         setHint(r?.hint || "");
         return;
       }
-      setOk(r?.message || "已连接"); setK(""); setS("");
+      setOk(r?.message || t("wallet.bits.connected")); setK(""); setS("");
       await load(); onChanged?.(true);
     } catch (e: any) { setErr(errText(e)); }
     finally { setBusy(false); }
@@ -229,8 +232,8 @@ export function ChainWalletPanel({ compact, onChanged }: {
     finally { setBusy(false); }
   };
   const query = async () => {
-    if (!addr.trim()) { setErr("请输入链上地址。"); return; }
-    if (!chains.length) { setErr("至少选择一条链。"); return; }
+    if (!addr.trim()) { setErr(t("wallet.bits.enterAddress")); return; }
+    if (!chains.length) { setErr(t("wallet.bits.selectChain")); return; }
     setBusy(true); setErr(""); setBal(null);
     try { const r: any = await api.web3Balance(addr.trim(), chains); setBal(r); }
     catch (e: any) { setErr(errText(e)); }
@@ -243,11 +246,11 @@ export function ChainWalletPanel({ compact, onChanged }: {
       <div className="space-y-3">
         <div className="flex items-center gap-2">
           <I.Key size={14} className="text-gold" />
-          <span className="font-mono text-[12.5px] text-ink">连接链上钱包（Binance Web3 Wallet）</span>
-          <span className="pill pill-dim">BX- API Key · 链上地址查询</span>
+          <span className="font-mono text-[12.5px] text-ink">{t("wallet.bits.connectOnchainWallet")}</span>
+          <span className="pill pill-dim">{t("wallet.bits.apiKeyLookup")}</span>
         </div>
         <div className="grid gap-2">
-          <input value={k} onChange={(e) => setK(e.target.value)} placeholder="BX- API Key（web3.binance.com）"
+          <input value={k} onChange={(e) => setK(e.target.value)} placeholder={t("wallet.bits.apiKeyPlaceholder")}
             className="field font-mono w-full" autoComplete="off" spellCheck={false} />
           <div className="relative">
             <input type={showSec ? "text" : "password"} value={s} onChange={(e) => setS(e.target.value)}
@@ -255,19 +258,19 @@ export function ChainWalletPanel({ compact, onChanged }: {
               className="field font-mono w-full pr-14" autoComplete="off" spellCheck={false} />
             <button type="button" onClick={() => setShowSec((v) => !v)}
               className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-mono text-ink-mute hover:text-gold">
-              {showSec ? "隐藏" : "显示"}
+              {showSec ? t("wallet.bits.hide") : t("wallet.bits.show")}
             </button>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <button onClick={connect} disabled={busy || !k.trim() || !s.trim()} className="btn-gold">
-            {busy ? <Spin /> : <I.Key size={12} />} 连接并验证
+            {busy ? <Spin /> : <I.Key size={12} />} {t("wallet.bits.connectVerify")}
           </button>
         </div>
         {err && <div className="rounded-md border border-red/30 bg-red/5 px-3 py-2 font-mono text-[11px] text-red leading-relaxed">{err}</div>}
         {ok && <div className="rounded-md border border-green/40 bg-green/5 px-3 py-2 font-mono text-[11px] text-green leading-relaxed">{ok}</div>}
         <div className="rounded-md border border-line bg-elevated/20 px-3 py-2 font-mono text-[10.5px] text-ink-mute leading-relaxed">
-          BX- 密钥属于 Binance Web3 Wallet API（web3.binance.com），与交易所 HMAC Key 互不通用；用于查链上地址 / 持仓，不会执行链上操作以外的任何动作。
+          {t("wallet.bits.keyNote")}
         </div>
       </div>
     );
@@ -276,19 +279,19 @@ export function ChainWalletPanel({ compact, onChanged }: {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="pill pill-green"><span className="dot dot-green live" /> 已连接</span>
+        <span className="pill pill-green"><span className="dot dot-green live" /> {t("wallet.bits.connected")}</span>
         <code className="rounded border border-line bg-canvas px-2 py-0.5 font-mono text-[10.5px] text-gold">{masked}</code>
         <button onClick={disconnect} disabled={busy} className="ml-auto btn-ghost text-[11px] py-1 text-ink-mute hover:text-red">
-          <I.X size={10} /> 断开
+          <I.X size={10} /> {t("wallet.bits.disconnect")}
         </button>
       </div>
 
       <div className="grid gap-2">
         <div className="flex items-center gap-2">
-          <input value={addr} onChange={(e) => setAddr(e.target.value)} placeholder="0x... / SoL... 链上地址"
+          <input value={addr} onChange={(e) => setAddr(e.target.value)} placeholder={t("wallet.bits.addrPlaceholder")}
             className="field font-mono w-full" spellCheck={false} />
           <button onClick={query} disabled={busy} className="btn-ghost text-[11px] py-1.5">
-            {busy ? <Spin /> : <I.Refresh size={11} />} 查询持仓
+            {busy ? <Spin /> : <I.Refresh size={11} />} {t("wallet.bits.queryHoldings")}
           </button>
         </div>
         {agentAddrs && (
@@ -317,8 +320,8 @@ export function ChainWalletPanel({ compact, onChanged }: {
       {bal && (
         <div className="glass">
           <div className="px-4 py-2 flex items-center gap-2 border-b border-line">
-            <span className="prefix">链上持仓</span>
-            <span className="pill pill-dim">{bal?.totalTokens ?? bal?.tokens?.length ?? 0} 项</span>
+            <span className="prefix">{t("wallet.bits.onchainHoldings")}</span>
+            <span className="pill pill-dim">{t("wallet.bits.items", { n: bal?.totalTokens ?? bal?.tokens?.length ?? 0 })}</span>
           </div>
           <pre className="px-4 py-2 font-mono text-[10.5px] text-ink-dim whitespace-pre-wrap break-all max-h-[360px] overflow-auto">
             {JSON.stringify(bal, null, 2)}
@@ -327,8 +330,8 @@ export function ChainWalletPanel({ compact, onChanged }: {
       )}
 
       <div className="font-mono text-[10px] text-ink-mute">
-        参考：<a className="text-gold hover:underline" href="https://web3.binance.com/zh-CN/dev-docs/products/wallet-api/error-codes" target="_blank" rel="noreferrer">Binance Wallet API 错误码</a>
-        （若使用 CEX 现货 HMAC Key，可忽略此链接）
+        {t("wallet.bits.ref")}<a className="text-gold hover:underline" href="https://web3.binance.com/zh-CN/dev-docs/products/wallet-api/error-codes" target="_blank" rel="noreferrer">{t("wallet.bits.walletApiErrCodes")}</a>
+        {t("wallet.bits.ignoreLink")}
       </div>
     </div>
   );

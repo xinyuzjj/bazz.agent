@@ -1,10 +1,10 @@
 {
-  "name": "bazz-agent-ui",
+  "name": "alpha-scout-desktop",
   "private": true,
-  "version": "1.2.3",
+  "version": "1.2.4",
   "type": "module",
   "main": "../electron/main.cjs",
-  "description": "BAZZ.AGENT — Binance-native AI trading copilot (React + Vite; Electron shell for the desktop build)",
+  "description": "Agent OS Alpha Scout — Hermes-style Binance desktop agent (Electron + React)",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api";
 import { I } from "../components/icons";
+import { useT } from "../i18n/i18n";
 
 /* 技能库 —— Binance Skills Hub 全部官方技能（binance-web3 链上/钱包组 + binance 交易组）。
  * 统一在这里：安装 / 移除 / 运行；每个技能一个专属运行面板。
@@ -15,8 +16,8 @@ type Skill = { name: string; title: string; desc: string; group: string; install
 
 const GROUP_ORDER = ["binance-web3", "binance"];
 const GROUP_TITLES: Record<string, string> = {
-  "binance-web3": "binance-web3 · 链上 / 钱包技能组",
-  "binance": "binance · 交易账户技能组（需 OAuth / API Key）",
+  "binance-web3": "skills.group.binance-web3",
+  "binance": "skills.group.binance",
 };
 
 // 桌面版预装只保留两个 binance 账户组技能：广场发帖 + 交易 CLI
@@ -112,6 +113,7 @@ export function Web3SkillsView() {
   const [err, setErr] = useState("");
   const [history, setHistory] = useState<{ ts: number; cmd: string; out: string; ok: boolean }[]>([]);
   const [status, setStatus] = useState("");
+  const t = useT();
 
   const load = async () => {
     try {
@@ -128,8 +130,8 @@ export function Web3SkillsView() {
     setBusy(true); setErr(""); setStatus("");
     try {
       const r: any = wantInstall ? await api.skillsInstall(s.name) : await api.skillsRemove(s.name);
-      if (r?.status === "ok") setStatus(wantInstall ? `已安装 ${s.name}` : `已移除 ${s.name}`);
-      else setErr((r?.detail || r?.stderr || "操作失败").slice(0, 300));
+      if (r?.status === "ok") setStatus(wantInstall ? t("skills.installedMsg", { name: s.name }) : t("skills.removedMsg", { name: s.name }));
+      else setErr((r?.detail || r?.stderr || t("skills.opFailed")).slice(0, 300));
       await load();
     } catch (e: any) { setErr(e?.message ?? String(e)); }
     finally { setBusy(false); }
@@ -146,12 +148,12 @@ export function Web3SkillsView() {
       const r: any = await api.skillsRun(selected.name, a);
       const text = (r.stdout ?? "").trim() || (r.stderr ?? "").trim();
       const ok = r?.status === "ok";
-      if (!ok) setErr((r?.detail || text || "运行失败").slice(0, 1200));
-      setOutput(text ? pretty(text) : "(空输出)");
-      setHistory((h) => [{ ts: Date.now(), cmd: `${selected.name}${a ? " · " + a : " · (说明)"}`, out: text || "", ok }, ...h].slice(0, 8));
+      if (!ok) setErr((r?.detail || text || t("skills.runFailed")).slice(0, 1200));
+      setOutput(text ? pretty(text) : t("skills.emptyOutput"));
+      setHistory((h) => [{ ts: Date.now(), cmd: `${selected.name}${a ? " · " + a : " · " + t("skills.noArgs")}`, out: text || "", ok }, ...h].slice(0, 8));
     } catch (e: any) {
       setErr(e?.message ?? String(e));
-      setHistory((h) => [{ ts: Date.now(), cmd: `${selected.name} · ${a || "(说明)"}`, out: "", ok: false }, ...h].slice(0, 8));
+      setHistory((h) => [{ ts: Date.now(), cmd: `${selected.name} · ${a || t("skills.noArgs")}`, out: "", ok: false }, ...h].slice(0, 8));
     } finally { setBusy(false); }
   };
 
@@ -161,18 +163,18 @@ export function Web3SkillsView() {
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-2.5">
             <I.Grid className="text-gold" size={24} />
-            <span className="font-mono text-[15px] font-bold tracking-wide text-ink">技能库</span>
-            <span className="prefix">Binance Skills Hub · 安装 / 运行 · 各带专属面板</span>
+            <span className="font-mono text-[15px] font-bold tracking-wide text-ink">{t("skills.title")}</span>
+            <span className="prefix">{t("skills.hubSubtitle")}</span>
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <button onClick={load} className="btn-ghost py-1.5 px-3 text-[12px]"><I.Refresh size={12} /> 刷新</button>
-            <span className="pill pill-green">{skills.filter((s) => s.installed).length}/{skills.length} 已装</span>
+            <button onClick={load} className="btn-ghost py-1.5 px-3 text-[12px]"><I.Refresh size={12} /> {t("skills.refresh")}</button>
+            <span className="pill pill-green">{t("skills.installedCount", { n: skills.filter((s) => s.installed).length, m: skills.length })}</span>
           </div>
         </div>
         {err && <div className="rounded-lg border border-red/40 bg-red/5 px-4 py-2.5 text-[12.5px] text-red font-mono">{err}</div>}
         {status && <div className="rounded-lg border border-gold/30 bg-gold/5 px-4 py-2 text-[12.5px] text-gold font-mono">{status}</div>}
         {skills.length === 0 ? (
-          <div className="glass p-8 text-center font-mono text-[12px] text-ink-mute" style={{ borderRadius: 12 }}>加载中… 或 /api/skills 暂不可用</div>
+          <div className="glass p-8 text-center font-mono text-[12px] text-ink-mute" style={{ borderRadius: 12 }}>{t("skills.loading")}</div>
         ) : (
           GROUP_ORDER.map((g) => {
             const items = skills.filter((s) => s.group === g).filter((s) => g !== "binance" || BINANCE_ALLOWED.has(s.name));
@@ -182,9 +184,9 @@ export function Web3SkillsView() {
               <div key={g} className="glass p-4" style={{ borderRadius: 12 }}>
                 <div className="flex items-center gap-2 mb-3">
                   <I.Grid size={13} className="text-gold" />
-                  <span className="font-mono text-[12px] tracking-wider text-ink">{GROUP_TITLES[g] ?? g}</span>
-                  <span className="pill pill-dim">{inst}/{items.length} 已装</span>
-                  {g === "binance-web3" && <span className="prefix ml-auto">7 个 Wallet Skill 无需连钱包即可跑公开数据</span>}
+                  <span className="font-mono text-[12px] tracking-wider text-ink">{t(GROUP_TITLES[g] ?? g)}</span>
+                  <span className="pill pill-dim">{t("skills.installedCount", { n: inst, m: items.length })}</span>
+                  {g === "binance-web3" && <span className="prefix ml-auto">{t("skills.walletSkillNote")}</span>}
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-2.5">
                   {items.map((s) => (
@@ -192,22 +194,22 @@ export function Web3SkillsView() {
                       <button onClick={() => s.installed && open(s)} disabled={!s.installed} className="w-full text-left">
                         <div className="flex items-start gap-2">
                           <span className="font-mono text-[12.5px] font-semibold text-ink break-all">{s.title || s.name}</span>
-                          <span className={`pill ${s.installed ? "pill-green" : "pill-dim"} shrink-0 ml-auto`}>{s.installed ? "已装" : "未装"}</span>
+                          <span className={`pill ${s.installed ? "pill-green" : "pill-dim"} shrink-0 ml-auto`}>{s.installed ? t("skills.installed") : t("skills.notInstalled")}</span>
                         </div>
                         <div className="text-[11px] text-ink-dim mt-1.5 leading-relaxed min-h-[30px]">{s.desc}</div>
                       </button>
                       <div className="mt-2 flex items-center gap-1.5">
-                        {s.wallet_skill && <span className="pill pill-gold text-[9.5px]" title="官方 Wallet Skills">Wallet Skill</span>}
+                        {s.wallet_skill && <span className="pill pill-gold text-[9.5px]" title={t("skills.walletSkillTitle")}>Wallet Skill</span>}
                         {s.name === "binance-agentic-wallet" && <span className="prefix text-gold text-[10px]">CORE</span>}
-                        {NO_CLI[s.name] && <span className="pill pill-dim text-[9.5px]">HTTP 指引</span>}
+                        {NO_CLI[s.name] && <span className="pill pill-dim text-[9.5px]">{t("skills.httpGuide")}</span>}
                         <div className="ml-auto flex items-center gap-1.5">
                           {s.installed ? (
                             <>
-                              <button onClick={() => open(s)} className="btn-ghost text-[11px] py-1"><I.Play size={11} /> 运行</button>
-                              <button onClick={() => actSkill(s, false)} disabled={busy} className="btn-ghost text-[11px] py-1 text-red/80 hover:text-red" title="移除"><I.Trash size={11} /> 移除</button>
+                              <button onClick={() => open(s)} className="btn-ghost text-[11px] py-1"><I.Play size={11} /> {t("skills.run")}</button>
+                              <button onClick={() => actSkill(s, false)} disabled={busy} className="btn-ghost text-[11px] py-1 text-red/80 hover:text-red" title={t("skills.remove")}><I.Trash size={11} /> {t("skills.remove")}</button>
                             </>
                           ) : (
-                            <button onClick={() => actSkill(s, true)} disabled={busy} className="btn-gold text-[11px] py-1"><I.Download size={11} /> 安装</button>
+                            <button onClick={() => actSkill(s, true)} disabled={busy} className="btn-gold text-[11px] py-1"><I.Download size={11} /> {t("skills.install")}</button>
                           )}
                         </div>
                       </div>
@@ -219,7 +221,7 @@ export function Web3SkillsView() {
           })
         )}
         <div className="font-mono text-[10.5px] text-ink-mute px-1">
-          安装源: <span className="text-gold">npx skills add &lt;skill&gt;</span> · binance-web3 = 链上数据 / Agent 钱包 · binance = 币安账户交易（需 OAuth/Key）。技能在对话里也可直接说「跑 meme-rush」「查聪明钱」。
+          {t("skills.installSource")}
         </div>
       </div>
     );
@@ -231,12 +233,12 @@ export function Web3SkillsView() {
   return (
     <div className="p-5 space-y-4">
       <div className="flex items-center gap-3 flex-wrap">
-        <button onClick={back} className="btn-ghost py-1.5 px-3 text-[12px]"><I.Arrow size={11} className="rotate-180" /> 返回技能列表</button>
+        <button onClick={back} className="btn-ghost py-1.5 px-3 text-[12px]"><I.Arrow size={11} className="rotate-180" /> {t("skills.backToList")}</button>
         <span className="font-mono text-[15px] font-bold tracking-wide text-ink">{selected.name}</span>
-        <span className={`pill ${selected.installed ? "pill-green" : "pill-dim"}`}>{selected.installed ? "已安装" : "未安装"}</span>
+        <span className={`pill ${selected.installed ? "pill-green" : "pill-dim"}`}>{selected.installed ? t("skills.installedState") : t("skills.notInstalledState")}</span>
         {selected.wallet_skill && <span className="pill pill-gold">Wallet Skill</span>}
         {selected.name === "binance-agentic-wallet" && <span className="pill pill-gold">CORE · baw CLI</span>}
-        {isApiRef && <span className="pill pill-dim">HTTP / 扩展型 · 官方 API 指引</span>}
+        {isApiRef && <span className="pill pill-dim">{t("skills.httpApiGuide")}</span>}
         <span className="ml-auto prefix">{selected.desc}</span>
       </div>
 
@@ -247,28 +249,28 @@ export function Web3SkillsView() {
         <div className="glass p-4" style={{ borderRadius: 12 }}>
           <div className="flex items-center gap-2 mb-2">
             <I.Cpu size={13} className="text-gold" />
-            <span className="font-mono text-[12px] tracking-wider text-ink">使用说明</span>
+            <span className="font-mono text-[12px] tracking-wider text-ink">{t("skills.usageTitle")}</span>
           </div>
-          <p className="text-[12.5px] text-ink-dim leading-relaxed mb-3">{NO_CLI[selected.name]}。下方「查看官方指引」会把该技能 SKILL.md 的真实调用说明拉出来。</p>
+          <p className="text-[12.5px] text-ink-dim leading-relaxed mb-3">{NO_CLI[selected.name]}。{t("skills.viewOfficialGuideHint")}</p>
           <button onClick={() => run("")} disabled={busy} className="btn-gold">
             {busy ? <span className="inline-block w-3 h-3 border-2 border-canvas/40 border-t-canvas rounded-full animate-spin" /> : <I.Play size={11} />}
-            查看官方指引
+            {t("skills.viewOfficialGuide")}
           </button>
         </div>
       ) : (
         <div className="glass p-4" style={{ borderRadius: 12 }}>
           <div className="flex items-center gap-2 mb-3">
             <I.Cpu size={13} className="text-gold" />
-            <span className="font-mono text-[12px] tracking-wider text-ink">运行参数</span>
+            <span className="font-mono text-[12px] tracking-wider text-ink">{t("skills.runParams")}</span>
             <span className="prefix">
-              命令 = {selected.name === "binance-agentic-wallet"
+              {t("skills.cmdLabel")} {selected.name === "binance-agentic-wallet"
                 ? <code className="text-gold">baw &lt;args&gt;</code>
                 : <code className="text-gold">node &lt;skill&gt;/scripts/cli.mjs &lt;args&gt;</code>}
             </span>
           </div>
           {presets.length > 0 && (
             <div className="mb-3">
-              <div className="prefix mb-2">常用预设</div>
+              <div className="prefix mb-2">{t("skills.commonPresets")}</div>
               <div className="flex flex-wrap gap-2">
                 {presets.map((p, i) => (
                   <button key={i} onClick={() => run(p.cmd)} disabled={busy || !selected.installed}
@@ -282,17 +284,17 @@ export function Web3SkillsView() {
           <div className="flex items-center gap-2">
             <input value={args} onChange={(e) => setArgs(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") run(); }}
-              placeholder={FREE_HINTS[selected.name] ?? "参数（子命令 + JSON，如 cmd '{\"a\":1}'）"}
+              placeholder={FREE_HINTS[selected.name] ?? t("skills.argPlaceholder")}
               disabled={!selected.installed}
               className="field flex-1 font-mono" />
             <button onClick={() => run()} disabled={busy || !selected.installed}
               className={`btn-gold ${busy || !selected.installed ? "opacity-50 cursor-not-allowed" : ""}`}>
               {busy ? <span className="inline-block w-3 h-3 border-2 border-canvas/40 border-t-canvas rounded-full animate-spin" /> : <I.Play size={11} />}
-              运行
+              {t("skills.run")}
             </button>
           </div>
           {!selected.installed && (
-            <div className="mt-2 font-mono text-[10.5px] text-ink-mute">该技能未安装。点击上方「返回技能列表」，在卡片上点 <span className="text-gold">安装</span> 后再运行。</div>
+            <div className="mt-2 font-mono text-[10.5px] text-ink-mute">{t("skills.notInstalledNote")}</div>
           )}
         </div>
       )}
@@ -301,16 +303,16 @@ export function Web3SkillsView() {
       <div className="glass p-4" style={{ borderRadius: 12 }}>
         <div className="flex items-center gap-2 mb-3">
           <I.Cpu size={13} className="text-gold" />
-          <span className="font-mono text-[12px] tracking-wider text-ink">输出</span>
+          <span className="font-mono text-[12px] tracking-wider text-ink">{t("skills.output")}</span>
           {args && <span className="pill pill-dim font-mono text-[10px]"><code className="text-gold">{selected.name} {args}</code></span>}
-          {busy && <span className="pill pill-gold">运行中…</span>}
+          {busy && <span className="pill pill-gold">{t("skills.running")}</span>}
           {output && (
-            <button onClick={() => { try { navigator.clipboard?.writeText(output); } catch {} }} className="ml-auto btn-ghost text-[11px] py-1">复制输出</button>
+            <button onClick={() => { try { navigator.clipboard?.writeText(output); } catch {} }} className="ml-auto btn-ghost text-[11px] py-1">{t("skills.copyOutput")}</button>
           )}
         </div>
         {!output && !busy ? (
           <div className="py-6 text-center font-mono text-[11.5px] text-ink-mute">
-            {isApiRef ? "点击「查看官方指引」获取该技能的调用方式。" : "点击任意预设按钮或在输入框回车即开始执行。"}
+            {isApiRef ? t("skills.apiRefHint") : t("skills.presetHint")}
           </div>
         ) : (
           <pre className="rounded-md border border-line bg-canvas p-3 font-mono text-[11.5px] text-ink-dim overflow-auto max-h-96 whitespace-pre-wrap break-all">{output || "…"}</pre>
@@ -322,7 +324,7 @@ export function Web3SkillsView() {
         <div className="glass p-4" style={{ borderRadius: 12 }}>
           <div className="flex items-center gap-2 mb-2">
             <I.Refresh size={13} className="text-gold" />
-            <span className="font-mono text-[12px] tracking-wider text-ink">本次会话历史</span>
+            <span className="font-mono text-[12px] tracking-wider text-ink">{t("skills.sessionHistory")}</span>
             <span className="pill pill-dim">{history.length}</span>
           </div>
           <div className="space-y-1">

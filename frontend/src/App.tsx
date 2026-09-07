@@ -10,7 +10,7 @@ import { SquarePostView } from "./views/SquarePostView";
 import { SettingsView } from "./views/SettingsView";
 import { MemoryOverlay } from "./views/MemoryOverlay";
 import { PanicHaltModal } from "./views/PanicHaltModal";
-import { I18nProvider } from "./i18n/i18n";
+import { I18nProvider, useI18n } from "./i18n/i18n";
 import { ThemeProvider } from "./theme/theme";
 
 // 兜底：捕获子树渲染错误，渲染降级提示而不让整页崩
@@ -22,7 +22,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { err
     if (this.state.err) {
       return (
         <div style={{ position: "fixed", inset: "60px 16px 16px 16px", padding: 16, background: "#1a0d0d", border: "1px solid #f6465d", color: "#ff9aa8", borderRadius: 8, font: "12px/1.5 ui-monospace, monospace", whiteSpace: "pre-wrap", overflow: "auto", zIndex: 99998 }}>
-          <div style={{ color: "#fff", fontWeight: 700, marginBottom: 8 }}>渲染错误（已捕获）</div>
+          <div style={{ color: "#fff", fontWeight: 700, marginBottom: 8 }}>渲染错误（已捕获） / Render error (caught)</div>
           {String(this.state.err?.message ?? this.state.err)}
           {"\n\n"}{this.state.err?.stack ?? ""}
         </div>
@@ -33,6 +33,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { err
 }
 
 function AppInner() {
+  const { locale: curLocale } = useI18n();
   const [nav, setNav] = useState<NavId>("chat");
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [settings, setSettings] = useState<any>(null);
@@ -72,14 +73,20 @@ function AppInner() {
 
   // 从行情按钮（现货买入 / 合约做多 / 合约做空）跳到对话，并向 Agent 提问仓位建议
   const goChatOrder = (symbol: string, mode: "spot-long" | "futures-long" | "futures-short") => {
+    const isEn = curLocale === "en";
     const tag =
-      mode === "spot-long"      ? "现货买入"
-      : mode === "futures-long" ? "合约做多"
-      : "合约做空";
-    const msg = `我想对 ${symbol} 做${tag}，请结合行情页当前价位 / 7日与30日趋势 / 成交量与持仓变化，给出仓位建议：` +
-      (mode === "spot-long"
-        ? "建议占总资金比例、入场策略（市价/限价/分批）、目标价、止损价、止盈分批。"
-        : "建议杠杆倍数（保守）、仓位占比、强平价、止损、止盈分批、风险收益比。");
+      mode === "spot-long"      ? (isEn ? "spot-buy" : "现货买入")
+      : mode === "futures-long" ? (isEn ? "futures-long" : "合约做多")
+      : (isEn ? "futures-short" : "合约做空");
+    const msg = isEn
+      ? `I want to ${tag} ${symbol}. Based on the current price, the 7-day and 30-day trends, volume and open-interest changes on the Markets page, give me a position-sizing plan: ` +
+        (mode === "spot-long"
+          ? "suggested % of total capital, entry strategy (market/limit/DCA), target price, stop-loss and take-profit batches."
+          : "suggested conservative leverage, position %, liquidation price, stop-loss, take-profit batches, and risk-reward ratio.")
+      : `我想对 ${symbol} 做${tag}，请结合行情页当前价位 / 7日与30日趋势 / 成交量与持仓变化，给出仓位建议：` +
+        (mode === "spot-long"
+          ? "建议占总资金比例、入场策略（市价/限价/分批）、目标价、止损价、止盈分批。"
+          : "建议杠杆倍数（保守）、仓位占比、强平价、止损、止盈分批、风险收益比。");
     setPendingChatMsg(msg);
     setTradeSymbol(undefined);
     setTradeMode(undefined);
