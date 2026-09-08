@@ -30,9 +30,11 @@ BACKUPS        = os.path.join(WORKSPACE, "backups")
 GENERATED      = os.path.join(WORKSPACE, "generated")
 
 # v1.2.11 起：内置 Node 20 LTS + @binance/agentic-wallet 的位置
-#   冻结态：resources/runtime/  与 ScoutBackend.exe 同包（build-desktop.js 把 runtime/ 打到 ScoutBackend/_internal/runtime/）
-#   dev 态：默认不存在（dev 不打包 runtime/），调用方需先判断存在性
-RUNTIME_DIR    = os.environ.get("BAZZ_RUNTIME_DIR") or os.path.join(APP_DIR, "resources", "runtime")
+#   冻结态：<EXE_DIR>/../../resources/runtime/
+#     EXE_DIR (= workspace.APP_DIR) = resources/scout-bundle/ScoutBackend/  ← launcher.py 设置
+#     → 跳两级到 BAZZ.AGENT-win32-x64/，再下 resources/runtime/，正是 build-desktop.js extraResource 落点
+#   dev 态：APP_DIR = 项目根，RUNTIME_DIR 指向 `../../runtime`（不存在）；runtime_available() 自然 False，调用方走 PATH 回退
+RUNTIME_DIR    = os.environ.get("BAZZ_RUNTIME_DIR") or os.path.normpath(os.path.join(APP_DIR, "..", "..", "runtime"))
 NODE_EXE       = os.path.join(RUNTIME_DIR, "node", "node.exe" if os.name == "nt" else "bin/node")
 BAW_BIN_DIR    = os.path.join(RUNTIME_DIR, "node_modules", "@binance", "agentic-wallet", "bin")
 BAW_CLI_JS     = os.path.join(RUNTIME_DIR, "node_modules", "@binance", "agentic-wallet", "bin", "baw.js")  # npm 包装入口

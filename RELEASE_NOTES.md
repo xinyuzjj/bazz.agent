@@ -1,10 +1,14 @@
-# BAZZ.AGENT v1.2.11
+# BAZZ.AGENT v1.2.12
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
 
 本地优先的币安 AI 交易桌面前端：妖币/点火雷达 + 多模型 Agent 对话 + 带止损止盈的交易方案 + CEX 连接 + Agentic Wallet 链上操作 + 广场发文。行情扫描与 Agent 记忆**不需要任何 API Key**；真实下单/写盘一律先确认后执行。
 
-## 🆕 v1.2.11 更新要点
+## 🆕 v1.2.12 更新要点（hotfix）
+
+1. **修 v1.2.11 路径错位：内置 runtime/ 找不到的 bug**。v1.2.11 把 runtime 放到 `BAZZ.AGENT-win32-x64/resources/runtime/`（与 scout-bundle/ 同级），但 `workspace.RUNTIME_DIR` 算成了 `BAZZ_APP_DIR/resources/runtime`（= `resources/scout-bundle/ScoutBackend/resources/runtime`，不存在）→ `runtime_available()` 永远 False → Agent 钱包状态位仍显示红色「CLI 未安装 / npm 缺失」+「一键安装」按钮。**正确路径**是从 `BAZZ_APP_DIR` 跳两级到 `BAZZ.AGENT-win32-x64/` 再下 `runtime/`：`os.path.normpath(os.path.join(APP_DIR, "..", "..", "runtime"))`。下载 v1.2.12 后状态位才会真的显示「内置 · baw v1.9.0 / Node 20 LTS」绿色 pill。
+
+## 🔄 v1.2.11 更新要点（历史）
 
 1. **「自动下载 / 整目录替换 / 强制重启」整套作废**——之前的方案在多次中国代理环境下失败（GitHub API 403 / 下载中断 / PS 脚本杀进程 / 解压权限），用户也没看到任何更新提醒。本版彻底**砍掉所有下载/解压/重启逻辑**：`src/updater.py` 只剩 `check()`（取版本号 + release URL），`UpdatePanel` / `UpdateNotifier` 重写为极简版——检测到新版本时**只用系统默认浏览器打开 GitHub release 页**，用户在浏览器里下载、解压、覆盖即可。任何状态下都展示「打开下载页」按钮，没有静默失败。
 2. **Agent 钱包「Node + npm + baw」全部内置**：之前状态位总显示红色「CLI 未安装 / npm 缺失」+ 「一键安装 `npm i -g`」按钮——中国用户常常没有 Node 18+ 环境或 npm 不在 PATH。本版构建期自动下 Node 20 LTS Windows x64 + `npm i @binance/agentic-wallet` 到 `runtime/`，整目录打进 APP（约 +100MB，zip 147 → 250MB）。**用户机器不再需要任何 Node 环境**，状态位直接显示「**内置 · baw vX.Y · 内置 · Node 20 LTS**」，「一键安装」按钮整段消失。
