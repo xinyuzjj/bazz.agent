@@ -1463,6 +1463,33 @@ export function ChatView({
                           <I.Shield size={14} className="text-gold shrink-0" />
                           <span className="font-mono text-[11px] text-gold truncate">NEEDS_APPROVAL · {m.approval.title ?? m.approval.label}</span>
                         </div>
+                        {m.approval.action === "execute_order" && m.approval.signal && (() => {
+                          const s = m.approval.signal;
+                          const d = String(s.direction ?? "").toUpperCase();
+                          const bear = d.includes("SHORT") || d.includes("BEAR") || String(s.direction ?? "").includes("空");
+                          const dir = bear ? t("markets.short") : t("markets.long");
+                          const rows: Array<[string, string]> = [
+                            [t("chat.ordSymbol"), `${s.symbol ?? "—"} · ${dir}`],
+                            [t("chat.ordPrice"), s.price != null && s.price > 0 ? `$${s.price}` : "—"],
+                            [t("chat.ordStopLoss"), s.stop_loss != null ? `$${s.stop_loss}` : "—"],
+                            [t("chat.ordTakeProfit"), s.take_profit != null ? `$${s.take_profit}` : "—"],
+                            [t("chat.ordQty"), s.quantity != null ? String(s.quantity) : "—"],
+                            [t("chat.ordMaxLoss"), s.max_loss_usdt != null ? `$${s.max_loss_usdt}` : "—"],
+                            ...(s.funding_rate != null ? [[t("chat.ordFunding"), `${(Number(s.funding_rate) * 100).toFixed(4)}%`] as [string, string]] : []),
+                            ...(s.change_pct != null ? [[t("chat.ordChange"), `${Number(s.change_pct) > 0 ? "+" : ""}${Number(s.change_pct).toFixed(2)}%`] as [string, string]] : []),
+                          ];
+                          return (
+                            <div className="mt-2 mb-2 rounded-md border border-gold/25 bg-gold/[0.05] divide-y divide-gold/10">
+                              <div className="px-2.5 py-1 font-mono text-[9.5px] tracking-wider text-gold/80">{t("chat.ordDetail")}</div>
+                              {rows.map(([k, v]) => (
+                                <div key={k} className="flex items-center justify-between px-2.5 py-1 font-mono text-[11px]">
+                                  <span className="text-ink-dim">{k}</span>
+                                  <span className="text-ink tabular">{v}</span>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })()}
                         <div className="flex flex-wrap gap-2">
                           <button onClick={() => approve(m.approval)} className="btn-gold"><I.Check size={12} /> {t("chat.confirmExecBtn")}</button>
                           {m.approval.action === "local_exec" && (
