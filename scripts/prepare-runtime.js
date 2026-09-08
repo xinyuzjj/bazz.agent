@@ -47,7 +47,7 @@ function proxyAgent() {
            port: Number(BAZZ_PROXY.replace(/^https?:\/\//, "").split(":")[1] || 7890) };
 }
 
-function downloadTo(url, dest, redirectsLeft = 5) {
+function downloadTo(url, dest, redirectsLeft = 5, attempt = 1) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const client = u.protocol === "http:" ? http : https;
@@ -65,9 +65,12 @@ function downloadTo(url, dest, redirectsLeft = 5) {
         if (!res.headers.location) return reject(new Error("redirect without location"));
         if (redirectsLeft <= 0) return reject(new Error("too many redirects"));
         const next = new URL(res.headers.location, url).toString();
-        return downloadTo(next, dest, redirectsLeft - 1).then(resolve, reject);
+        return downloadTo(next, dest, redirectsLeft - 1, attempt).then(resolve, reject);
       }
-      if (res.statusCode !== 200) return reject(new Error("HTTP " + res.statusCode + " for " + url));
+      if (res.statusCode !== 200) {
+        res.resume();
+        return reject(new Error("HTTP " + res.statusCode + " for " + url));
+      }
       const total = Number(res.headers["content-length"] || 0);
       const f = fs.createWriteStream(dest);
       let done = 0;
@@ -76,8 +79,15 @@ function downloadTo(url, dest, redirectsLeft = 5) {
       f.on("finish", () => { f.close(); if (total) process.stdout.write("\n"); resolve(dest); });
       f.on("error", reject);
     });
-    req.on("error", reject);
-    req.setTimeout(180000, () => req.destroy(new Error("download timeout")));
+    req.on("error", (e) => {
+      if (attempt < 3) {
+        console.warn(`  • 下载失败（${e.code || e.message}），${2 + attempt} 秒后第 ${attempt + 1} 次重试…`);
+        setTimeout(() => downloadTo(url, dest, redirectsLeft, attempt + 1).then(resolve, reject), (2 + attempt) * 1000);
+      } else {
+        reject(e);
+      }
+    });
+    req.setTimeout(300000, () => req.destroy(new Error("download timeout (300s)")));
   });
 }
 
@@ -109,12 +119,41 @@ async function main() {
 
   fs.mkdirSync(RUNTIME, { recursive: true });
 
-  // 1) 下载 Node
+  // 1) 下载 Node —— 多镜像兜底（GitHub Actions / 国内代理常有 DNS 瞬时失败）
   const nodeTmpZip = path.join(RUNTIME, `node-${NODE_VER}-win-x64.zip`);
-  const nodeUrl = `${NODE_DIST}/${NODE_VER}/node-${NODE_VER}-win-x64.zip`;
+  // 镜像列表：默认 https://nodejs.org/dist，备 npmmirror 镜像（Node 官方 binary）
+  const nodeMirrors = [
+    `${NODE_DIST}/${NODE_VER}/node-${NODE_VER}-win-x64.zip`,
+    `https://npmmirror.com/mirrors/node/${NODE_VER}/node-${NODE_VER}-win-x64.zip`,
+    `https://mirrors.ustc.edu.cn/node/${NODE_VER}/node-${NODE_VER}-win-x64.zip`,
+  ];
   if (!fs.existsSync(nodeTmpZip) || FORCE) {
-    log(`下载 Node ${NODE_VER} Windows x64（~30MB）：${nodeUrl}`);
-    await downloadTo(nodeUrl, nodeTmpZip);
+    let lastErr = null;
+    for (const url of nodeMirrors) {
+      log(`尝试镜像：${url}`);
+      try {
+        // 单镜像内 3 次重试，指数退避（2/4/8 秒）
+        let ok = false;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            if (fs.existsSync(nodeTmpZip)) fs.unlinkSync(nodeTmpZip);
+            await downloadTo(url, nodeTmpZip);
+            // 简单校验：zip 至少 5MB（Node win-x64 实际约 30MB）
+            const sz = fs.statSync(nodeTmpZip).size;
+            if (sz < 5 * 1024 * 1024) throw new Error(`zip 太小（${(sz/1024/1024).toFixed(1)} MB）疑似损坏`);
+            ok = true; break;
+          } catch (e) {
+            lastErr = e;
+            console.warn(`  • 镜像 ${new URL(url).host} 第 ${attempt} 次失败：${e.message || e.code || e}`);
+            if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 2000));
+          }
+        }
+        if (ok) { log(`✓ 镜像成功：${new URL(url).host}`); break; }
+      } catch (e) { lastErr = e; }
+    }
+    if (!fs.existsSync(nodeTmpZip) || fs.statSync(nodeTmpZip).size < 5 * 1024 * 1024) {
+      fail("所有镜像下载均失败：\n  " + (lastErr && (lastErr.message || lastErr.code || String(lastErr))));
+    }
   } else {
     log(`Node zip 已存在：${nodeTmpZip}`);
   }
