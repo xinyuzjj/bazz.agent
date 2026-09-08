@@ -1,10 +1,19 @@
-# BAZZ.AGENT v1.2.13
+# BAZZ.AGENT v1.2.14
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
 
 本地优先的币安 AI 交易桌面前端：妖币/点火雷达 + 多模型 Agent 对话 + 带止损止盈的交易方案 + CEX 连接 + Agentic Wallet 链上操作 + 广场发文。行情扫描与 Agent 记忆**不需要任何 API Key**；真实下单/写盘一律先确认后执行。
 
-## 🆕 v1.2.13 更新要点
+## 🆕 v1.2.14 更新要点（hotfix）
+
+1. **修一个从 v1.2.2 就潜伏的「Agent 钱包显示未安装」真因**：之前你看到 `CLI 未安装 / npm 缺失 + 一键安装` 按钮——其实是 PyInstaller 启动后 `BAZZ_APP_DIR` 被错误指向 `_internal/`，导致内置 Node + baw 的查找路径错位、`isfile(node.exe)` 永远 False、UI 回退到 v1.2.10 老分支。本版双保险：
+   - **launcher.py 改用 `sys.executable` 推导 exe 目录**（PyInstaller onedir 正确做法），从源头修对。
+   - **workspace.RUNTIME_DIR 加 app_root 兜底**——即使 launcher 哪天又被改错，向上找含 `BAZZ.AGENT.exe` 或 `resources/` 的目录再下 `resources/runtime`，保证永远找得到内置 runtime。
+2. **不丢你的数据**：老 launcher 把数据（state.db / 广场台账 / 附件）全写到了 `_internal/workspace/`，不在约定的 `ScoutBackend/workspace/`。首次启动会一次性把 `_internal/workspace/` 下的所有文件搬到新位置（写 `.migrated_v2` 标记防重跑），同时清空老目录。**升级完你的会话/记忆/广场台账一件不少。**
+3. **诊断信息更透明**：去掉 WalletView 之前对 `/api/wallet/runtime` 请求的静默 catch（失败就吞错），现在失败原因直接显示在 UI 上。Agent 钱包面板在 `runtime` 未走内置时新增一段「runtime 诊断（v1.2.14+）」折叠卡，明示 `APP_DIR / RUNTIME_DIR / NODE_EXE / BAW pkg / mode` 的真实值——下次出问题自己就能看到哪条路径不对。
+4. **顺手修了「更新 HTTP 403」的体感**：如果 `api.github.com` 触发速率限制（无鉴权 60 次/小时），更新面板已配好「打开下载页」浏览器兜底按钮（v1.2.13 就有），等一小时自动恢复；现在诊断卡也明示错误原因，不让人猜。
+
+## 🔄 v1.2.13 更新要点（历史）
 
 1. **更新弹窗不再反复打扰**：之前右下角更新卡会 5 分钟自动巡检 + 窗口切回焦点立即复查——"一直弹"。本版改为**每次启动只自动检查一次**：有新版本浮一张卡，点「稍后」后本会话不再出现；想再查就去设置页「软件更新」点「检查更新」（结果在面板内展示，不再弹浮窗）。已彻底移除定时轮询与焦点监听。
 2. **恢复「应用内自动更新」——不用再去网页下载覆盖**：上一版（v1.2.11）因旧自动更新链路在部分网络环境下失败，被砍成"浏览器下载页"。本版重做整条链并修好两个致命 bug：
@@ -58,7 +67,7 @@
 
 ## 🚀 快速开始（Windows 便携版）
 
-1. 下载并解压 `BAZZ.AGENT-v1.2.13-win32-x64-portable.zip`
+1. 下载并解压 `BAZZ.AGENT-v1.2.14-win32-x64-portable.zip`
 2. 运行 `BAZZ.AGENT.exe` —— 先播放完整 5+ 秒启动动画，随后自动生成 `workspace/` 工作区，运行数据全部收口其中
 3. 右上角配置 LLM（OpenAI 兼容端点，支持多模型 + 备份链），即可开始对话
 4. 行情 / 妖币雷达 / 市场扫描开箱即用，无需任何 Key

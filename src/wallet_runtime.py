@@ -71,23 +71,28 @@ def baw_invocation(extra_args=None):
 
 def wallet_runtime_status() -> dict:
     """给前端用的 runtime 状态报告。"""
+    import workspace  # 本地 import 避免循环
     node_ok = os.path.isfile(workspace.NODE_EXE)
     baw_entry = _resolve_baw_entry() if node_ok else ""
     baw_ok = bool(baw_entry) and os.path.isfile(baw_entry)
+    # 诊断字段：把 RUNTIME_DIR / 文件存在情况也吐出去，下次出问题不用猜
+    info = {
+        "runtime_dir": workspace.RUNTIME_DIR,
+        "node_exe": workspace.NODE_EXE,
+        "baw_package": workspace.BAW_PACKAGE,
+        "app_dir": workspace.APP_DIR,
+        "node_exists": node_ok,
+        "baw_exists": baw_ok,
+    }
     if node_ok and baw_ok:
         try:
             version = json.load(open(workspace.BAW_PACKAGE, encoding="utf-8")).get("version", "")
         except Exception:
             version = ""
-        return {
-            "bundled": True,
-            "node": True,
-            "baw": True,
-            "version": version,
-            "mode": "bundled",
-        }
+        return {**info, "bundled": True, "node": True, "baw": True, "version": version, "mode": "bundled"}
     # 回退 PATH
     return {
+        **info,
         "bundled": False,
         "node": shutil.which("node") is not None,
         "baw": shutil.which("baw") is not None,

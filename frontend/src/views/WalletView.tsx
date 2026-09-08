@@ -37,8 +37,16 @@ export function WalletView() {
 
   const load = async () => {
     try {
-      const [s, r] = await Promise.all([api.wallet(true), api.walletRuntime().catch(() => null)]);
-      setState(s); setRuntime(r); setErr("");
+      // 不再静默吞错：runtime 拉失败时把错误留住并 surface 到 UI，下次出问题一眼能看到。
+      const [s, r] = await Promise.allSettled([api.wallet(true), api.walletRuntime()]);
+      const sVal = s.status === "fulfilled" ? s.value : { error: s.reason?.message ?? String(s.reason) };
+      const rVal = r.status === "fulfilled" ? r.value : { error: r.reason?.message ?? String(r.reason) };
+      setState(sVal);
+      setRuntime(rVal);
+      const failed: string[] = [];
+      if (s.status === "rejected") failed.push("/api/wallet");
+      if (r.status === "rejected") failed.push("/api/wallet/runtime");
+      setErr(failed.length ? `runtime 探测失败：${failed.join(", ")}（${(r.status === "rejected" ? r.reason?.message : "") || ""}）` : "");
     }
     catch (e: any) { setErr(e?.message ?? String(e)); }
   };
@@ -163,6 +171,21 @@ export function WalletView() {
                 <StatusTile label={t("wallet.tileLogin")} ok={connected} text={connected ? t("wallet.signedIn") : t("wallet.signedOut")} warn={!connected && installed} />
                 <StatusTile label={t("wallet.tileKey")} ok text={t("wallet.mpcNoKey")} sub={t("wallet.binanceAppScan")} />
               </div>
+
+              {/* 诊断条：仅在 runtime 未走内置时显示，让人看清 RUNTIME_DIR / NODE_EXE / BAW 实际在哪、是否就位 */}
+              {!builtIn && runtime && (runtime.runtime_dir || runtime.error) && (
+                <details className="rounded-md border border-line bg-elevated/30 px-3 py-2 font-mono text-[10.5px] text-ink-dim" open>
+                  <summary className="cursor-pointer list-none select-none text-ink">⚙ runtime 诊断（v1.2.14+）</summary>
+                  <div className="mt-1.5 grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-0.5">
+                    {runtime.error && <div className="text-red break-all">error: {runtime.error}</div>}
+                    <div>APP_DIR: <span className="text-ink">{runtime.app_dir || "—"}</span></div>
+                    <div>RUNTIME_DIR: <span className="text-ink break-all">{runtime.runtime_dir || "—"}</span></div>
+                    <div>NODE_EXE: <span className={runtime.node_exists ? "text-green" : "text-red"}>{runtime.node_exists ? "✓" : "✗"} {runtime.node_exe || "—"}</span></div>
+                    <div>BAW pkg: <span className={runtime.baw_exists ? "text-green" : "text-red"}>{runtime.baw_exists ? "✓" : "✗"} {runtime.baw_package || "—"}</span></div>
+                    <div>mode: {runtime.mode || "—"} · node PATH: {runtime.node ? "✓" : "✗"} · baw PATH: {runtime.baw ? "✓" : "✗"}</div>
+                  </div>
+                </details>
+              )}
 
               {state?.status?.detail && !connected && (
                 <div className="rounded-lg border border-line bg-elevated/30 px-4 py-2.5 font-mono text-[11.5px] text-ink-dim">
