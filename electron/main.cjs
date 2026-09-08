@@ -29,6 +29,10 @@ let backendProc = null;
 let mainWin = null;
 let splashWin = null;                 // 启动动画窗（splash），主界面就绪后淡出销毁
 const SPLASH_SWAP_MS = 280;           // 动画窗淡出时长
+// splash 启动时间锚点；保底展示 = max(SPLASH_MIN_MS, 后端就绪时间)，
+// 否则后端拉得太快时动画会被 cut 掉看不到全貌
+let splashStartAt = 0;
+const SPLASH_MIN_MS = 5200;           // 至少播完 splash 主时序（约 4.8s）+ 短暂留白
 const SPLASH_FAILSAFE_MS = 60 * 1000; // 兜底：后端异常迟迟不就绪时也不让动画窗永远挂着
 
 // 来自 renderer preload 的窗口控制 IPC（frameless 模式下需要）
@@ -95,13 +99,26 @@ function createSplash() {
   splashWin.setMenuBarVisibility(false);
   splashWin.loadFile(path.join(__dirname, "splash.html"));
   splashWin.once("ready-to-show", () => {
-    if (splashWin && !splashWin.isDestroyed()) splashWin.show();
+    if (splashWin && !splashWin.isDestroyed()) {
+      splashWin.show();
+      splashStartAt = Date.now();   // 标记"用户实际看到动画"的瞬间，保底时长从这里算
+    }
   });
   splashWin.on("closed", () => { splashWin = null; });
 }
 
 // 主窗首帧就绪后：先显示主窗（盖住桌面），动画窗置顶淡出销毁，实现无闪衔接
+// 若主窗 ready 过早（后端拉得快），先等到 SPLASH_MIN_MS 再切换，保证动画完整播放
 function swapToMain() {
+  if (splashStartAt) {
+    const elapsed = Date.now() - splashStartAt;
+    const remain = SPLASH_MIN_MS - elapsed;
+    if (remain > 0 && mainWin && !mainWin.isDestroyed()) {
+      setTimeout(swapToMain, remain);
+      return;
+    }
+    splashStartAt = 0;                 // 标记已"放行"，避免 setTimeout 期间被再次触发
+  }
   if (mainWin && !mainWin.isDestroyed()) mainWin.show();
   if (splashWin && !splashWin.isDestroyed()) {
     try { splashWin.moveTop(); } catch {}
