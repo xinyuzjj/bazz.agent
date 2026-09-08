@@ -210,6 +210,12 @@ jobs:
             }
           }
 
+          # 关键：本步骤内最后一条原生命令（gh release download 找不到上一版 MANIFEST 资产时
+          # 会返回非零 $LASTEXITCODE）。PowerShell 7 中脚本没有显式 exit 时，进程退出码取
+          # 最后原生命令的退出码——哪怕下方逻辑全部走通也会被当成失败。
+          # 显式 exit 0，保证「无上一版清单 → 跳过差分包」这类预期场景永远视为成功。
+          exit 0
+
       - name: 发布 / 更新 GitHub Release（介绍 = 仓库 RELEASE_NOTES.md）
         shell: pwsh
         env:
