@@ -90,18 +90,23 @@ export function ChatView({
   const [walletOpen, setWalletOpen] = useState(false);
   const [walletBusy, setWalletBusy] = useState(false);
   const [walletAgent, setWalletAgent] = useState<any>(null);
+  const [walletRuntime, setWalletRuntime] = useState<any>(null);
   const [walletCex, setWalletCex] = useState<any>(null);
   const walletAgentConn = !!walletAgent?.status?.connected;
+  const walletAgentReady = !!(walletRuntime?.bundled || walletAgent?.cli?.installed);
   const walletCexCfg = !!walletCex?.configured;
 
   const loadWalletLite = useCallback(async () => {
     setWalletBusy(true);
     try {
-      const [a, c] = await Promise.all([
+      const [a, r, c] = await Promise.allSettled([
         api.wallet().catch(() => null),      // 后端 30s TTL 缓存，秒回
+        api.walletRuntime().catch(() => null),
         api.web3Status().catch(() => null),
       ]);
-      setWalletAgent(a); setWalletCex(c);
+      setWalletAgent(a.status === "fulfilled" ? a.value : null);
+      setWalletRuntime(r.status === "fulfilled" ? r.value : null);
+      setWalletCex(c.status === "fulfilled" ? c.value : null);
     } catch { /* 静默 */ } finally { setWalletBusy(false); }
   }, []);
 
@@ -1603,16 +1608,16 @@ export function ChatView({
                     <I.Hex size={13} className="text-gold" />
                     <span className="font-mono text-[12px] text-ink">{t("chat.agentWallet")}</span>
                     {walletAgent ? (
-                      <span className={`pill ${walletAgentConn ? "pill-green" : walletAgent?.cli?.installed ? "pill-red" : "pill-dim"}`}>
+                      <span className={`pill ${walletAgentConn ? "pill-green" : walletAgentReady ? "pill-red" : "pill-dim"}`}>
                         <span className={`dot ${walletAgentConn ? "dot-green live" : "dot-red"}`} />
-                        {walletAgentConn ? t("chat.walletSignedIn") : walletAgent?.cli?.installed ? t("chat.walletNotLogin") : t("chat.walletCliMissing")}
+                        {walletAgentConn ? t("chat.walletSignedIn") : walletAgentReady ? t("chat.walletNotLogin") : t("chat.walletCliMissing")}
                       </span>
                     ) : <span className="pill pill-dim">{t("chat.statusLoading")}</span>}
                     <button onClick={() => { setWalletOpen(false); onNav?.("wallet"); }} className="ml-auto btn-ghost text-[10.5px] py-1 text-gold">{t("chat.fullPage")} ↗</button>
                   </div>
                   {!walletAgent ? (
                     <div className="rounded-md border border-line bg-elevated/30 px-3 py-2 font-mono text-[10.5px] text-ink-mute">{t("chat.walletReading")}</div>
-                  ) : !walletAgent?.cli?.installed ? (
+                  ) : !walletAgentReady ? (
                     <div className="rounded-md border border-red/30 bg-red/5 px-3 py-2 font-mono text-[10.5px] text-red leading-relaxed">
                       {t("chat.walletBawMissing")}
                     </div>
@@ -1623,7 +1628,7 @@ export function ChatView({
                   ) : (
                     <>
                       <p className="text-[10.5px] text-ink-mute leading-relaxed">{t("chat.walletScanHintA")}<b className="text-gold">{t("chat.binanceApp")}</b>{t("chat.walletScanHintB")}</p>
-                      <AgentSigninCard compact onDone={() => loadWalletLite()} />
+                      <AgentSigninCard compact onDone={() => loadWalletLite()} runtimeBundled={!!walletRuntime?.bundled} />
                     </>
                   )}
                 </div>
