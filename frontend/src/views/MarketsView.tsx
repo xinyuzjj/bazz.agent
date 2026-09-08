@@ -75,6 +75,21 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
     try { setOv(await api.marketOverview()); } catch { /* 网络失败保持旧数据 */ }
   };
 
+  // —— 市场维度：现货(spot) / 合约(futures) / 股票化代币合约(equity) ——
+  type FutureRow = { symbol: string; price: number; change_pct: number; quote_volume: number; high: number; low: number; funding_rate: number };
+  type EquityRow = FutureRow & { name?: string; leverage?: string };
+  type FuturesData = { futures: FutureRow[]; equity: EquityRow[]; total_futures?: number; total_equity?: number; updated_at?: number; error?: string };
+  const [dim, setDim] = useState<"spot" | "futures" | "equity">("spot");
+  const [fd, setFd] = useState<FuturesData | null>(null);
+  const [fErr, setFErr] = useState("");
+  const [fq, setFq] = useState("");
+  const [fLimit, setFLimit] = useState(60);
+  const [fMode, setFMode] = useState<"all" | "gain" | "loser" | "funding">("all");
+  const loadFutures = async () => {
+    try { const d = await api.marketFutures(); if (d?.error) setFErr(d.error); else setFErr(""); setFd(d ?? null); }
+    catch (e: any) { setFErr(e?.message ?? String(e)); }
+  };
+
   // —— 妖币雷达：启动前(ignition) / 起飞中(takeoff) 双模式 ——
   const [mode, setMode] = useState<"ignition" | "takeoff">("ignition");
   const [ign, setIgn] = useState<RadarRow[]>([]);
@@ -100,8 +115,8 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
     finally { setMLoading(false); }
   };
   useEffect(() => {
-    load(); loadOverview();
-    const t = setInterval(() => { load(); loadOverview(); }, 30_000);
+    load(); loadOverview(); loadFutures();
+    const t = setInterval(() => { load(); loadOverview(); loadFutures(); }, 30_000);
     return () => clearInterval(t);
   }, []);
   // 每秒 tick，驱动「N 秒前」实时刷新角标
@@ -134,6 +149,37 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
   const visible = rows.slice(0, limit);
   const total = data?.total ?? rows.length;
   const up = (n: number) => n >= 0;
+
+  // —— 合约 / 股票化代币派生的展示数据 ——
+  const futuresRows: FutureRow[] = useMemo(() => {
+    const base = fd?.futures ?? [];
+    let r = base;
+    if (fMode === "gain") r = r.filter((x) => x.change_pct > 0);
+    else if (fMode === "loser") r = r.filter((x) => x.change_pct < 0);
+    else if (fMode === "funding") r = r.filter((x) => Math.abs(x.funding_rate) >= 0.0007);
+    if (fq.trim()) {
+      const s = fq.trim().toLowerCase();
+      r = r.filter((x) => x.symbol.toLowerCase().includes(s) || x.symbol.replace(/USDT$/, "").toLowerCase().includes(s));
+    }
+    return r.slice(0, fLimit);
+  }, [fd, fMode, fq, fLimit]);
+  const futuresBreadth = useMemo(() => {
+    const fs = fd?.futures ?? [];
+    const up = fs.filter((x) => x.change_pct > 0).length;
+    const down = fs.filter((x) => x.change_pct < 0).length;
+    const crowded = fs.filter((x) => Math.abs(x.funding_rate) >= 0.001).length;
+    const liq = fs.slice().sort((a, b) => b.quote_volume - a.quote_volume).slice(0, 3);
+    return { up, down, crowded, total: fs.length, liq };
+  }, [fd]);
+  const equityRows: EquityRow[] = useMemo(() => fd?.equity ?? [], [fd]);
+  const equityMovers = useMemo(() => {
+    const e = fd?.equity ?? [];
+    const sorted = [...e].sort((a, b) => b.change_pct - a.change_pct);
+    return {
+      gainers: sorted.filter((x) => x.change_pct > 0).slice(0, 3),
+      losers: [...sorted].reverse().filter((x) => x.change_pct < 0).slice(0, 3),
+    };
+  }, [fd]);
 
   const switchTab = (t: "all" | "gainers" | "losers") => {
     setTab(t);
@@ -185,13 +231,190 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
           <I.Market className="text-gold" size={20} />
           <span className="font-mono text-[15px] font-bold tracking-wide text-ink">{t("markets.title")}</span>
           <span className="pill pill-green"><span className="dot dot-green live" /> {t("markets.live")}</span>
-          <span className="pill pill-dim">{data?.quote ?? "USDT"} {t("markets.spotPairs", { total })}</span>
+          <span className="pill pill-dim">
+            {dim === "equity"
+              ? `${fd?.total_equity ?? 0} ${t("markets.dimEquityTag")}`
+              : dim === "futures"
+                ? `${fd?.total_futures ?? 0} ${t("markets.futPerp")}`
+                : `${data?.quote ?? "USDT"} ${t("markets.spotPairs", { total })}`}
+          </span>
         </div>
         <span className="prefix ml-auto">{t("markets.autoRefreshPrefix")} <span className="text-ink-dim tabular">{updated}</span></span>
-        <button onClick={() => { load(); loadOverview(); }} className="btn-ghost py-1 px-2.5 text-[12px]"><I.Refresh size={11} /> {t("markets.refresh")}</button>
+        <button onClick={() => { load(); loadOverview(); loadFutures(); }} className="btn-ghost py-1 px-2.5 text-[12px]"><I.Refresh size={11} /> {t("markets.refresh")}</button>
       </div>
 
-      {/* 妖币雷达：启动前·埋伏（量在价先） / 起飞中·追涨高风险 */}
+      {/* 维度切换：现货 / 合约 / 股票化代币合约 */}
+      <div className="flex items-center gap-1.5 rounded-lg bg-elevated/50 border border-line p-1 w-fit">
+        {([
+          ["spot", t("markets.dimSpot"), I.Market],
+          ["futures", t("markets.dimFutures"), I.Bolt],
+          ["equity", t("markets.dimEquity"), I.Star],
+        ] as const).map(([key, label, Icon]) => (
+          <button key={key} onClick={() => setDim(key)}
+            className={`px-4 py-1.5 rounded-md font-mono text-[12px] tracking-wide transition-colors border flex items-center gap-1.5
+              ${dim === key ? "bg-gold text-canvas border-gold font-semibold shadow-sm" : "border-transparent text-ink-dim hover:text-ink hover:bg-line/30"}`}>
+            <Icon size={13} /> {label}
+          </button>
+        ))}
+      </div>
+
+      {/* 股票化代币合约板块（商品化/传统资产永续） */}
+      {dim === "equity" && (
+        <div className="space-y-4">
+          <div className="glass p-4" style={{ borderRadius: 12 }}>
+            <div className="flex items-center gap-2 mb-1">
+              <I.Star size={14} className="text-gold" />
+              <span className="font-mono text-[13px] tracking-wider text-ink">{t("markets.equityTitle")}</span>
+              <span className="pill pill-dim text-[10px]">{fd?.total_equity ?? 0} · {t("markets.equityTag")}</span>
+            </div>
+            <p className="text-[11px] text-ink-dim font-mono leading-relaxed">{t("markets.equityHint")}</p>
+            {fErr && <div className="rounded-md border border-red/40 bg-red/5 px-3 py-1.5 text-[11.5px] text-red font-mono mt-2">{fErr}</div>}
+            <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {equityRows.length === 0 && (
+                <div className="col-span-full p-6 text-center text-ink-dim text-[12.5px] font-mono">{t("markets.noData")}</div>
+              )}
+              {equityRows.map((e) => {
+                const cfg = e.leverage ? { label: `≤${e.leverage}x`, cls: "pill-gold" } : { label: "永续", cls: "pill-dim" };
+                return (
+                  <button key={e.symbol} onClick={() => onTrade?.(e.symbol)}
+                    className="group flex flex-col gap-1.5 rounded-xl border border-line bg-card/40 p-3 text-left hover:border-gold/50 hover:shadow-sm transition-all">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono font-semibold text-[15px] text-ink group-hover:text-gold">{baseName(e.symbol)}</span>
+                          <span className="pill pill-dim text-[9px]">/USDT</span>
+                          <span className={`pill ${cfg.cls} text-[9px]`}>{cfg.label}</span>
+                        </div>
+                        <div className="font-mono text-[10px] text-ink-mute truncate mt-0.5" title={e.name}>{e.name ?? "—"}</div>
+                      </div>
+                      <span className={`font-mono tabular text-[14px] font-semibold ${e.change_pct >= 0 ? "up" : "down"}`}>
+                        {e.change_pct >= 0 ? "+" : ""}{e.change_pct.toFixed(2)}%
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between font-mono tabular text-[12px]">
+                      <span className="text-ink">{fmtPrice(e.price)}</span>
+                      <span className={`text-[11px] ${e.change_pct >= 0 ? "up" : "down"}`}>24h</span>
+                    </div>
+                    <div className="flex items-center justify-between font-mono text-[10.5px] text-ink-dim">
+                      <span>{fmtVol(e.quote_volume)}</span>
+                      <span className={Math.abs(e.funding_rate) >= 0.001 ? "text-gold" : "text-ink-mute"}>
+                        {t("markets.funding")} {fmtRate(e.funding_rate)}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 股票领涨/领跌快览 */}
+          {(equityMovers.gainers.length > 0 || equityMovers.losers.length > 0) && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {(["gainers", "losers"] as const).map((s) => {
+                const list = equityMovers[s];
+                if (!list.length) return null;
+                return (
+                  <div key={s} className="glass p-3 flex gap-2 items-center">
+                    <span className={`font-mono text-[10px] tracking-wider px-2 py-1 rounded-md ${s === "gainers" ? "text-green bg-green/10" : "text-red bg-red/10"}`}>
+                      {s === "gainers" ? t("markets.dimEquityGain") : t("markets.dimEquityLoss")}
+                    </span>
+                    <div className="flex-1 flex gap-3 overflow-hidden">
+                      {list.map((e, i) => (
+                        <button key={e.symbol} onClick={() => onTrade?.(e.symbol)} className="flex items-center gap-1 font-mono text-[11.5px] hover:text-gold">
+                          <span className="text-ink">{baseName(e.symbol)}</span>
+                          <span className={s === "gainers" ? "up" : "down"}>{e.change_pct >= 0 ? "+" : ""}{e.change_pct.toFixed(1)}%</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 合约（USDT-M 永续）板块 */}
+      {dim === "futures" && (
+        <div className="space-y-4">
+          {/* 合约大盘速览 */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="glass p-3 flex flex-col justify-center" style={{ borderRadius: 12 }}>
+              <span className="font-mono text-[10px] tracking-wider text-ink-mute">{t("markets.futTotal")}</span>
+              <span className="font-mono text-[22px] text-ink font-semibold mt-0.5">{futuresBreadth.total}</span>
+            </div>
+            <div className="glass p-3 flex flex-col justify-center" style={{ borderRadius: 12 }}>
+              <span className="font-mono text-[10px] tracking-wider text-ink-mute">{t("markets.futUp")}</span>
+              <span className="font-mono text-[22px] up font-semibold mt-0.5">{futuresBreadth.up}</span>
+            </div>
+            <div className="glass p-3 flex flex-col justify-center" style={{ borderRadius: 12 }}>
+              <span className="font-mono text-[10px] tracking-wider text-ink-mute">{t("markets.futDown")}</span>
+              <span className="font-mono text-[22px] down font-semibold mt-0.5">{futuresBreadth.down}</span>
+            </div>
+            <div className="glass p-3 flex flex-col justify-center" style={{ borderRadius: 12 }}>
+              <span className="font-mono text-[10px] tracking-wider text-ink-mute">{t("markets.futCrowded")}</span>
+              <span className="font-mono text-[22px] text-gold font-semibold mt-0.5">{futuresBreadth.crowded}</span>
+            </div>
+          </div>
+
+          <div className="glass overflow-hidden" style={{ borderRadius: 12 }}>
+            <div className="flex items-center gap-2 px-4 pt-3 pb-1 flex-wrap">
+              <I.Bolt size={13} className="text-gold" />
+              <span className="font-mono text-[12px] tracking-wider text-ink">{t("markets.futuresBoard")}</span>
+              <span className="pill pill-dim text-[10px]">USDT-M · {t("markets.futPerp")}</span>
+              {fErr && <span className="pill pill-red text-[10px]">{fErr}</span>}
+              <div className="ml-auto flex items-center gap-1.5">
+                {([["all", t("markets.futAll")], ["gain", t("markets.futGain")], ["loser", t("markets.futLoser")], ["funding", t("markets.futFunding")]] as const).map(([k, label]) => (
+                  <button key={k} onClick={() => { setFMode(k); setFLimit(60); }}
+                    className={`px-2.5 py-1 rounded-md font-mono text-[10.5px] tracking-wider transition-colors border
+                      ${fMode === k ? "bg-elevated text-gold border-line" : "border-transparent text-ink-dim hover:text-ink"}`}>
+                    {label}
+                  </button>
+                ))}
+                <div className="relative ml-1">
+                  <I.Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-mute" />
+                  <input value={fq} onChange={(e) => { setFq(e.target.value); setFLimit(60); }} placeholder={t("markets.searchPlaceholder")}
+                    className="field pl-7 w-40 py-1" />
+                </div>
+              </div>
+            </div>
+            {/* 表头 */}
+            <div className="grid items-center px-4 py-2 mt-1.5 border-b border-line text-[10px] font-mono tracking-[0.08em] text-ink-dim"
+              style={{ gridTemplateColumns: "1.6fr 1fr 1fr 1.2fr 1fr" }}>
+              <div>{t("markets.h.symbol")}</div><div>{t("markets.h.price")}</div><div>{t("markets.h.change")}</div><div>{t("markets.h.quotevol")}</div><div>{t("markets.h.funding")}</div>
+            </div>
+            {futuresRows.length === 0 ? (
+              <div className="p-8 text-center text-ink-dim text-[12.5px] font-mono">{t("markets.noData")}</div>
+            ) : futuresRows.map((r) => (
+              <div key={r.symbol} onClick={() => onTrade?.(r.symbol)}
+                className="grid items-center px-4 py-2.5 border-b border-line/60 last:border-0 hover:bg-elevated/40 transition-colors cursor-pointer group"
+                style={{ gridTemplateColumns: "1.6fr 1fr 1fr 1.2fr 1fr" }}>
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="font-mono font-semibold text-ink group-hover:text-gold">{baseName(r.symbol)}</span>
+                  <span className="font-mono text-[10px] text-ink-mute">/USDT</span>
+                  <button onClick={(e) => { e.stopPropagation(); onAnalyze?.(r.symbol); }}
+                    className="btn-ghost px-1.5 py-0.5 text-[9.5px]" title={t("markets.analyze")}><I.Search size={9} /> {t("markets.analyze")}</button>
+                </div>
+                <div className="font-mono tabular text-ink text-[12.5px]">{fmtPrice(r.price)}</div>
+                <div className={`font-mono tabular text-[12.5px] ${r.change_pct >= 0 ? "up" : "down"}`}>{r.change_pct >= 0 ? "+" : ""}{r.change_pct.toFixed(2)}%</div>
+                <div className="font-mono tabular text-ink-dim text-[11.5px]">{fmtVol(r.quote_volume)}</div>
+                <div className={`font-mono tabular text-[11.5px] ${Math.abs(r.funding_rate) >= 0.001 ? "text-gold font-semibold" : r.funding_rate >= 0 ? "text-green" : "text-red"}`}>{fmtRate(r.funding_rate)}</div>
+              </div>
+            ))}
+            {(fd?.futures?.length ?? 0) > fLimit && (
+              <div className="px-4 py-2 border-t border-line text-center">
+                <button onClick={() => setFLimit((n) => n + 60)} className="text-gold font-mono text-[11px] hover:underline">
+                  {t("markets.loadMore", { n: 60 })}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 现货行情（妖币雷达 + 综述 + 异动 + 全市场） */}
+      {dim === "spot" && (
+      <div className="space-y-4">
       <div className="glass overflow-hidden" style={{ borderRadius: 12 }}>
         <div className="px-4 pt-3.5 pb-1">
           <div className="flex items-center gap-2 flex-wrap">
@@ -577,6 +800,8 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
             </div>
           </div>
         </div>
+      )}
+      </div>
       )}
 
       {/* Data freshness hint */}

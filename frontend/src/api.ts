@@ -32,6 +32,7 @@ export const api = {
   marketMonsters: (force = false) => jget("/market/monsters" + (force ? "?force=1" : "")),
   marketIgnition: (force = false) => jget("/market/ignition" + (force ? "?force=1" : "")),
   marketOverview: () => jget("/market/overview"),
+  marketFutures: () => jget("/market/futures"),
   conversations: (includeArchived = false) =>
     jget("/conversations" + (includeArchived ? "?include_archived=1" : "")),
   rooms: () => jget("/rooms"),

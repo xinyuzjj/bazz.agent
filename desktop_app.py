@@ -127,6 +127,24 @@ def api_market_monsters(force: int = 0):
         return {"coins": [], "scanned": 0, "candidates": 0, "error": str(e)}
 
 
+@app.get("/api/market/futures")
+def api_market_futures():
+    """合约（USDT-M 永续）+ 股票化代币合约行情，一次返回。
+    futures: 全市场 U 本位永续（按成交额降序，附资金费率）
+    equity: 股票化代币/传统资产永续合约定制板
+    """
+    from scanner import futures_snapshot, equity_board
+    try:
+        return {"futures": futures_snapshot(),
+                "equity": equity_board(),
+                "total_futures": len(futures_snapshot()),
+                "total_equity": len(equity_board()),
+                "quote": "USDT", "market": "perpetual",
+                "updated_at": int(time.time())}
+    except Exception as e:
+        return {"futures": [], "equity": [], "error": str(e)}
+
+
 @app.get("/api/market/ignition")
 def api_market_ignition(force: int = 0):
     """启动前·埋伏窗口：低位放量吸筹（点火前）——主推的妖币提前发现模式。"""

@@ -277,6 +277,115 @@ def volume_heat(top: int = 15, quote: str = "USDT") -> list:
             for r in rows[:top]]
 
 
+# ================= 合约（USDT-M 永续） + 股票化代币合约 =================
+FUTURES_TTL = 20.0  # 秒
+_futures_cache = {"ts": 0.0, "rows": []}
+
+
+def futures_snapshot(use_cache: bool = True) -> list:
+    """U 本位永续合约全市场 24h 快照（/fapi/v1/ticker/24hr，无鉴权）。
+    只保留成交额>0 的 USDT 永续对，按成交额降序，并附资金费率与标记价格。
+    失败回退旧缓存。TTL ~20s，前端内嵌 30s 轮询不击穿接口。
+    """
+    now = time.time()
+    if use_cache and _futures_cache["rows"] and now - _futures_cache["ts"] < FUTURES_TTL:
+        return list(_futures_cache["rows"])
+    try:
+        r = _session.get(f"{FAPI}/fapi/v1/ticker/24hr", timeout=15)
+        r.raise_for_status()
+        payload = r.json()
+    except Exception:
+        return list(_futures_cache["rows"])
+    rates = get_funding_rates()
+    out = []
+    for d in payload:
+        sym = str(d.get("symbol", ""))
+        if not sym.endswith("USDT") or len(sym) <= len("USDT"):
+            continue
+        try:
+            price = float(d.get("lastPrice") or 0)
+            if price <= 0:
+                continue
+            out.append({
+                "symbol": sym,
+                "price": price,
+                "change_pct": float(d.get("priceChangePercent") or 0),
+                "quote_volume": float(d.get("quoteVolume") or 0),
+                "high": float(d.get("highPrice") or 0),
+                "low": float(d.get("lowPrice") or 0),
+                "funding_rate": float(rates.get(sym, 0) or 0),
+                "side": "future",
+                "kind": "futures",
+            })
+        except (TypeError, ValueError):
+            continue
+    out.sort(key=lambda x: x["quote_volume"], reverse=True)
+    _futures_cache["ts"] = now
+    _futures_cache["rows"] = out
+    return list(out)
+
+
+# 币安 U 本位「股票化代币/传统资产(TradFi)」永续合约 —— 标的为美股/ETF。
+# 逐品种白名单（symbol → 展示名/公司），与实时 fapi ticker 交叉匹配，只展现在线合约。
+EQUITY_PERPS: dict = {
+    # 大盘科技/金融等（近年陆续上线）
+    "TSLAUSDT": "Tesla 特斯拉 · 纳斯达克:TSLA",
+    "AAPLUSDT": "Apple 苹果 · 纳斯达克:AAPL",
+    "MSFTUSDT": "Microsoft 微软 · 纳斯达克:MSFT",
+    "NVDAUSDT": "NVIDIA 英伟达 · 纳斯达克:NVDA",
+    "AMZNUSDT": "Amazon 亚马逊 · 纳斯达克:AMZN",
+    "GOOGLUSDT": "Alphabet 谷歌 · 纳斯达克:GOOGL",
+    "METAUSDT": "Meta · 纳斯达克:META",
+    "NFLXUSDT": "Netflix 奈飞 · 纳斯达克:NFLX",
+    "COINUSDT": "Coinbase · 纳斯达克:COIN",
+    "AMDUSDT": "AMD · 纳斯达克:AMD",
+    "INTCUSDT": "Intel 英特尔 · 纳斯达克:INTC",
+    "QCOMUSDT": "Qualcomm 高通 · 纳斯达克:QCOM",
+    "MRVLUSDT": "Marvell 迈威尔 · 纳斯达克:MRVL",
+    "WMTUSDT": "Walmart 沃尔玛 · 纽交所:WMT",
+    "JPMUSDT": "JPMorgan 摩根大通 · 纽交所:JPM",
+    "VUSDT": "Visa · 纽交所:V",
+    "BRKBUSDT": "Berkshire Hathaway B · 纽交所:BRK.B",
+    "MRNAUSDT": "Moderna · 纳斯达克:MRNA",
+    "DJTUSDT": "Trump Media · 纳斯达克:DJT",
+    # 杠杆 ETF / 标的（不同国家的标的，名字尽量保留交易所原码）
+    "SOXLUSDT": "Direxion 半导体 3X ETF",
+    "INTWUSDT": "GraniteShares 2X Long INTC ETF",
+    "SNXXUSDT": "Tradr 2X Long SNDK ETF",
+    "SKUUUSDT": "GraniteShares 2X Long SK Hynix ETF",
+    "SKDDUSDT": "GraniteShares 2X Short SK Hynix ETF",
+    "RAMUSDT": "Roundhill 2X Long DRAM ETF",
+    "XBIUSDT": "SPDR S&P 生物科技 ETF",
+    # 其余个股/小型股
+    "BOTUSDT": "RoboStrategy · 机器人",
+    "WENUSDT": "Wendy's 温蒂 · 纳斯达克:WEN",
+    "BNCUSDT": "CEA Industries",
+    "FWDIUSDT": "Forward Industries",
+    "CRWVUSDT": "CoreWeave · 云/AI 计算",
+}
+EQUITY_LEVERAGE = {  # 已知杠杆上限（凑齐展示信息用；缺失默认 --）
+    "TSLAUSDT": 5, "AAPLUSDT": 5, "NVDAUSDT": 5, "MSFTUSDT": 5,
+    "AMZNUSDT": 5, "GOOGLUSDT": 5, "COINUSDT": 5, "BOTUSDT": 25,
+    "WENUSDT": 25, "XBIUSDT": 25, "INTWUSDT": 25, "SNXXUSDT": 25,
+    "BNCUSDT": 10, "FWDIUSDT": 10,
+}
+
+
+def equity_board() -> list:
+    """股票化代币合约行情板：从合约快照里过滤出 EQUITY_PERPS 白名单，附展示名与杠杆上限。"""
+    live = {x["symbol"]: x for x in futures_snapshot()}
+    rows = []
+    for sym, name in EQUITY_PERPS.items():
+        d = live.get(sym)
+        if not d:
+            continue
+        rows.append({**d, "name": name,
+                     "leverage": EQUITY_LEVERAGE.get(sym, ""),
+                     "side": "equity", "kind": "equity"})
+    rows.sort(key=lambda x: x["quote_volume"], reverse=True)
+    return rows
+
+
 # ================= 妖币雷达（Monster Radar） =================
 # 两种模式（避免"涨完才提示"的追高陷阱）：
 #   1) 启动前·埋伏窗口 (ignition)：量在价先 —— 低位横盘/阴跌后温和放量、
