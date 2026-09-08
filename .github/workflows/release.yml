@@ -103,6 +103,23 @@ jobs:
           node build-desktop.js
           if (-not (Test-Path $env:BAZZ_ZIP)) { throw "便携 zip 未生成: $env:BAZZ_ZIP" }
 
+      - name: 安装 Inno Setup 6
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: 构建 setup.exe 安装包
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe 未找到" }
+          & $iscc `
+            /DSourceDir="$env:BAZZ_STAGE/dist_desktop/BAZZ.AGENT-win32-x64" `
+            /DMyAppVersion="$env:BAZZ_VERSION" `
+            /Ddistout="$env:BAZZ_STAGE/dist_desktop" `
+            "$env:BAZZ_PROJ/installer.iss"
+          $setup = "$env:BAZZ_STAGE/dist_desktop/BAZZ.AGENT-v$env:BAZZ_VERSION-setup.exe"
+          if (-not (Test-Path $setup)) { throw "setup.exe 未生成: $setup" }
+
       - name: 发布 / 更新 GitHub Release（介绍 = 仓库 RELEASE_NOTES.md）
         shell: pwsh
         env:
@@ -110,13 +127,15 @@ jobs:
         run: |
           $tag = $env:BAZZ_TAG
           $zip = $env:BAZZ_ZIP
+          $setup = "$env:BAZZ_STAGE/dist_desktop/BAZZ.AGENT-v$env:BAZZ_VERSION-setup.exe"
+          $assets = @($zip, $setup)
           # 优先用仓库内人工维护的产品介绍（更有可读性）；缺失时退回 GitHub 自动生成的 commit 摘要
           $notesFile = Join-Path $env:GITHUB_WORKSPACE "RELEASE_NOTES.md"
           if (-not (Test-Path $notesFile)) { $notesFile = $null }
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
             Write-Host "Release $tag 已存在 → 覆盖上传资产 + 同步介绍"
-            gh release upload $tag $zip --repo $env:GITHUB_REPOSITORY --clobber
+            foreach ($a in $assets) { gh release upload $tag $a --repo $env:GITHUB_REPOSITORY --clobber }
             if ($LASTEXITCODE -ne 0) { throw "release upload 失败" }
             if ($notesFile) {
               gh release edit $tag --repo $env:GITHUB_REPOSITORY --notes-file $notesFile
@@ -124,10 +143,10 @@ jobs:
           } else {
             Write-Host "创建 Release $tag（介绍 = RELEASE_NOTES.md）"
             if ($notesFile) {
-              gh release create $tag $zip --repo $env:GITHUB_REPOSITORY `
+              gh release create $tag $zip $setup --repo $env:GITHUB_REPOSITORY `
                 --title "BAZZ.AGENT $tag" --notes-file $notesFile
             } else {
-              gh release create $tag $zip --repo $env:GITHUB_REPOSITORY `
+              gh release create $tag $zip $setup --repo $env:GITHUB_REPOSITORY `
                 --title "BAZZ.AGENT $tag" --generate-notes
             }
             if ($LASTEXITCODE -ne 0) { throw "release create 失败" }

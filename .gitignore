@@ -24,6 +24,7 @@ frontend/vite.config.ts.timestamp-*
 runtime/
 scripts_tmp/
 frontend/scout-bundle/
+dist_desktop/
 
 # ---- Local secrets & state (PRIVATE — DO NOT COMMIT) ----
 .env
