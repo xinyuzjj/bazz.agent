@@ -73,6 +73,16 @@ jobs:
           npm run build
           if (-not (Test-Path "node_modules/electron/dist/electron.exe")) { throw "electron dist 缺失" }
 
+      - name: 准备内置 runtime（v1.2.11 起：Node 20 LTS + @binance/agentic-wallet，约 +100MB）
+        shell: pwsh
+        run: |
+          # stamp 已存在时自动跳过；FORCE=1 强制重下。Windows 默认走代理下载（GitHub raw / nodejs.org / npm registry）
+          node scripts/prepare-runtime.js
+          if (-not (Test-Path "runtime/node/node.exe")) { throw "runtime 准备失败：未生成 runtime/node/node.exe" }
+          if (-not (Test-Path "runtime/node_modules/@binance/agentic-wallet/package.json")) { throw "runtime 准备失败：未安装 @binance/agentic-wallet" }
+          Write-Host "runtime 就绪："
+          Get-ChildItem runtime | Select-Object Name, @{N="MB";E={[math]::Round((Get-ChildItem $_.FullName -Recurse | Measure-Object Length -Sum).Sum/1MB,0)}}
+
       - name: PyInstaller 冻后端
         shell: pwsh
         run: |

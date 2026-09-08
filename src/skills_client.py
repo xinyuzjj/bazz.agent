@@ -286,8 +286,15 @@ def run_skill(skill_name: str, args: str = "") -> dict:
 
     try:
         if skill_name in _BAW_SKILLS:
-            base = ["baw"]
+            # v1.2.11：baw 调用统一走 wallet_runtime.baw_invocation() 解析（内置 runtime 优先，回退 PATH）
+            import wallet_runtime
             toks = shlex.split(arg_s, posix=True) if arg_s else ["wallet", "status"]
+            base, mode = wallet_runtime.baw_invocation(toks)
+            if mode == "missing":
+                guide = _read_skill_guide(skill_name, limit=50)
+                return {"status": "error", "skill": skill_name,
+                        "stdout": "", "stderr": "baw 不可用：APP 内置 runtime 未就绪且 PATH 也未找到 baw。",
+                        "returncode": 127, "note": "runtime_missing", "guide": guide}
         elif os.path.isfile(cli):
             if _cli_uses_meta_url_dispatch(cli):
                 launcher = os.path.join(os.path.dirname(os.path.abspath(__file__)), "skill_launcher.mjs")

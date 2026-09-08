@@ -3,21 +3,23 @@ import { api } from "../api";
 import { useT } from "../i18n/i18n";
 
 /* ============================================================
- * UpdatePanel —— 设置页「软件更新」区块
- *   进入即自动检查；展示 当前/最新版本 → 有新版本时下载（进度）
- *   → 重启并更新（拿 Electron 主进程 pid → 后端生成脱离更新脚本
- *   → 关窗触发整目录替换重启）
+ * UpdatePanel —— 设置页「软件更新」区块（v1.2.11 全新设计）
+ *   旧版：自动下载 zip + 整目录替换 + 强制关窗重启（多次在中国代理环境失败）
+ *   新版：只检查版本 + 用系统默认浏览器打开 GitHub 下载页
+ *     · 已是最新 → 绿条「已是最新 vX.Y.Z」
+ *     · 有新版本 → 金条「发现新版本 vX.Y.Z」+ 「打开下载页」大按钮
+ *     · 检查失败 → 红条 + 原因 + 重试 + 「打开下载页」兜底
+ *   任何状态下都展示「打开下载页」按钮，去不去更新用户说了算
  * ============================================================ */
 
 type St =
   | { s: "init"; cur: string }
   | { s: "checking"; cur: string }
-  | { s: "none"; cur: string; latest: string }
-  | { s: "avail"; cur: string; info: any }
-  | { s: "dl"; cur: string; done: number; total: number; zip: string; info: any }
-  | { s: "ready"; cur: string; zip: string; info: any }
-  | { s: "applying"; cur: string }
-  | { s: "err"; cur: string; msg: string };
+  | { s: "none"; cur: string; latest: string; html_url: string }
+  | { s: "avail"; cur: string; latest: string; html_url: string; published_at: string; notes: string }
+  | { s: "err"; cur: string; msg: string; html_url: string };
+
+const FALLBACK_URL = "https://github.com/xinyuzjj/bazz.agent/releases/latest";
 
 export default function UpdatePanel() {
   const t = useT();
@@ -28,76 +30,28 @@ export default function UpdatePanel() {
     if (busyRef.current) return;
     busyRef.current = true;
     try {
-      const r = await api.updateCheck();
+      const r: any = await api.updateCheck();
       const cur = r?.current ?? "";
-      if (!r?.ok) { setSt({ s: "err", cur, msg: r?.error || t("update.failed") }); return; }
-      if (r.available) setSt({ s: "avail", cur, info: r });
-      else setSt({ s: "none", cur, latest: r.latest ?? "" });
+      const html = r?.html_url || FALLBACK_URL;
+      if (!r?.ok) { setSt({ s: "err", cur, msg: r?.error || t("update.failed"), html_url: html }); return; }
+      if (r.available) {
+        setSt({ s: "avail", cur, latest: r.latest ?? "", html_url: html, published_at: r.published_at ?? "", notes: r.notes ?? "" });
+      } else {
+        setSt({ s: "none", cur, latest: r.latest ?? cur, html_url: html });
+      }
     } catch (e: any) {
-      setSt((p) => ({ s: "err", cur: p.cur, msg: String(e?.message ?? e) }));
+      setSt((p) => ({ s: "err", cur: p.cur, msg: String(e?.message ?? e), html_url: FALLBACK_URL }));
     } finally { busyRef.current = false; }
   }, [t]);
 
   useEffect(() => { doCheck(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
-  // 下载中轮询进度
-  useEffect(() => {
-    if (st.s !== "dl") return;
-    const poll = setInterval(async () => {
-      try {
-        const s = await api.updateStatus();
-        if (s?.error) { setSt((p) => ({ s: "err", cur: p.cur, msg: s.error })); return; }
-        if (s?.ready) {
-          setSt((p) => (p.s === "dl"
-            ? { s: "ready", cur: p.cur, zip: s.path || p.zip, info: p.info ?? null }
-            : p));
-          return;
-        }
-        if (s?.active) {
-          setSt((p) => (p.s === "dl"
-            ? { ...p, done: s.done || 0, total: s.total || 0, zip: s.path || p.zip }
-            : p));
-        }
-      } catch { /* 忽略单次轮询失败 */ }
-    }, 700);
-    return () => clearInterval(poll);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [st.s]);
+  const openDownloadPage = useCallback(() => {
+    const url = (st as any).html_url || FALLBACK_URL;
+    api.openExternal(url);
+  }, [st]);
 
-  const startDownload = useCallback(async () => {
-    setSt((p) => (p.s === "avail"
-      ? { s: "dl", cur: p.cur, done: 0, total: 0, zip: "", info: p.info }
-      : p));
-    const url = st.s === "avail" ? st.info?.asset?.url : "";
-    if (!url) return;
-    try {
-      const r = await api.updateDownload(url);
-      if (r?.started === false && r?.error) setSt((p) => ({ s: "err", cur: p.cur, msg: r.error }));
-    } catch (e: any) { setSt((p) => ({ s: "err", cur: p.cur, msg: String(e?.message ?? e) })); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [st.s]);
-
-  const apply = useCallback(async (zip: string) => {
-    setSt((p) => ({ s: "applying", cur: p.cur }));
-    try {
-      let pid = 0;
-      try { pid = Number(await (window as any).bazzWindow?.getPid?.()) || 0; } catch { pid = 0; }
-      if (!pid) { setSt((p) => ({ s: "err", cur: p.cur, msg: t("update.devOnly") })); return; }
-      const r = await api.updateApply(zip, pid);
-      if (!r?.ok) { setSt((p) => ({ s: "err", cur: p.cur, msg: r?.error || t("update.failed") })); return; }
-      setTimeout(() => { try { (window as any).bazzWindow?.close?.(); } catch {} }, 1200);
-    } catch (e: any) {
-      setSt((p) => ({ s: "err", cur: p.cur, msg: String(e?.message ?? e) }));
-    }
-  }, [t]);
-
-  const row = (label: string, value: string, cls = "text-ink") => (
-    <div className="flex items-center justify-between py-1">
-      <span className="prefix">{label}</span>
-      <span className={`font-mono text-[12px] ${cls}`}>{value}</span>
-    </div>
-  );
-
+  // 三态主体
   let body: React.ReactNode;
   if (st.s === "checking" || st.s === "init") {
     body = (
@@ -113,70 +67,27 @@ export default function UpdatePanel() {
       </div>
     );
   } else if (st.s === "avail") {
-    const a = st.info?.asset;
     body = (
       <div className="rounded-md border border-gold/30 bg-gold/[0.05] p-3">
         <div className="font-mono text-[12.5px] text-gold flex items-center gap-2">
           <span>⬆</span>{t("update.available")}
-          <span className="pill pill-gold text-[9.5px]">{st.info.latest}</span>
+          <span className="pill pill-gold text-[9.5px]">v{st.latest}</span>
         </div>
-        <div className="mt-2 flex items-center gap-2">
-          <button onClick={startDownload} className="btn-gold flex-1 justify-center text-[12px] py-1.5">
-            <span className="text-[12px]">↓</span> {t("update.download")}
-            {a?.size ? ` · ${t("update.about", { n: (a.size / 1024 / 1024).toFixed(0) })}` : ""}
-          </button>
-          {st.info.html_url && (
-            <a href={st.info.html_url} target="_blank" rel="noreferrer"
-              className="btn-ghost text-[11.5px]" title={t("update.openRelease")}>
-              ↗
-            </a>
-          )}
+        <div className="font-mono text-[10.5px] text-ink-dim mt-1.5 leading-relaxed">
+          {t("update.openHint")}
         </div>
-        {st.info.notes && (
+        <button onClick={openDownloadPage} className="btn-gold mt-2.5 w-full justify-center text-[12.5px] py-2">
+          ↗ {t("update.openDownload")}
+        </button>
+        {st.notes && (
           <details className="mt-2.5">
             <summary className="cursor-pointer list-none font-mono text-[10.5px] text-ink-dim hover:text-ink select-none">
               ▸ {t("update.releaseNotes")}
             </summary>
             <pre className="mt-1.5 max-h-40 overflow-auto text-[10.5px] text-ink-dim whitespace-pre-wrap leading-relaxed"
-              style={{ fontFamily: "inherit" }}>{String(st.info.notes)}</pre>
+              style={{ fontFamily: "inherit" }}>{st.notes}</pre>
           </details>
         )}
-      </div>
-    );
-  } else if (st.s === "dl") {
-    const pct = st.total > 0 ? Math.min(99, Math.round((st.done / st.total) * 100)) : 0;
-    body = (
-      <div className="px-1 py-1.5">
-        <div className="flex items-center justify-between font-mono text-[11px] mb-1.5">
-          <span className="text-ink flex items-center gap-2">
-            <span className="inline-block w-3 h-3 rounded-full border-2 border-gold/50 border-t-transparent animate-spin" />
-            ↓ {t("update.downloading")}
-          </span>
-          <span className="tabular text-ink-dim">{pct}%</span>
-        </div>
-        <div className="h-2 rounded-full bg-elevated overflow-hidden">
-          <div className="h-full rounded-full bg-gold transition-all" style={{ width: `${pct || 4}%` }} />
-        </div>
-        <div className="font-mono text-[9.5px] text-ink-mute mt-1 tabular">
-          {(st.done / 1024 / 1024).toFixed(0)} MB / {(st.total / 1024 / 1024).toFixed(0)} MB
-        </div>
-      </div>
-    );
-  } else if (st.s === "ready") {
-    body = (
-      <div className="rounded-md border border-green/30 bg-green/[0.05] p-3">
-        <div className="font-mono text-[12.5px] text-green flex items-center gap-2">✓ {t("update.downloaded")}</div>
-        <div className="font-mono text-[10.5px] text-ink-dim mt-1">{t("update.restartHint")}</div>
-        <button onClick={() => apply(st.zip)} className="btn-gold mt-2.5 w-full justify-center text-[12px] py-1.5">
-          🔄 {t("update.restart")}
-        </button>
-      </div>
-    );
-  } else if (st.s === "applying") {
-    body = (
-      <div className="flex items-center gap-2 font-mono text-[11.5px] text-ink py-2">
-        <span className="inline-block w-3 h-3 rounded-full border-2 border-gold/50 border-t-transparent animate-spin" />
-        {t("update.restarting")}
       </div>
     );
   } else {
@@ -185,34 +96,51 @@ export default function UpdatePanel() {
         <div className="rounded-md border border-red/30 bg-red/[0.05] px-3 py-2 font-mono text-[11px] text-red break-all">
           ⚠ {st.msg}
         </div>
-        <button onClick={doCheck} className="btn-ghost mt-2 text-[11.5px]">
-          <I_Refresh /> {t("update.retry")}
-        </button>
+        <div className="flex items-center gap-2 mt-2">
+          <button onClick={doCheck} className="btn-ghost text-[11.5px]">
+            <I_Refresh /> {t("update.retry")}
+          </button>
+          <button onClick={openDownloadPage} className="btn-ghost text-[11.5px]">
+            ↗ {t("update.openDownload")}
+          </button>
+        </div>
       </div>
     );
   }
 
-  const hasInfo = st.s === "avail" || st.s === "dl" || st.s === "ready";
-  const latestLabel = hasInfo ? String((st as any).info?.latest ?? "") : st.s === "none" ? st.latest : "—";
+  const hasInfo = st.s === "avail";
+  const latestLabel = hasInfo ? (st as any).latest : st.s === "none" ? (st as any).latest : "—";
   return (
     <div className="glass p-4">
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         <span className="text-gold text-[13px]">⬆</span>
         <span className="font-mono text-[12px] text-ink tracking-wider">{t("update.title")}</span>
-        <span className={`pill ${st.s === "none" ? "pill-green" : st.s === "avail" || st.s === "ready" ? "pill-gold" : st.s === "err" ? "pill-red" : "pill-dim"}`}>
-          <span className={`dot ${st.s === "none" ? "dot-green live" : st.s === "avail" || st.s === "ready" ? "dot-gold" : st.s === "err" ? "dot-red" : "dot-dim"}`} />
-          {st.s === "none" ? t("update.upToDate") : st.s === "avail" || st.s === "ready" ? t("update.updateReadyPill") : st.s === "err" ? t("update.failed") : st.s === "dl" ? "↓" : t("update.checking")}
+        <span className={`pill ${st.s === "none" ? "pill-green" : st.s === "avail" ? "pill-gold" : st.s === "err" ? "pill-red" : "pill-dim"}`}>
+          <span className={`dot ${st.s === "none" ? "dot-green live" : st.s === "avail" ? "dot-gold" : st.s === "err" ? "dot-red" : "dot-dim"}`} />
+          {st.s === "none" ? t("update.upToDate") : st.s === "avail" ? t("update.updateReadyPill") : st.s === "err" ? t("update.failed") : t("update.checking")}
         </span>
-        <button onClick={doCheck} disabled={st.s === "checking" || st.s === "dl" || st.s === "applying"}
-          className="ml-auto btn-ghost !px-2.5 !py-1 text-[11px] disabled:opacity-50">
+        <button onClick={openDownloadPage} className="ml-auto btn-ghost !px-2.5 !py-1 text-[11px]">
+          ↗ {t("update.openDownloadShort")}
+        </button>
+        <button onClick={doCheck} disabled={st.s === "checking"}
+          className="btn-ghost !px-2.5 !py-1 text-[11px] disabled:opacity-50">
           <I_Refresh spin={st.s === "checking"} /> {t("update.checkNow")}
         </button>
       </div>
       <div className="border-t border-line/60 pt-2 mb-2">
-        {row(t("update.installed"), `v${st.cur || "—"}`)}
-        {row(t("update.latestVer"), latestLabel, hasInfo ? "text-gold" : "text-ink")}
+        <Row label={t("update.installed")} value={`v${st.cur || "—"}`} />
+        <Row label={t("update.latestVer")} value={latestLabel} accent={hasInfo ? "text-gold" : "text-ink"} />
       </div>
       {body}
+    </div>
+  );
+}
+
+function Row({ label, value, accent = "text-ink" }: { label: string; value: string; accent?: string }) {
+  return (
+    <div className="flex items-center justify-between py-1">
+      <span className="prefix">{label}</span>
+      <span className={`font-mono text-[12px] ${accent}`}>{value}</span>
     </div>
   );
 }

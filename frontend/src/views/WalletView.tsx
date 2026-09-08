@@ -23,18 +23,23 @@ export function WalletView() {
   const t = useT();
   const [mode, setMode] = useState<"agent" | "chain">("agent");
   const [state, setState] = useState<any>(null);
+  const [runtime, setRuntime] = useState<any>(null);  // v1.2.11: 内置 Node+baw 状态
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string>("");
   const [live, setLive] = useState<Record<string, RunResult>>({});
   const [copied, setCopied] = useState<string>("");
 
-  const installed = !!state?.cli?.installed;
-  const version = state?.cli?.version ?? null;
+  const installed = !!state?.cli?.installed || !!runtime?.bundled;   // v1.2.11: 内置也算安装
+  const version = state?.cli?.version ?? runtime?.version ?? null;
   const connected = !!state?.status?.connected;
-  const npmOk = !!state?.npm_available;
+  const npmOk = !!state?.npm_available || !!runtime?.bundled;        // v1.2.11: 内置 Node 也算 ok
+  const builtIn = !!runtime?.bundled;                                // v1.2.11: 是否走 APP 内置 runtime
 
   const load = async () => {
-    try { const s = await api.wallet(true); setState(s); setErr(""); }
+    try {
+      const [s, r] = await Promise.all([api.wallet(true), api.walletRuntime().catch(() => null)]);
+      setState(s); setRuntime(r); setErr("");
+    }
     catch (e: any) { setErr(e?.message ?? String(e)); }
   };
   useEffect(() => { load(); }, []);
@@ -143,8 +148,18 @@ export function WalletView() {
             <>
               {/* 状态总览 —— 全部真实 */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <StatusTile label={t("wallet.tileCli")} ok={installed} text={installed ? `baw v${version ?? "?"}` : t("wallet.notInstalled")} />
-                <StatusTile label="Node / npm" ok={npmOk} text={npmOk ? t("wallet.npmOk") : t("wallet.npmMiss")} />
+                <StatusTile
+                  label={t("wallet.tileCli")}
+                  ok={installed}
+                  text={builtIn
+                    ? t("wallet.builtIn", { v: version ?? "?" })
+                    : installed ? `baw v${version ?? "?"}` : t("wallet.notInstalled")}
+                />
+                <StatusTile
+                  label="Node / npm"
+                  ok={npmOk}
+                  text={builtIn ? t("wallet.builtInNode") : npmOk ? t("wallet.npmOk") : t("wallet.npmMiss")}
+                />
                 <StatusTile label={t("wallet.tileLogin")} ok={connected} text={connected ? t("wallet.signedIn") : t("wallet.signedOut")} warn={!connected && installed} />
                 <StatusTile label={t("wallet.tileKey")} ok text={t("wallet.mpcNoKey")} sub={t("wallet.binanceAppScan")} />
               </div>

@@ -7,8 +7,8 @@
 > **桌面 + Web 双形态**：一个双击即跑的 Windows 便携版，一个本地 Web 版——
 > 同一套 FastAPI 核心，同一个 React 驾驶舱。
 
-[![Release v1.2.10](https://img.shields.io/badge/Release-v1.2.10-f0b90b?logo=github&logoColor=white)](https://github.com/xinyuzjj/bazz.agent/releases/latest)
-[![下载 Windows 便携版](https://img.shields.io/badge/下载-Windows%20便携版-2ea44f?logo=windows&logoColor=white)](https://github.com/xinyuzjj/bazz.agent/releases/latest/download/BAZZ.AGENT-v1.2.10-win32-x64-portable.zip)
+[![Release v1.2.11](https://img.shields.io/badge/Release-v1.2.11-f0b90b?logo=github&logoColor=white)](https://github.com/xinyuzjj/bazz.agent/releases/latest)
+[![下载 Windows 便携版](https://img.shields.io/badge/下载-Windows%20便携版-2ea44f?logo=windows&logoColor=white)](https://github.com/xinyuzjj/bazz.agent/releases/latest/download/BAZZ.AGENT-v1.2.11-win32-x64-portable.zip)
 [![在线展示页](https://img.shields.io/badge/Live%20Pages-在线展示-181717?logo=githubpages&logoColor=white)](https://xinyuzjj.github.io/bazz.agent/)
 [![English](https://img.shields.io/badge/README-English-3776ab)](./README.md)
 
@@ -77,7 +77,7 @@
 
 | 文件 | 用法 |
 |------|------|
-| [`BAZZ.AGENT-v1.2.10-win32-x64-portable.zip`](https://github.com/xinyuzjj/bazz.agent/releases/latest/download/BAZZ.AGENT-v1.2.10-win32-x64-portable.zip) | 解压到任意目录 → 双击 `BAZZ.AGENT.exe` |
+| [`BAZZ.AGENT-v1.2.11-win32-x64-portable.zip`](https://github.com/xinyuzjj/bazz.agent/releases/latest/download/BAZZ.AGENT-v1.2.11-win32-x64-portable.zip) | 解压到任意目录 → 双击 `BAZZ.AGENT.exe` |
 
 - **无需 Python、无需 Node、无需安装**。Electron + PyInstaller 熔成一体。
 - 首次启动约 3–5 秒（内嵌后端预热），随后驾驶舱打开。

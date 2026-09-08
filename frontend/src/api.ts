@@ -96,6 +96,8 @@ export const api = {
     jpost(`/plugins/${encodeURIComponent(id)}/command`, { name, params: params ?? {} }),
   wallet: (force = false) => jget("/wallet" + (force ? "?force=1" : "")),
   walletRun: (cmd: string) => jpost("/wallet/run", { cmd }),
+  // v1.2.11：内置 runtime 状态（Node + @binance/agentic-wallet 是否就绪）
+  walletRuntime: () => jget("/wallet/runtime"),
   walletInstall: () => jpost("/wallet/install", {}),
   // Agent 钱包：Binance App 扫码登录
   walletSignin: () => jpost("/wallet/signin", {}),
@@ -162,11 +164,20 @@ export const api = {
     const r = await fetch(BASE + "/settings");
     return r.ok ? await r.json() : {};
   },
-  // 自动更新（GitHub Releases）
+  // 自动更新（v1.2.11：只检查版本号，由前端用系统默认浏览器打开下载页）
   updateCheck: () => jget("/update/check"),
-  updateDownload: (url = "") => jpost("/update/download", { url }),
-  updateStatus: () => jget("/update/status"),
-  updateApply: (zip: string, pid: number) => jpost("/update/apply", { zip, pid }),
+  // 统一的外链打开：Electron 下走主进程 shell.openExternal（防被 WebView 拦截）；
+  // 浏览器开发态下退化到 window.open。包外 URL 必须 https://，否则忽略。
+  openExternal: (url: string) => {
+    const u = String(url || "").trim();
+    if (!/^https?:\/\//i.test(u)) return false;
+    try {
+      const w: any = window as any;
+      if (w?.bazzWindow?.openUrl) { w.bazzWindow.openUrl(u); return true; }
+      window.open(u, "_blank", "noopener,noreferrer");
+      return true;
+    } catch { return false; }
+  },
 };
 
 // 流式对话：返回 reader，调用方逐行解析 NDJSON

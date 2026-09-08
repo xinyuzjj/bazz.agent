@@ -708,7 +708,13 @@ def run_skill_cmd(skill_name: str, args: str = "", timeout: int = 90, max_out: i
     arg_s = (args or "").strip()
     try:
         if skill_name in skills_client._BAW_SKILLS:
-            cmd = ("baw " + arg_s) if arg_s else "baw wallet status"
+            # v1.2.11：与 skills_client 一致，baw 调用走 wallet_runtime.baw_invocation() 解析
+            import wallet_runtime
+            toks = shlex.split(arg_s, posix=True) if arg_s else ["wallet", "status"]
+            cmd, mode = wallet_runtime.baw_invocation(toks)
+            if mode == "missing":
+                raise SandboxError("baw 不可用：APP 内置 runtime 未就绪且 PATH 也未找到 baw。")
+            cmd = " ".join(shlex.quote(c) for c in cmd)
         elif os.path.isfile(cli):
             if skills_client._cli_uses_meta_url_dispatch(cli):
                 launcher = os.path.join(os.path.dirname(os.path.abspath(skills_client.__file__)), "skill_launcher.mjs")

@@ -951,6 +951,9 @@ export const zh: Dict = {
   "wallet.notInstalled": "未安装",
   "wallet.npmMiss": "npm 缺失",
   "wallet.npmOk": "npm 可用",
+  // v1.2.11：APP 内置 runtime（Node 20 LTS + @binance/agentic-wallet）已随包发布，开箱即用
+  "wallet.builtIn": "内置 · baw v@{v}",
+  "wallet.builtInNode": "内置 · Node 20 LTS",
   "wallet.official": "官方",
   "wallet.official7": "官方 7 个 · 只读",
   "wallet.officialRepo": "官方仓库",
@@ -1043,6 +1046,9 @@ export const zh: Dict = {
   "update.updateReadyPill": "有新版本",
   "update.releaseNotes": "更新说明",
   "update.openRelease": "打开 GitHub Release",
+  "update.openDownload": "打开下载页（浏览器）",
+  "update.openDownloadShort": "下载页",
+  "update.openHint": "下载在浏览器里完成 → 解压到任意目录 → 双击新版 BAZZ.AGENT.exe 即可。",
 };
 
 export const en: Dict = {
@@ -1974,6 +1980,9 @@ export const en: Dict = {
   "wallet.notInstalled": "Not installed",
   "wallet.npmMiss": "npm missing",
   "wallet.npmOk": "npm OK",
+  // v1.2.11: APP bundles Node 20 LTS + @binance/agentic-wallet, no npm install needed
+  "wallet.builtIn": "Built-in · baw v@{v}",
+  "wallet.builtInNode": "Built-in · Node 20 LTS",
   "wallet.official": "Official",
   "wallet.official7": "Official ×7 · read-only",
   "wallet.officialRepo": "Official repo",
@@ -2066,4 +2075,7 @@ export const en: Dict = {
   "update.updateReadyPill": "Update ready",
   "update.releaseNotes": "Release notes",
   "update.openRelease": "Open GitHub Release",
+  "update.openDownload": "Open download page (browser)",
+  "update.openDownloadShort": "Download",
+  "update.openHint": "Download happens in your browser → unzip to any folder → double-click the new BAZZ.AGENT.exe.",
 };

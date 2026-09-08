@@ -33,6 +33,7 @@ const ASSETS = path.join(PROJ, "assets");
 const ZIP_DIR = path.join(STAGE, "electron-zip");
 const ZIP = path.join(ZIP_DIR, `electron-v${ELECTRON_VER}-win32-x64.zip`);
 const SCOUT = path.join(STAGE, "bundle", "scout-bundle");
+const RUNTIME_SRC = process.env.BAZZ_RUNTIME_SRC || path.join(PROJ, "runtime");
 const APP = path.join(STAGE, "desktop-app");
 const OUT = path.join(STAGE, "dist_desktop");
 const FINAL = path.join(OUT, "BAZZ.AGENT-win32-x64");
@@ -70,7 +71,7 @@ if (!fs.existsSync(ZIP)) {
 }
 ok(`electron zip 就绪：${ZIP}`);
 
-// ---------- 3) 组装 scout-bundle（后端 + 最新前端产物） ----------
+// ---------- 3) 组装 scout-bundle（后端 + 最新前端产物 + 内置 runtime） ----------
 console.log("… 组装 scout-bundle …");
 rmrf(SCOUT);
 fs.mkdirSync(SCOUT, { recursive: true });
@@ -78,7 +79,22 @@ fs.cpSync(PY_DIST, path.join(SCOUT, "ScoutBackend"), { recursive: true });
 fs.cpSync(FRONTEND_DIST, path.join(SCOUT, "ScoutBackend", "_internal", "frontend", "dist"), { recursive: true });
 // 版本标记：ScoutBackend 目录（updater.local_version 读取）+ 后续写一份到产物根目录
 fs.writeFileSync(path.join(SCOUT, "ScoutBackend", "BAZZ_VERSION.txt"), VERSION + "\n");
-ok("scout-bundle 就绪（含最新 dist）");
+// v1.2.11 起：内置 Node 20 LTS + @binance/agentic-wallet（由 scripts/prepare-runtime.js 准备到 PROJ/runtime/）
+//   —— 用 cpSync + filter 排除 .stamp / _node_tmp 中间产物
+if (fs.existsSync(RUNTIME_SRC) && fs.existsSync(path.join(RUNTIME_SRC, "node", "node.exe"))) {
+  fs.cpSync(RUNTIME_SRC, path.join(SCOUT, "ScoutBackend", "_internal", "runtime"), {
+    recursive: true,
+    filter: (src) => {
+      const base = path.basename(src);
+      if (base === "_node_tmp" || base === ".stamp") return false;
+      return true;
+    },
+  });
+  ok("scout-bundle 就绪（含最新 dist + 内置 runtime/）");
+} else {
+  console.warn(`⚠ 跳过 runtime 复制：未发现 ${path.join(RUNTIME_SRC, "node", "node.exe")}（先跑 node scripts/prepare-runtime.js 准备）`);
+  ok("scout-bundle 就绪（含最新 dist；runtime 未内置）");
+}
 
 // ---------- 4) 组装 electron app 壳 ----------
 console.log("… 组装 electron app 壳 …");

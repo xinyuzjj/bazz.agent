@@ -905,8 +905,19 @@ async def wallet_run(req: Request):
 
 @app.post("/api/wallet/install")
 async def wallet_install():
-    """一键安装 baw：`npm i -g @binance/agentic-wallet`（要求 npm + Node ≥ 18）。"""
-    return wallet_client.install_cli()
+    """v1.2.11 起弃用：baw 已内置于 APP runtime/，无需 npm 安装。前端会隐藏对应入口。"""
+    return {
+        "ok": False,
+        "deprecated": True,
+        "detail": "v1.2.11 起 baw CLI 已内置于 APP，无需 npm 安装。Node + @binance/agentic-wallet 随 APP 一起发布，开箱即用。",
+    }
+
+
+@app.get("/api/wallet/runtime")
+def wallet_runtime():
+    """v1.2.11：返回 runtime 内置状态（Node + @binance/agentic-wallet 是否就绪）。"""
+    import wallet_runtime as _wr
+    return _wr.wallet_runtime_status()
 
 
 # ---- Agent 钱包：Binance App 扫码登录（真实 baw auth 流程） ----
@@ -1158,42 +1169,16 @@ def cex_allorders(symbol: str, limit: int = 50):
         return {"status": "error", "code": "network", "orders": [], "message": str(e)[:200]}
 
 
-# ---------------- 自动更新（GitHub Releases） ----------------
+# ---------------- 自动更新（v1.2.11：只检查版本，不再下载/替换） ----------------
+#   旧版的 /api/update/download + /api/update/status + /api/update/apply（后台下载 zip、
+#   PS 脚本整目录替换、强制关窗重启）整体废弃 —— 多次在中国代理环境下失败。
+#   新版：APP 只检查 GitHub Releases latest 版本号，由前端显示「打开下载页」按钮
+#   让用户在系统默认浏览器里手动下载、覆盖更新。
 
 @app.get("/api/update/check")
 def update_check():
     """对比本地版本与 GitHub Release latest。网络失败给 error 字段，不抛。"""
     return updater.check()
-
-
-@app.post("/api/update/download")
-async def update_download(req: Request):
-    """后台线程下载最新便携 zip 到 update-cache；返回立即，进度走 /api/update/status。"""
-    b = await req.json()
-    url = b.get("url", "")
-    if not url:
-        rel = updater.check()
-        url = (rel.get("asset") or {}).get("url", "")
-        if not url:
-            return {"ok": False, "error": rel.get("error") or "未找到可下载的发布资产。"}
-    return updater.start_download(url)
-
-
-@app.get("/api/update/status")
-def update_status():
-    return updater.download_status()
-
-
-@app.post("/api/update/apply")
-async def update_apply(req: Request):
-    """应用更新：生成 PS 脚本 → DETACHED 启动 → 前端随后关窗触发替换重启。"""
-    b = await req.json()
-    wait_pid = int(b.get("pid") or 0)
-    st = updater.download_status()
-    zip_path = b.get("zip") or st.get("path") or ""
-    if not zip_path or not os.path.exists(zip_path):
-        return {"ok": False, "error": "更新包不存在，请先完成下载。"}
-    return updater.apply(zip_path, wait_pid)
 
 
 # ---- 链上钱包（Binance Web3 Wallet API，BX- Key）：官方连接器桥 ----

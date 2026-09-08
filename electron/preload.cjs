@@ -6,4 +6,6 @@ contextBridge.exposeInMainWorld("bazzWindow", {
   toggleMaximize: () => ipcRenderer.send("bazz:win-max-toggle"),
   close: () => ipcRenderer.send("bazz:win-close"),
   getPid: () => ipcRenderer.invoke("bazz:app-pid"),
+  // v1.2.11：统一通过主进程用系统默认浏览器打开外链（设置里的 GitHub 下载页、release 页等）
+  openUrl: (url) => ipcRenderer.send("bazz:open-url", url),
 });

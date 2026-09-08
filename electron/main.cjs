@@ -2,7 +2,7 @@
 // 两种运行形态：
 //   开发/仓库内  : electron .  → 拉起 .venv python desktop_app.py，加载后端托管页面
 //   打包分发 exe : app.isPackaged → 拉起内嵌 ScoutBackend.exe（resources/scout-bundle），加载 http://127.0.0.1:8080
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
@@ -43,7 +43,16 @@ ipcMain.on("bazz:win-max-toggle", () => {
 });
 ipcMain.on("bazz:win-close", () => { if (mainWin && !mainWin.isDestroyed()) mainWin.close(); });
 
-// 自动更新：把 Electron 主进程 pid 交给渲染层，用于更新脚本等待退出后整目录替换
+// v1.2.11：统一通过主进程用系统默认浏览器打开外链（设置里点「打开下载页」等）
+//   只放行 http(s)，避免渲染层误传 file:// / javascript: 等触发任意协议
+ipcMain.on("bazz:open-url", (_e, url) => {
+  try {
+    if (typeof url === "string" && /^(https?:\/\/)/i.test(url)) shell.openExternal(url);
+  } catch {}
+});
+
+// 兼容保留：v1.2.11 已不再用「传 pid 给更新脚本」流程，但 bazzWindow.getPid() 在前端代码里
+// 仍可能被探针/旧逻辑调用，保留以免主进程抛 ipcMain.handle('invoke') 找不到
 ipcMain.handle("bazz:app-pid", () => process.pid);
 
 // 若 8080 已被占用（同会话重复双击启动、或用户手滑开了两个），直接复用，不拉第二个后端。
