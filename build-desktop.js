@@ -80,20 +80,13 @@ fs.cpSync(FRONTEND_DIST, path.join(SCOUT, "ScoutBackend", "_internal", "frontend
 // 版本标记：ScoutBackend 目录（updater.local_version 读取）+ 后续写一份到产物根目录
 fs.writeFileSync(path.join(SCOUT, "ScoutBackend", "BAZZ_VERSION.txt"), VERSION + "\n");
 // v1.2.11 起：内置 Node 20 LTS + @binance/agentic-wallet（由 scripts/prepare-runtime.js 准备到 PROJ/runtime/）
-//   —— 用 cpSync + filter 排除 .stamp / _node_tmp 中间产物
+//   —— **不进 ScoutBackend**（PyInstaller 把它当数据，可能影响 collect_all / freeze 行为）
+//   改为作为独立 extraResource 由 packager 放在 resources/runtime/，与 workspace.RUNTIME_DIR 对齐
+//   缺失时仅 warn，不致命 —— dev 不带 runtime 也可工作（依赖 PATH 的 node/baw）
 if (fs.existsSync(RUNTIME_SRC) && fs.existsSync(path.join(RUNTIME_SRC, "node", "node.exe"))) {
-  fs.cpSync(RUNTIME_SRC, path.join(SCOUT, "ScoutBackend", "_internal", "runtime"), {
-    recursive: true,
-    filter: (src) => {
-      const base = path.basename(src);
-      if (base === "_node_tmp" || base === ".stamp") return false;
-      return true;
-    },
-  });
-  ok("scout-bundle 就绪（含最新 dist + 内置 runtime/）");
+  ok(`runtime 就绪（将作为 extraResource 打进 resources/runtime/）：${RUNTIME_SRC}`);
 } else {
-  console.warn(`⚠ 跳过 runtime 复制：未发现 ${path.join(RUNTIME_SRC, "node", "node.exe")}（先跑 node scripts/prepare-runtime.js 准备）`);
-  ok("scout-bundle 就绪（含最新 dist；runtime 未内置）");
+  console.warn(`⚠ runtime 未就绪（${path.join(RUNTIME_SRC, "node", "node.exe")} 缺失）：先跑 node scripts/prepare-runtime.js；本次打包 APP 将回退 PATH 上的 node/baw`);
 }
 
 // ---------- 4) 组装 electron app 壳 ----------
@@ -138,7 +131,9 @@ const packOpts = {
   prune: false,
   appVersion: VERSION,
   appCopyright: "BAZZ.AGENT - Binance Agent OS Mini Hackathon Track A",
-  extraResource: [SCOUT, ASSETS],
+  // v1.2.11：runtime 作为独立 extraResource 放在 resources/runtime/，与 workspace.RUNTIME_DIR 对齐
+  //   仅在 runtime 就绪时加入，避免 dev 态打无意义空目录
+  extraResource: (fs.existsSync(path.join(RUNTIME_SRC, "node", "node.exe")) ? [SCOUT, ASSETS, RUNTIME_SRC] : [SCOUT, ASSETS]),
   quiet: false,
 };
 (async () => {
