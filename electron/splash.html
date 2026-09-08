@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh" data-page-node-id="ep5lLZMYjadR1hFeHycFcX">
+<head data-page-node-id="CiBm6Qe51ic7pq90A5wmcn">
+<meta charset="utf-8" data-page-node-id="vxnnsSk59AxE9KZ04ARNF3" />
+<title>BAZZ.AGENT</title>
+<style>
+  :root {
+    --bg: #0a0b0d;
+    --panel: #101318;
+    --gold: #f0b90b;
+    --gold-l: #ffd166;
+    --gold-d: #c99700;
+    --white: #f2f4f7;
+    --mono: Consolas, "Cascadia Mono", ui-monospace, monospace;
+    --sans: "Segoe UI", "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; overflow:hidden; }
+  body {
+    background: var(--bg);
+    font-family: var(--sans);
+    user-select:none;
+  }
+
+  /* —— 细点阵背景（交易终端感），全程压在底下 —— */
+  .grid {
+    position:absolute; inset:0; z-index:0; pointer-events:none;
+    background-image: radial-gradient(rgba(255,255,255,.055) 1px, transparent 1.4px);
+    background-size: 28px 28px;
+    opacity:.9;
+  }
+
+  /* —— 微弱金色十字星点缀 —— */
+  .marks { position:absolute; inset:0; z-index:0; pointer-events:none; }
+  .marks svg { position:absolute; opacity:.14; }
+  .mk1 { left:8%;  top:14%; animation:pulseM 3s ease-in-out infinite; }
+  .mk2 { right:10%; top:16%; animation:pulseM 3.6s ease-in-out 1s infinite; }
+  .mk3 { left:14%; bottom:13%; animation:pulseM 3.2s ease-in-out .5s infinite; }
+  @keyframes pulseM { 0%,100%{opacity:.1;} 50%{opacity:.4;} }
+
+  /* ============ 第一幕：ALPHA SCOUT（暗底） ============ */
+  .title-sm {
+    position:absolute; inset:0; z-index:1;
+    display:flex; flex-direction:column; gap:22px;
+    align-items:center; justify-content:center;
+    pointer-events:none;
+  }
+  .title-sm .kicker {
+    display:flex; align-items:center; gap:12px;
+    font-family: var(--mono); font-size:13px; letter-spacing:.5em; text-indent:.5em;
+    color: rgba(242,244,247,.62);
+  }
+  .title-sm .kicker::before, .title-sm .kicker::after {
+    content:""; width:34px; height:1px; background:linear-gradient(90deg, transparent, var(--gold)); opacity:.5;
+  }
+  .title-sm .kicker::after { background:linear-gradient(270deg, transparent, var(--gold)); }
+  .title-sm .main {
+    font-size:88px; font-weight:700; letter-spacing:.22em; text-indent:.22em;
+    color: var(--white);
+    opacity:0;
+    animation:riseIn .5s cubic-bezier(.2,1,.35,1) .08s forwards,
+              riseOut .22s ease-in 1.02s forwards;
+  }
+  @keyframes riseIn {
+    from { opacity:0; transform:translateY(18px); letter-spacing:.5em; }
+    to   { opacity:1; transform:translateY(0);    letter-spacing:.22em; }
+  }
+  @keyframes riseOut { to { opacity:0; transform:translateY(-16px); } }
+
+  /* ============ 液态层（通用） ============ */
+  .liq { position:absolute; inset:0; z-index:2; pointer-events:none; }
+  .liq .core { position:absolute; opacity:0; }
+  .liq .core::after {
+    content:""; position:absolute; left:22%; top:12%;
+    width:34%; height:26%;
+    background:rgba(255,255,255,.22);
+    border-radius:50%;
+    filter:blur(14px);
+  }
+
+  /* —— 金色液态铺屏：右下爆点 —— */
+  .liq.gold .core {
+    left:74%; top:86%;
+    width:300px; height:300px; margin:-150px 0 0 -150px;
+    border-radius:46% 54% 50% 50%;
+    background:radial-gradient(circle at 36% 30%, var(--gold-l) 0%, var(--gold) 58%, var(--gold-d) 100%);
+    animation:fillG 1.0s cubic-bezier(.3,.92,.4,1) 1.12s forwards;
+  }
+  @keyframes fillG {
+    0%   { transform:scale(.1);              opacity:0; }
+    30%  { opacity:1; }
+    60%  { transform:scale(2.2) rotate(-5deg); border-radius:38% 62% 44% 56%; }
+    100% { transform:scale(10.6) rotate(0deg); border-radius:50%; opacity:1; }
+  }
+  .liq.gold .ring {
+    position:absolute; left:74%; top:86%;
+    width:300px; height:300px; margin:-150px 0 0 -150px;
+    border:1.5px solid rgba(255,209,102,.6);
+    border-radius:50%;
+    opacity:0;
+    animation:ringOut .7s ease-out 1.15s forwards;
+  }
+  @keyframes ringOut {
+    0%  { transform:scale(.2); opacity:.85; }
+    100%{ transform:scale(5);  opacity:0; }
+  }
+
+  /* —— 深色液态收尾：顶部砸下，把金屏盖回深色 —— */
+  .liq.dark { z-index:4; }
+  .liq.dark .core {
+    left:50%; top:0%;
+    width:340px; height:340px; margin:-170px 0 0 -170px;
+    border-radius:48% 52% 50% 50%;
+    background:radial-gradient(circle at 36% 30%, #23272f 0%, #12151b 55%, #08090c 100%);
+    box-shadow: inset 0 0 120px rgba(240,185,11,.06);
+    animation:fillD 1.05s cubic-bezier(.22,.9,.36,1) 3.0s forwards;
+  }
+  @keyframes fillD {
+    0%   { transform:translateY(-80px) scale(.32); opacity:0; }
+    16%  { opacity:1; transform:translateY(90px)  scale(1.2); }
+    40%  { transform:translateY(0) scale(1.6) rotate(3deg); border-radius:55% 45% 50% 50%; }
+    100% { transform:translateY(0) scale(11); opacity:1; border-radius:50%; }
+  }
+  .liq.dark .ring {
+    position:absolute; left:50%; top:0%;
+    width:340px; height:340px; margin:-170px 0 0 -170px;
+    border:1.5px solid rgba(240,185,11,.35);
+    border-radius:50%;
+    opacity:0;
+    animation:ringOut .8s ease-out 3.06s forwards;
+  }
+
+  /* ============ 品牌 A：金屏上的深色字 ============ */
+  .brandA {
+    position:absolute; inset:0; z-index:3;
+    display:flex; align-items:center; justify-content:center;
+    pointer-events:none;
+  }
+  .brandA b {
+    font-size:150px; font-weight:800; letter-spacing:.04em;
+    color:#0a0b0d;
+    opacity:0;
+    animation:popB .5s cubic-bezier(.2,1.1,.35,1) 2.18s forwards,
+              popHide .18s ease-in 3.6s forwards;
+  }
+  @keyframes popB {
+    0%  { opacity:0; transform:scale(.88) translateY(14px); }
+    60% { opacity:1; transform:scale(1.03) translateY(0); }
+    100%{ opacity:1; transform:scale(1); }
+  }
+  @keyframes popHide { to { opacity:0; transform:scale(.9); } }
+
+  /* ============ 最终定稿（深底白字 + 金色细线） ============ */
+  .final { position:absolute; inset:0; z-index:5; pointer-events:none; }
+  .final .stack {
+    position:absolute; inset:0;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+  }
+  .brandB {
+    display:flex; align-items:baseline; gap:0;
+    font-size:150px; font-weight:800; letter-spacing:.04em; line-height:1;
+    color:var(--white);
+    text-shadow:0 0 60px rgba(240,185,11,.10);
+    opacity:0;
+    animation:popB .55s cubic-bezier(.2,1.1,.35,1) 3.9s forwards,
+              breathe 5s ease-in-out 4.7s infinite;
+  }
+  /* 单词后缀金色 */
+  .brandB .dot { color:var(--gold); text-shadow:0 0 44px rgba(240,185,11,.55); }
+  .rule {
+    width:430px; height:1px; margin-top:26px;
+    background:linear-gradient(90deg, transparent, rgba(240,185,11,.85) 50%, transparent);
+    transform:scaleX(0); transform-origin:center;
+    animation:ruleDraw .6s cubic-bezier(.3,.8,.3,1) 4.55s forwards;
+  }
+  @keyframes ruleDraw { to { transform:scaleX(1); } }
+  .tagline {
+    margin-top:20px;
+    display:flex; align-items:center; gap:14px;
+    font-family:var(--mono); font-size:14px; letter-spacing:.42em; text-indent:.42em;
+    color:rgba(242,244,247,.74);
+    opacity:0;
+    animation:fadeUp .5s ease 4.8s forwards;
+  }
+  .tagline .g { width:6px; height:6px; background:var(--gold); transform:rotate(45deg); flex:none; }
+  .status {
+    position:absolute; bottom:7%; left:50%; transform:translateX(-50%);
+    display:flex; align-items:center; gap:10px;
+    font-family:var(--mono); font-size:11px; letter-spacing:.34em; text-indent:.34em;
+    color:rgba(240,185,11,.85);
+    opacity:0;
+    animation:fadeUp .5s ease 5.15s forwards;
+  }
+  .status i { width:6px; height:6px; border-radius:50%; background:var(--gold);
+    box-shadow:0 0 10px rgba(240,185,11,.9); animation:caret 1.1s steps(1) infinite; }
+  @keyframes caret { 50% { opacity:.15; } }
+  @keyframes fadeUp {
+    from { opacity:0; transform:translateY(12px); }
+    to   { opacity:1; transform:translateY(0); }
+  }
+  @keyframes breathe { 0%,100%{ transform:scale(1);} 50%{ transform:scale(1.012);} }
+
+  /* —— 上浮金色微粒（定稿后常驻呼吸） —— */
+  .particles { position:absolute; inset:0; z-index:6; pointer-events:none; }
+  .particles i {
+    position:absolute; bottom:-10px;
+    width:4px; height:4px; border-radius:50%;
+    background:var(--gold);
+    box-shadow:0 0 8px 1px rgba(240,185,11,.55);
+    opacity:0;
+    animation:floatUp 9s linear infinite;
+  }
+  .particles i:nth-child(1){ left:16%; animation-delay:4.4s; }
+  .particles i:nth-child(2){ left:30%; animation-delay:6.1s; animation-duration:12s;}
+  .particles i:nth-child(3){ left:57%; animation-delay:5.2s; }
+  .particles i:nth-child(4){ left:72%; animation-delay:7s; animation-duration:10.5s;}
+  .particles i:nth-child(5){ left:88%; animation-delay:4.8s; }
+  @keyframes floatUp {
+    0%  { transform:translateY(0); opacity:0; }
+    10% { opacity:.8; }
+    85% { opacity:.2; }
+    100%{ transform:translateY(-110vh); opacity:0; }
+  }
+
+  /* ============ 溅射微粒（液态爆点同步） ============ */
+  .spray { position:absolute; z-index:7; pointer-events:none; }
+  .spray i {
+    position:absolute; left:50%; top:50%;
+    width:8px; height:8px; border-radius:50%;
+    opacity:0;
+    animation:fly .9s cubic-bezier(.2,.75,.3,1) forwards;
+  }
+  @keyframes fly {
+    0%   { opacity:0; transform:translate(0,0) scale(.5); }
+    10%  { opacity:1; }
+    100% { opacity:0; transform:translate(var(--dx), var(--dy)) scale(.2); }
+  }
+  .liq.gold .spray i   { background:var(--gold-l); box-shadow:0 0 10px rgba(255,209,102,.5);
+                         animation-delay: calc(1.15s + var(--d)); }
+  .liq.gold .spray i:nth-child(3n) { background:#fff; }
+  .liq.dark .spray i  { background:rgba(242,244,247,.8); box-shadow:0 0 10px rgba(242,244,247,.35);
+                         animation-delay: calc(3.04s + var(--d)); }
+  .liq.dark .spray i:nth-child(3n) { background:var(--gold); box-shadow:0 0 10px rgba(240,185,11,.6); }
+</style>
+</head>
+<body data-page-node-id="0V0QR0gLB8IqKo2FIAnePK">
+
+  <div class="grid" data-page-node-id="ND939rWEgrKBqUrVR3Z3zN"></div>
+  <div class="marks" data-page-node-id="W1mrHOP50liMEyF9Ch4f2Y">
+    <svg class="mk1" width="34" height="34" viewBox="0 0 34 34" data-page-node-id="JwZo0xo1e2w8cyiW2KMUe2"><path d="M17 4 v26 M4 17 h26" stroke="#fff" stroke-width="2" data-page-node-id="ZQmut5ID1bKsE97ncNdksW"/><path d="M17 17 l5 5" stroke="#f0b90b" stroke-width="2" data-page-node-id="4bZRdJCG1wvV0gBZbUM7g2"/></svg>
+    <svg class="mk2" width="24" height="24" viewBox="0 0 34 34" data-page-node-id="vLzUKIrvPxvVOzgC85rFHY"><path d="M17 4 v26 M4 17 h26" stroke="#fff" stroke-width="2" data-page-node-id="950t19KpdazCnj0atGneix"/></svg>
+    <svg class="mk3" width="28" height="28" viewBox="0 0 34 34" data-page-node-id="zu1g6v7D4acUsldC3exqZr"><path d="M17 4 v26 M4 17 h26" stroke="#fff" stroke-width="2" data-page-node-id="mSVgnSVXjjokh6yYvCMWNF"/></svg>
+  </div>
+
+  <!-- 第一幕：暗底小标题 -->
+  <div class="title-sm" data-page-node-id="ka7NZAqypCeIk369ZIOTBO">
+    <div class="kicker" data-page-node-id="hFlPins0yNONWo3kTBULZP">AGENT OS ALPHA SCOUT</div>
+    <div class="main" data-page-node-id="Ed2IbpFanLsafNbtoQALtQ">ALPHA&nbsp;SCOUT</div>
+  </div>
+
+  <!-- 金色液态铺屏 -->
+  <div class="liq gold" data-page-node-id="3pX3Hir2bD9F23augjWVXM">
+    <div class="ring" data-page-node-id="n8zMP9C9xqJMwdaqxXxr9N"></div>
+    <div class="core" data-page-node-id="L8HTY1ECdx4NBMJt0rlMHb"></div>
+    <div class="spray" data-x="74%" data-y="86%" data-page-node-id="Fgqq7AOAd0aJzHuKyTA6IH"></div>
+  </div>
+
+  <!-- 品牌 A（金屏黑字） -->
+  <div class="brandA" data-page-node-id="RlqujgfPgJzReW8VyLwWZ6"><b data-page-node-id="VlXwUqbfj12vbxw0iEfiKm">BAZZ.AGENT</b></div>
+
+  <!-- 深色液态收尾 -->
+  <div class="liq dark" data-page-node-id="MTgfdoqnj9dPMHigFxZbf0">
+    <div class="ring" data-page-node-id="Ic9kMdwPZvLsnhnKBQcDRp"></div>
+    <div class="core" data-page-node-id="ondC322V92G8N7Goz44eJ4"></div>
+    <div class="spray" data-x="50%" data-y="0%" data-page-node-id="36rAbYAD6RTzdbGfZAAtoJ"></div>
+  </div>
+
+  <!-- 上浮金色微粒 -->
+  <div class="particles" data-page-node-id="PYywYcG2GfEWSs7Jpcav2T"><i data-page-node-id="BBmzMfk4P69L3UmZJfohvn"></i><i data-page-node-id="hfUopp7Dz4PfvKGZ4FfpA1"></i><i data-page-node-id="rqyU06APGZ9k5q2Y5bKYWW"></i><i data-page-node-id="PxtlgcT9LnukSgTSMLkcYq"></i><i data-page-node-id="V00A4K8oshoXsdmous1zoC"></i></div>
+
+  <!-- 最终定稿 -->
+  <div class="final" data-page-node-id="gIbC1OK9FcnGY20IBGcfoC">
+    <div class="stack" data-page-node-id="W4kfIzm7rC6fpbFHqHCF6m">
+      <div class="brandB" data-page-node-id="t3ABkYLAKkVfroHGFmwxWH">BAZZ<span class="dot" data-page-node-id="OKVxmtj7KJQhee7X05Begr">.</span>AGENT</div>
+      <div class="rule" data-page-node-id="qHAWMdL3kve3z95oRafE0o"></div>
+      <div class="tagline" data-page-node-id="26b7U8mRpj1EGlRlOSew31"><span class="g" data-page-node-id="koZMuFt6HlnmpGH56BsTfe"></span>BINANCE DESKTOP · AI TRADING<span class="g" data-page-node-id="Qv0kj99oHabN7pUlMwcNt0"></span></div>
+    </div>
+    <div class="status" data-page-node-id="F0KHtgs9EA04aNcJjZW7mG"><i data-page-node-id="REWqNWPlKMiBjttG6nZIUG"></i>INITIALIZING CORE ENGINE</div>
+  </div>
+
+<script>
+  // 液态爆点溅射微粒：随机方向/距离/大小/延迟
+  document.querySelectorAll(".spray").forEach((s) => {
+    const x = parseFloat(s.dataset.x), y = parseFloat(s.dataset.y);
+    s.style.left = x + "%";
+    s.style.top = y + "%";
+    for (let k = 0; k < 14; k++) {
+      const d = document.createElement("i");
+      const ang = Math.random() * Math.PI * 2;
+      const dist = 80 + Math.random() * 340;
+      const sz = 4 + Math.random() * 9;
+      d.style.width = sz + "px";
+      d.style.height = sz + "px";
+      d.style.setProperty("--dx", Math.cos(ang) * dist + "px");
+      d.style.setProperty("--dy", Math.sin(ang) * dist + "px");
+      d.style.setProperty("--d", (Math.random() * 0.2).toFixed(2) + "s");
+      s.appendChild(d);
+    }
+  });
+</script>
+</body>
+</html>

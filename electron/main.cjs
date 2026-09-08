@@ -27,6 +27,9 @@ const RES_ICON_PNG = PACKAGED ? PKG_ICON_PNG : DEV_ICON_PNG;
 
 let backendProc = null;
 let mainWin = null;
+let splashWin = null;                 // 启动动画窗（splash），主界面就绪后淡出销毁
+const SPLASH_SWAP_MS = 280;           // 动画窗淡出时长
+const SPLASH_FAILSAFE_MS = 60 * 1000; // 兜底：后端异常迟迟不就绪时也不让动画窗永远挂着
 
 // 来自 renderer preload 的窗口控制 IPC（frameless 模式下需要）
 ipcMain.on("bazz:win-min", () => { if (mainWin && !mainWin.isDestroyed()) mainWin.minimize(); });
@@ -78,6 +81,45 @@ function waitServer(cb, tries = 100) {
     .on("error", () => { if (tries > 0) setTimeout(() => waitServer(cb, tries - 1), 500); });
 }
 
+// 启动动画窗：与主窗同尺寸同背景色（#0a0b0d），无边框不抢任务栏焦点，盖住后端拉起期间的黑屏
+function createSplash() {
+  if (splashWin && !splashWin.isDestroyed()) return;
+  splashWin = new BrowserWindow({
+    width: 1440, height: 900,
+    frame: false, resizable: false,
+    backgroundColor: "#0a0b0d",
+    show: false,
+    autoHideMenuBar: true,
+    webPreferences: { contextIsolation: true, nodeIntegration: false, spellcheck: false },
+  });
+  splashWin.setMenuBarVisibility(false);
+  splashWin.loadFile(path.join(__dirname, "splash.html"));
+  splashWin.once("ready-to-show", () => {
+    if (splashWin && !splashWin.isDestroyed()) splashWin.show();
+  });
+  splashWin.on("closed", () => { splashWin = null; });
+}
+
+// 主窗首帧就绪后：先显示主窗（盖住桌面），动画窗置顶淡出销毁，实现无闪衔接
+function swapToMain() {
+  if (mainWin && !mainWin.isDestroyed()) mainWin.show();
+  if (splashWin && !splashWin.isDestroyed()) {
+    try { splashWin.moveTop(); } catch {}
+    let op = 1;
+    const iv = setInterval(() => {
+      op -= 0.13;
+      if (!splashWin || splashWin.isDestroyed()) { clearInterval(iv); return; }
+      if (op <= 0) {
+        clearInterval(iv);
+        splashWin.destroy();
+        splashWin = null;
+      } else {
+        try { splashWin.setOpacity(op); } catch { clearInterval(iv); splashWin.destroy(); splashWin = null; }
+      }
+    }, Math.max(16, Math.round(SPLASH_SWAP_MS / 8)));
+  }
+}
+
 function createWindow() {
   const icon = fs.existsSync(RES_ICON_ICO) ? RES_ICON_ICO : (fs.existsSync(RES_ICON_PNG) ? RES_ICON_PNG : undefined);
   mainWin = new BrowserWindow({
@@ -94,7 +136,7 @@ function createWindow() {
   });
   mainWin.setMenuBarVisibility(false);
   mainWin.on("page-title-updated", (e) => e.preventDefault());   // 固定产品名，不被页面 title 覆盖
-  mainWin.once("ready-to-show", () => mainWin.show());
+  mainWin.once("ready-to-show", swapToMain);
   mainWin.on("maximize", () => mainWin.webContents.send("bazz:win-max-changed", true));
   mainWin.on("unmaximize", () => mainWin.webContents.send("bazz:win-max-changed", false));
   mainWin.webContents.on("did-fail-load", (_e, code, desc) => {
@@ -112,9 +154,18 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  createSplash();                       // 先上启动动画，盖住后端拉起期间的黑屏
   startBackend();
   createWindow();
-  app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+  // 兜底：后端/页面异常迟迟不就绪时，动画窗不永久悬挂
+  setTimeout(() => {
+    if (splashWin && !splashWin.isDestroyed()) {
+      if (mainWin && !mainWin.isDestroyed()) { splashWin.destroy(); mainWin.show(); }
+      else splashWin.destroy();
+      splashWin = null;
+    }
+  }, SPLASH_FAILSAFE_MS);
+  app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) { createSplash(); createWindow(); } });
 });
 
 app.on("window-all-closed", () => {
