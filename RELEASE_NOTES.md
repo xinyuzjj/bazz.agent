@@ -1,8 +1,15 @@
-# BAZZ.AGENT v1.2.15
+# BAZZ.AGENT v1.2.16
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
 
 本地优先的币安 AI 交易桌面前端：妖币/点火雷达 + 多模型 Agent 对话 + 带止损止盈的交易方案 + CEX 连接 + Agentic Wallet 链上操作 + 广场发文。行情扫描与 Agent 记忆**不需要任何 API Key**；真实下单/写盘一律先确认后执行。
+
+## 🆕 v1.2.16 更新要点
+
+1. **Agent 钱包扫码登录改为在浏览器打开配对页**：点击「扫码登录 Agent 钱包」后不再依赖应用内渲染二维码图片（此前在桌面端经常白屏/不显示二维码），而是调用 `shell.openExternal(urlForWeb)`，在系统默认浏览器里打开 Binance 配对页，用手机 Binance App 扫码确认。等待区显示「已在浏览器打开」+ 配对码，并继续轮询 `verify`，扫码后自动同步登录状态。
+2. **`AgentSigninCard` 自检测内置 runtime**：组件内部自行拉取 `/api/wallet/runtime` 作为兜底，不再仅依赖父组件传参，避免后端 `/api/wallet` 只查系统 PATH 而误判「CLI 未安装」；Chat 弹层同样识别 `runtime.bundled`。
+3. 后端 `wallet_client.py` 统一走 `wallet_runtime.baw_invocation()`，内置 Node + baw 优先于 PATH，状态/版本探测与命令转发保持一致。
+4. 仓库清理：`.gitignore` 忽略本机构建产物（`runtime/`、`scripts_tmp/`、`frontend/scout-bundle/`），避免 96MB+ 构建目录误入库。
 
 ## 🆕 v1.2.15 更新要点（hotfix）
 
@@ -73,7 +80,7 @@
 
 ## 🚀 快速开始（Windows 便携版）
 
-1. 下载并解压 `BAZZ.AGENT-v1.2.15-win32-x64-portable.zip`
+1. 下载并解压 `BAZZ.AGENT-v1.2.16-win32-x64-portable.zip`
 2. 运行 `BAZZ.AGENT.exe` —— 先播放完整 5+ 秒启动动画，随后自动生成 `workspace/` 工作区，运行数据全部收口其中
 3. 右上角配置 LLM（OpenAI 兼容端点，支持多模型 + 备份链），即可开始对话
 4. 行情 / 妖币雷达 / 市场扫描开箱即用，无需任何 Key
