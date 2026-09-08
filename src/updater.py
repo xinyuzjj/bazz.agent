@@ -409,19 +409,114 @@ def _zip_layout_ok(path: str) -> bool:
         return False
 
 
+# —— 并行分段下载 —— #
+_DL_SEGMENTS = 4          # 分段线程数（越大越吃连接数，GitHub 单连接限速时收益明显）
+_DL_MIN_PARALLEL = 8 << 20  # 小于 8MB 直接单流，分段反而有启动开销
+
+
+def _parallel_download(url: str, total: int, tmp: str) -> int:
+    """HTTP Range 并行分段下载。服务器不支持 Range 或任一段失败 → 抛异常回退单流。
+
+    全程写瞬态分段，拼接校验通过后再原子替换到 tmp —— 失败绝不破坏已有 tmp，
+    从而与单流「断点续传」安全共存。
+    """
+    segs = _DL_SEGMENTS
+    part = max(1, int(total / segs)) if total >= segs else total
+    # 探针：确认真支持 Range（206），否则返回 200 整包，分段无意义
+    with _session().get(url, stream=True, timeout=(10, 30),
+                        headers={"Range": "bytes=0-0"}) as r:
+        if r.status_code != 206:
+            r.close()
+            raise RuntimeError("服务器不支持断点分段")
+    seg_paths = [tmp + f".s{i}" for i in range(segs)]
+    cat = tmp + ".cat"
+    for p in seg_paths + [cat]:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+    done = [0] * segs
+    errors = []
+
+    def worker(i: int):
+        start = i * part
+        end = (total - 1) if i == segs - 1 else min((i + 1) * part - 1, total - 1)
+        try:
+            with _session().get(url, stream=True, timeout=(20, 120),
+                                headers={"Range": f"bytes={start}-{end}"}) as r:
+                if r.status_code != 206:
+                    raise RuntimeError(f"HTTP {r.status_code}")
+                with open(seg_paths[i], "wb") as f:
+                    for chunk in r.iter_content(chunk_size=1 << 18):
+                        if not chunk:
+                            continue
+                        f.write(chunk)
+                        done[i] += len(chunk)
+                        with _dl_lock:
+                            _dl_state["done"] = sum(done)
+        except Exception as e:
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker, args=(i,), daemon=True) for i in range(segs)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    if errors:
+        raise errors[0]
+    # 按顺序拼接 + 校验大小 → 原子替换到 tmp
+    with open(cat, "wb") as out:
+        for p in seg_paths:
+            with open(p, "rb") as f:
+                shutil.copyfileobj(f, out, 1 << 20)
+    size = os.path.getsize(cat)
+    if size != total:
+        raise RuntimeError(f"下载不完整（{size}/{total} 字节）")
+    os.replace(cat, tmp)
+    return size
+
+
 def _download_once(url: str, dest: str, tmp: str, read_timeout: float = 60.0):
-    """单次流式下载到 .part；抛错由外层重试。返回最终字节数。"""
-    done = 0
-    total = 0
+    """下载到 .part；优先并行分段加速，失败回退单流（含断点续传）。返回最终字节数。"""
+    # 先拿文件总大小（不解体整个响应）
     with _session().get(url, stream=True, timeout=(10, read_timeout)) as r:
         if r.status_code != 200:
             raise RuntimeError(f"下载失败：HTTP {r.status_code}")
         total = int(r.headers.get("content-length") or 0)
-        with _dl_lock:
-            _dl_state["total"] = total
-            _dl_state["done"] = 0
-            _dl_state["error"] = ""
-        with open(tmp, "wb") as f:
+        r.close()
+    with _dl_lock:
+        _dl_state["total"] = total
+        _dl_state["done"] = 0
+        _dl_state["error"] = ""
+    # 大文件优先并行分段；服务器不支持 / 中途失败则清理临时分段、回退单流
+    if total >= _DL_MIN_PARALLEL:
+        try:
+            return _parallel_download(url, total, tmp)
+        except Exception:
+            try:
+                for p in (tmp + f".s{i}" for i in range(_DL_SEGMENTS)):
+                    if os.path.exists(p):
+                        os.remove(p)
+                if os.path.exists(tmp + ".cat"):
+                    os.remove(tmp + ".cat")
+            except OSError:
+                pass
+    # 单流（断点续传：已存在 .part 说明上次下到哪，续着下，避免重头）
+    done = 0
+    if os.path.exists(tmp) and os.path.getsize(tmp) > 0:
+        done = os.path.getsize(tmp)
+        if done >= total:
+            done = 0
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+    headers = {"Range": f"bytes={done}-"} if done > 0 else None
+    with _session().get(url, stream=True, timeout=(10, read_timeout), headers=headers) as r:
+        if r.status_code not in (200, 206):
+            raise RuntimeError(f"下载失败：HTTP {r.status_code}")
+        mode = "ab" if done > 0 else "wb"
+        with open(tmp, mode) as f:
             for chunk in r.iter_content(chunk_size=1 << 16):
                 if not chunk:
                     continue
@@ -441,13 +536,13 @@ def _download_worker(url: str, dest: str):
         try:
             if requests is None:
                 raise RuntimeError("缺少 requests 依赖，无法下载。")
-            try:
-                if os.path.exists(tmp):
-                    os.remove(tmp)
-            except OSError:
-                pass
             _download_once(url, dest, tmp)
             if not _zip_layout_ok(tmp):
+                # 完整但结构坏：不能续传，清掉让下一轮重头下
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
                 raise RuntimeError("下载的压缩包结构异常（未找到 BAZZ.AGENT-win32-x64 顶层目录）。")
             os.replace(tmp, dest)
             with _dl_lock:
@@ -458,11 +553,6 @@ def _download_worker(url: str, dest: str):
             return
         except Exception as e:
             last_err = str(e)
-            try:
-                if os.path.exists(tmp):
-                    os.remove(tmp)
-            except OSError:
-                pass
             if attempt < DL_ATTEMPTS:
                 with _dl_lock:
                     _dl_state["error"] = f"{last_err}（第 {attempt}/{DL_ATTEMPTS} 次失败，重试中…）"
