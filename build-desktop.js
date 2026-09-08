@@ -76,6 +76,8 @@ rmrf(SCOUT);
 fs.mkdirSync(SCOUT, { recursive: true });
 fs.cpSync(PY_DIST, path.join(SCOUT, "ScoutBackend"), { recursive: true });
 fs.cpSync(FRONTEND_DIST, path.join(SCOUT, "ScoutBackend", "_internal", "frontend", "dist"), { recursive: true });
+// 版本标记：ScoutBackend 目录（updater.local_version 读取）+ 后续写一份到产物根目录
+fs.writeFileSync(path.join(SCOUT, "ScoutBackend", "BAZZ_VERSION.txt"), VERSION + "\n");
 ok("scout-bundle 就绪（含最新 dist）");
 
 // ---------- 4) 组装 electron app 壳 ----------
@@ -130,6 +132,8 @@ const packOpts = {
   for (const p of appPaths) console.log("  " + p);
   const exe = path.join(FINAL, "BAZZ.AGENT.exe");
   if (!fs.existsSync(exe)) fail(`未找到产物 exe：${exe}`);
+  // 版本标记（产物根目录 —— 更新整目录替换后随新版更新）
+  fs.writeFileSync(path.join(FINAL, "BAZZ_VERSION.txt"), VERSION + "\n");
   ok(`便携版就绪：${exe}`);
 
   // ---------- 6) 可选：压成最终便携 zip ----------

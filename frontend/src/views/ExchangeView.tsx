@@ -78,15 +78,15 @@ export function ExchangeView({ initialSymbol, initialTab, initialSide, halted, o
   useEffect(() => { loadOrders(); const t = setInterval(loadOrders, 8000); return () => clearInterval(t); }, [loadOrders]);
 
   // ---- 历史成交（myTrades 签名） ----
-  const [tradeSym, setTradeSym] = useState<string>("BTCUSDT");
+  const [tradeSym, setTradeSym] = useState<string>("");
   const [trades, setTrades] = useState<any[] | null>(null);
   const [tradesErr, setTradesErr] = useState("");
-  const [tradesNeedSym, setTradesNeedSym] = useState(false);
+  const [tradesMeta, setTradesMeta] = useState<{ aggregated?: boolean; scanned?: string[] } | null>(null);
   const loadTrades = useCallback(async () => {
     if (!cexConfigured) { setTrades(null); return; }
     try {
       const r: any = await api.cexTrades(tradeSym, 50);
-      setTradesNeedSym(!!r?.need_symbol);
+      setTradesMeta({ aggregated: !!r?.aggregated, scanned: r?.scanned });
       setTradesErr(r?.status === "ok" ? "" : (r?.message || t("exch.errTradesPerm")));
       setTrades(r?.trades ?? []);
     } catch (e: any) { setTradesErr(e?.message || String(e)); setTrades([]); }
@@ -254,22 +254,40 @@ export function ExchangeView({ initialSymbol, initialTab, initialSide, halted, o
         )}
       </div>
 
-      {/* 历史成交 —— /api/v3/myTrades 真实数据 */}
+      {/* 历史成交 —— /api/v3/myTrades 真实数据（默认按账户非零资产自动聚合） */}
       <div className="glass">
-        <div className="px-4 py-3 flex items-center gap-3 border-b border-line">
+        <div className="px-4 py-3 flex items-center gap-3 border-b border-line flex-wrap">
           <span className="font-mono text-[13px] text-ink"><span className="text-gold">▣</span> {t("exch.tradeHistory")}</span>
+          <span className={`pill ${tradeSym ? "pill-gold" : "pill-green"}`}>
+            {tradeSym ? t("exch.tradeFilterOn", { sym: tradeSym }) : t("exch.tradeAutoAgg")}
+          </span>
           <input value={tradeSym} onChange={(e) => setTradeSym(e.target.value.toUpperCase())}
-            placeholder="BTCUSDT" className="field font-mono text-[11px] w-[140px] py-1" spellCheck={false} />
+            placeholder={t("exch.tradeFilterPh")} className="field font-mono text-[11px] w-[140px] py-1" spellCheck={false} />
+          {tradeSym && (
+            <button onClick={() => setTradeSym("")} className="btn-ghost" title={t("exch.tradeClear")}>
+              <I.X size={11} /> {t("exch.tradeClear")}
+            </button>
+          )}
           <button onClick={() => loadTrades()} className="btn-ghost"><I.Refresh size={12} /> {t("exch.query")}</button>
           <span className="pill pill-dim">{t("exch.last50")}</span>
           <div className="ml-auto font-mono text-[10.5px] text-ink-mute">
-            {!cexConfigured ? t("exch.noKeyTrades") : tradesErr ? tradesErr : (trades?.length !== undefined ? t("exch.tradeCount", { n: trades.length }) : "")}
+            {!cexConfigured ? t("exch.noKeyTrades")
+              : tradesErr ? tradesErr
+              : (trades?.length !== undefined
+                  ? (tradesMeta?.aggregated
+                      ? t("exch.tradeCountAgg", { n: trades.length, k: tradesMeta.scanned?.length ?? 0 })
+                      : t("exch.tradeCount", { n: trades.length }))
+                  : "")}
           </div>
         </div>
         {trades === null ? (
           <div className="px-4 py-6 text-center font-mono text-[12px] text-ink-mute">{cexConfigured ? t("exch.loading") : t("exch.fillKeyFirst")}</div>
         ) : trades.length === 0 ? (
-          <div className="px-4 py-6 text-center font-mono text-[12px] text-ink-mute">{tradesNeedSym ? t("exch.needSym") : t("exch.noTrade", { sym: tradeSym })}</div>
+          <div className="px-4 py-6 text-center font-mono text-[12px] text-ink-mute">
+            {tradeSym
+              ? t("exch.noTrade", { sym: tradeSym })
+              : t("exch.noTradesAgg")}
+          </div>
         ) : (
           <>
             <div className="grid items-center px-4 py-2 border-b border-line text-[10px] font-mono tracking-[0.08em] text-ink-dim"

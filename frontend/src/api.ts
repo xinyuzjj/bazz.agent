@@ -113,7 +113,10 @@ export const api = {
   cexDisconnect: () => jpost("/wallet/cex/disconnect", {}),
   cexSummary: (force = false) => jget("/wallet/cex/summary" + (force ? "?force=1" : "")),
   cexOpenOrders: (symbol?: string) => jget("/wallet/cex/openorders" + (symbol ? "?symbol=" + encodeURIComponent(symbol) : "")),
-  cexTrades: (symbol: string, limit = 50) => jget("/wallet/cex/trades?symbol=" + encodeURIComponent(symbol) + "&limit=" + limit),
+  cexTrades: (symbol = "", limit = 50) => {
+    const q = symbol ? `?symbol=${encodeURIComponent(symbol)}&limit=${limit}` : `?limit=${limit}`;
+    return jget("/wallet/cex/trades" + q);
+  },
   cexAllOrders: (symbol: string, limit = 50) => jget("/wallet/cex/allorders?symbol=" + encodeURIComponent(symbol) + "&limit=" + limit),
   // 链上钱包（Binance Web3 Wallet API，BX- Key）：官方连接器桥
   web3Status: () => jget("/wallet/web3/status"),
@@ -159,6 +162,11 @@ export const api = {
     const r = await fetch(BASE + "/settings");
     return r.ok ? await r.json() : {};
   },
+  // 自动更新（GitHub Releases）
+  updateCheck: () => jget("/update/check"),
+  updateDownload: (url = "") => jpost("/update/download", { url }),
+  updateStatus: () => jget("/update/status"),
+  updateApply: (zip: string, pid: number) => jpost("/update/apply", { zip, pid }),
 };
 
 // 流式对话：返回 reader，调用方逐行解析 NDJSON

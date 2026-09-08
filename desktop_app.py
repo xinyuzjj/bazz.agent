@@ -38,6 +38,7 @@ import web3_wallet
 import binance_cli
 import plugin_host
 import room
+import updater
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 INDEX = os.path.join(APP_DIR, "src", "index.html")
@@ -1039,18 +1040,81 @@ def cex_openorders(symbol: Optional[str] = None):
 
 @app.get("/api/wallet/cex/trades")
 def cex_trades(symbol: Optional[str] = None, limit: int = 50):
-    """签名拉 /api/v3/myTrades —— 真实历史成交。symbol 必填（币安要求）。"""
+    """签名拉 /api/v3/myTrades —— 真实历史成交。
+    symbol 可选：不传时根据账户非零资产自动聚合所有 USDT 交易对的最近成交合并展示。"""
     if not cex_wallet.configured():
         return {"status": "error", "code": "not_configured",
                 "trades": [], "message": "尚未配置 Binance API Key / Secret。"}
     api_key, secret = cex_wallet._stored()
     try:
-        if not symbol:
-            # 没指定 symbol 时取 openOrders 的所有 symbol 汇总（账户里有挂单的交易对）
-            oo = cex_wallet._get_signed("/api/v3/openOrders", {}, api_key, secret) if False else None
-            return {"status": "ok", "trades": [], "need_symbol": True,
-                    "message": "请提供 ?symbol=BTCUSDT 等具体交易对；签名接口要求必填。"}
         limit = max(1, min(int(limit or 50), 1000))
+        if not symbol:
+            # 自动聚合：账户里非零资产 × USDT 交易对 → 多个 myTrades 合并去重
+            try:
+                acct = cex_wallet._get_signed("/api/v3/account", {}, api_key, secret)
+                non_zero = []
+                for b in (acct.get("balances") or []):
+                    try:
+                        free = float(b.get("free", 0) or 0)
+                        locked = float(b.get("locked", 0) or 0)
+                    except Exception:
+                        continue
+                    if (free + locked) > 0:
+                        non_zero.append(b.get("asset", ""))
+                # 配对交易对：USDT / USDC / FDUSD / BTC / ETH 锚定（USDT 为主）
+                QUOTES = ["USDT", "USDC", "FDUSD", "BTC", "ETH"]
+                syms = []
+                for asset in non_zero:
+                    if asset in ("USDT", "USDC", "FDUSD", "BUSD", "BTC", "ETH"):
+                        continue
+                    for q in QUOTES:
+                        if asset != q:
+                            syms.append(f"{asset}{q}")
+                # 去重 + 上限（避免一次过百次签名）
+                seen = set()
+                uniq_syms = []
+                for s in syms:
+                    if s not in seen:
+                        seen.add(s); uniq_syms.append(s)
+                uniq_syms = uniq_syms[:30]
+                all_trades: list = []
+                for s in uniq_syms:
+                    try:
+                        part = cex_wallet._get_signed("/api/v3/myTrades",
+                                                     {"symbol": s, "limit": 10},
+                                                     api_key, secret)
+                        if isinstance(part, list):
+                            all_trades.extend(part)
+                    except Exception:
+                        # 单个 symbol 失败不影响汇总
+                        continue
+                # 按 id 去重 + 按 time 倒序，截 limit
+                seen_id = set(); uniq = []
+                for tr in sorted(all_trades, key=lambda x: -(int(x.get("time") or 0))):
+                    tid = tr.get("id")
+                    if tid is None or tid in seen_id:
+                        continue
+                    seen_id.add(tid); uniq.append(tr)
+                uniq = uniq[:limit]
+                return {"status": "ok", "trades": uniq,
+                        "aggregated": True, "scanned": uniq_syms,
+                        "message": (f"已聚合账户 {len(uniq_syms)} 个非零 USDT 交易对"
+                                    f"（含 {len(uniq)} 笔最近成交，按时间倒序）。"
+                                    if uniq else "账户非零资产暂无成交记录。")}
+            except ValueError as e:
+                msg = str(e)
+                if "IP_PERM" in msg:
+                    return {"status": "error", "code": "ip_or_permission", "trades": [],
+                            "message": "成交接口需要 API Key 启用'读取'权限（-2015）。"}
+                if "KEY_FORMAT" in msg:
+                    return {"status": "error", "code": "wrong_key_type", "trades": [],
+                            "message": "Key 类型不被识别（-2014）。"}
+                return {"status": "error", "code": "api_error", "trades": [], "message": msg[:200]}
+            except Exception as e:
+                # 账户接口拉取失败时回退到旧提示（不致命）
+                return {"status": "ok", "trades": [], "need_symbol": True,
+                        "message": f"账户接口暂不可用（{str(e)[:80]}），请提供 ?symbol=BTCUSDT 等具体交易对。"}
+
         trades = cex_wallet._get_signed("/api/v3/myTrades",
                                         {"symbol": symbol, "limit": limit},
                                         api_key, secret)
@@ -1092,6 +1156,44 @@ def cex_allorders(symbol: str, limit: int = 50):
         return {"status": "error", "code": "api_error", "orders": [], "message": msg[:200]}
     except Exception as e:
         return {"status": "error", "code": "network", "orders": [], "message": str(e)[:200]}
+
+
+# ---------------- 自动更新（GitHub Releases） ----------------
+
+@app.get("/api/update/check")
+def update_check():
+    """对比本地版本与 GitHub Release latest。网络失败给 error 字段，不抛。"""
+    return updater.check()
+
+
+@app.post("/api/update/download")
+async def update_download(req: Request):
+    """后台线程下载最新便携 zip 到 update-cache；返回立即，进度走 /api/update/status。"""
+    b = await req.json()
+    url = b.get("url", "")
+    if not url:
+        rel = updater.check()
+        url = (rel.get("asset") or {}).get("url", "")
+        if not url:
+            return {"ok": False, "error": rel.get("error") or "未找到可下载的发布资产。"}
+    return updater.start_download(url)
+
+
+@app.get("/api/update/status")
+def update_status():
+    return updater.download_status()
+
+
+@app.post("/api/update/apply")
+async def update_apply(req: Request):
+    """应用更新：生成 PS 脚本 → DETACHED 启动 → 前端随后关窗触发替换重启。"""
+    b = await req.json()
+    wait_pid = int(b.get("pid") or 0)
+    st = updater.download_status()
+    zip_path = b.get("zip") or st.get("path") or ""
+    if not zip_path or not os.path.exists(zip_path):
+        return {"ok": False, "error": "更新包不存在，请先完成下载。"}
+    return updater.apply(zip_path, wait_pid)
 
 
 # ---- 链上钱包（Binance Web3 Wallet API，BX- Key）：官方连接器桥 ----

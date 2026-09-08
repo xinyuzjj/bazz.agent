@@ -11,6 +11,7 @@ import { SettingsView } from "./views/SettingsView";
 import { MemoryOverlay } from "./views/MemoryOverlay";
 import { PanicHaltModal } from "./views/PanicHaltModal";
 import { I18nProvider, useI18n } from "./i18n/i18n";
+import UpdateNotifier from "./components/UpdateNotifier";
 import { ThemeProvider } from "./theme/theme";
 
 // 兜底：捕获子树渲染错误，渲染降级提示而不让整页崩
@@ -156,6 +157,7 @@ function AppInner() {
         onConfirm={() => { setHalted(true); setPanicOpen(false); }}
         onResume={() => { setHalted(false); setPanicOpen(false); }}
       />
+      <UpdateNotifier />
     </>
   );
 }

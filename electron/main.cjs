@@ -36,6 +36,9 @@ ipcMain.on("bazz:win-max-toggle", () => {
 });
 ipcMain.on("bazz:win-close", () => { if (mainWin && !mainWin.isDestroyed()) mainWin.close(); });
 
+// 自动更新：把 Electron 主进程 pid 交给渲染层，用于更新脚本等待退出后整目录替换
+ipcMain.handle("bazz:app-pid", () => process.pid);
+
 // 若 8080 已被占用（同会话重复双击启动、或用户手滑开了两个），直接复用，不拉第二个后端。
 function portBusy() {
   return new Promise((resolve) => {

@@ -1,7 +1,7 @@
 {
   "name": "alpha-scout-desktop",
   "private": true,
-  "version": "1.2.4",
+  "version": "1.2.5",
   "type": "module",
   "main": "../electron/main.cjs",
   "description": "Agent OS Alpha Scout — Hermes-style Binance desktop agent (Electron + React)",

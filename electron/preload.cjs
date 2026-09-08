@@ -5,4 +5,5 @@ contextBridge.exposeInMainWorld("bazzWindow", {
   minimize: () => ipcRenderer.send("bazz:win-min"),
   toggleMaximize: () => ipcRenderer.send("bazz:win-max-toggle"),
   close: () => ipcRenderer.send("bazz:win-close"),
+  getPid: () => ipcRenderer.invoke("bazz:app-pid"),
 });
