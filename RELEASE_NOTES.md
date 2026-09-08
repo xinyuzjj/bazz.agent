@@ -1,10 +1,16 @@
-# BAZZ.AGENT v1.2.14
+# BAZZ.AGENT v1.2.15
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
 
 本地优先的币安 AI 交易桌面前端：妖币/点火雷达 + 多模型 Agent 对话 + 带止损止盈的交易方案 + CEX 连接 + Agentic Wallet 链上操作 + 广场发文。行情扫描与 Agent 记忆**不需要任何 API Key**；真实下单/写盘一律先确认后执行。
 
-## 🆕 v1.2.14 更新要点（hotfix）
+## 🆕 v1.2.15 更新要点（hotfix）
+
+1. **修掉 v1.2.14 残留的 UI 矛盾**：v1.2.14 修好内置 Node + baw 后，钱包页"状态卡"已亮起 `内置 · baw v1.9.0`，但"扫码登录"区域却仍然显示 `⚠ 未检测到 Agentic Wallet (baw) CLI` + 一个点了没反应的「安装 Agentic Wallet」按钮。根因是 `AgentSigninCard` 内部对 `installed` 的判定只看后端 `/api/wallet` 返回的 `state.cli.installed`（后端走 `shutil.which("baw")` 查系统 PATH），没认 `runtime.bundled`——所以内置已就绪也会被错判成"未安装"。本版统一规则：**`runtime.bundled` 优先**，只要内置就绪就直接进扫码登录；点「安装」按钮会得到明确提示（`v1.2.11+ 已内置 Node 20 + baw CLI，无需安装。请直接点「扫码登录 Agent 钱包」`），不再静默失败。
+2. **扫码登录区增加可见性提示**：内置场景下，扫码登录提示下方加一行绿字 `✓ 当前走 APP 内置 Node 20 + baw v1.9.0，无需任何安装`——和顶部状态卡形成呼应，再也不会让用户怀疑"为什么两个状态不一致"。
+3. **附带修了一个隐藏的体感问题**：v1.2.11 起后端 `/api/wallet/install` 已返回 `deprecated:true`，但前端按钮 click 后这个 `detail` 字段会被静默吞掉，看起来像"按钮没反应"。本版让 `install()` 在已内置场景下直接给友好提示，不再走那个无效 API。
+
+## 🔄 v1.2.14 更新要点（hotfix · 历史）
 
 1. **修一个从 v1.2.2 就潜伏的「Agent 钱包显示未安装」真因**：之前你看到 `CLI 未安装 / npm 缺失 + 一键安装` 按钮——其实是 PyInstaller 启动后 `BAZZ_APP_DIR` 被错误指向 `_internal/`，导致内置 Node + baw 的查找路径错位、`isfile(node.exe)` 永远 False、UI 回退到 v1.2.10 老分支。本版双保险：
    - **launcher.py 改用 `sys.executable` 推导 exe 目录**（PyInstaller onedir 正确做法），从源头修对。
@@ -67,7 +73,7 @@
 
 ## 🚀 快速开始（Windows 便携版）
 
-1. 下载并解压 `BAZZ.AGENT-v1.2.14-win32-x64-portable.zip`
+1. 下载并解压 `BAZZ.AGENT-v1.2.15-win32-x64-portable.zip`
 2. 运行 `BAZZ.AGENT.exe` —— 先播放完整 5+ 秒启动动画，随后自动生成 `workspace/` 工作区，运行数据全部收口其中
 3. 右上角配置 LLM（OpenAI 兼容端点，支持多模型 + 备份链），即可开始对话
 4. 行情 / 妖币雷达 / 市场扫描开箱即用，无需任何 Key

@@ -29,10 +29,10 @@ export function WalletView() {
   const [live, setLive] = useState<Record<string, RunResult>>({});
   const [copied, setCopied] = useState<string>("");
 
-  const installed = !!state?.cli?.installed || !!runtime?.bundled;   // v1.2.11: 内置也算安装
+  const installed = !!runtime?.bundled || !!state?.cli?.installed;   // v1.2.15: 内置 runtime 优先 —— 后端 state.cli.installed 只查 PATH
   const version = state?.cli?.version ?? runtime?.version ?? null;
   const connected = !!state?.status?.connected;
-  const npmOk = !!state?.npm_available || !!runtime?.bundled;        // v1.2.11: 内置 Node 也算 ok
+  const npmOk = !!runtime?.bundled || !!state?.npm_available;        // v1.2.15: 内置 Node 也算 ok
   const builtIn = !!runtime?.bundled;                                // v1.2.11: 是否走 APP 内置 runtime
 
   const load = async () => {
@@ -215,7 +215,7 @@ export function WalletView() {
                   <p className="text-[12.5px] text-ink-dim leading-relaxed mb-3">
                     {t("wallet.scanHintA")}<b className="text-gold">{t("wallet.binanceApp")}</b>{t("wallet.scanHintB")}
                   </p>
-                  <AgentSigninCard onDone={refreshAll} />
+                  <AgentSigninCard onDone={refreshAll} runtimeBundled={!!runtime?.bundled} />
                 </div>
               ) : (
                 /* 已连接：真实数据区 */

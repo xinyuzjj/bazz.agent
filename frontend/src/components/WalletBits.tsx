@@ -37,10 +37,13 @@ const trimZero = (n: number | string | undefined | null) => {
 
 /* ---------------- Agent 钱包：扫码登录卡 ---------------- */
 
-export function AgentSigninCard({ compact, onDone, onOpenPage }: {
+export function AgentSigninCard({ compact, onDone, onOpenPage, runtimeBundled }: {
   compact?: boolean;
   onDone?: () => void;
   onOpenPage?: () => void;
+  /** v1.2.15+: 父组件（WalletView）传入 runtime.bundled，避免被后端 state.cli.installed（仅查 PATH）
+   *  误导成"未安装"；APP 内置 Node 20 + baw CLI 即视为可直接扫码登录。 */
+  runtimeBundled?: boolean;
 }) {
   const t = useT();
   const [state, setState] = useState<any>(null);
@@ -60,10 +63,19 @@ export function AgentSigninCard({ compact, onDone, onOpenPage }: {
   useEffect(() => { load(); return () => { if (pollRef.current) window.clearInterval(pollRef.current); }; }, []);
 
   const connected = !!state?.status?.connected;
-  const installed = !!state?.cli?.installed;
+  // v1.2.15: runtime 内置优先 —— 后端 /api/wallet 的 cli.installed 只查 PATH，会漏掉 APP 自带的 runtime
+  const installed = !!runtimeBundled || !!state?.cli?.installed;
+  const runtimeVersion = (state as any)?.cli?.version || (state as any)?.runtime?.version || null;
 
   const install = async () => {
     setBusy("install"); setErr("");
+    // v1.2.15: 已内置 runtime 时不再调后端 install 端点（后端只会回 deprecated:true，
+    // 还会被吞掉 detail 让按钮"看起来点不动"），直接给出友好提示。
+    if (installed) {
+      setErr(t("wallet.bits.installDeprecated"));
+      setBusy(null);
+      return;
+    }
     try { await api.walletInstall(); await load(); }
     catch (e: any) { setErr(errText(e)); } finally { setBusy(null); }
   };
@@ -155,6 +167,11 @@ export function AgentSigninCard({ compact, onDone, onOpenPage }: {
     <div className="space-y-3">
       <div className="rounded-lg border border-line bg-elevated/20 px-4 py-3 font-mono text-[12px] text-ink-dim leading-relaxed">
         {t("wallet.bits.scanPrompt")}
+        {runtimeBundled && (
+          <div className="mt-1.5 text-[10.5px] text-green/80 font-mono">
+            ✓ {t("wallet.bits.cliReadyHint", { v: runtimeVersion ?? "?" })}
+          </div>
+        )}
       </div>
       <div className="flex items-center gap-2">
         <button onClick={startSignin} disabled={!!busy} className="btn-gold">
