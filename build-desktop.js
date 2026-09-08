@@ -96,8 +96,13 @@ fs.writeFileSync(
     main: "electron/main.cjs",
   }, null, 2)
 );
-fs.copyFileSync(path.join(PROJ, "electron", "main.cjs"), path.join(APP, "electron", "main.cjs"));
-fs.copyFileSync(path.join(PROJ, "electron", "preload.cjs"), path.join(APP, "electron", "preload.cjs"));
+// electron/ 下所有壳文件（main.cjs / preload.cjs / splash.html …）整体进 app —— 用目录复制，
+// 避免以后新增壳文件（如 splash.html）漏打包导致运行时加载失败
+const _electronSrc = path.join(PROJ, "electron");
+for (const _f of fs.readdirSync(_electronSrc)) {
+  const _s = path.join(_electronSrc, _f);
+  if (fs.statSync(_s).isFile()) fs.copyFileSync(_s, path.join(APP, "electron", _f));
+}
 ok("app 壳就绪");
 
 // ---------- 5) @electron/packager 离线打包 ----------

@@ -18,7 +18,7 @@ type State =
   | { s: "dl"; info: any; done: number; total: number; zip: string }
   | { s: "ready"; info: any; zip: string }   // 下载完成，可重启
   | { s: "applying" }                 // 已触发更新，等待退出
-  | { s: "err"; msg: string };
+  | { s: "err"; msg: string; auto?: boolean };   // auto=自动检查失败（短暂浮条后自动回 idle）
 
 export default function UpdateNotifier() {
   const t = useT();
@@ -26,14 +26,15 @@ export default function UpdateNotifier() {
   const hideFor = useRef<string>("");            // 本会话忽略的版本号
   const timer = useRef<any>(null);
 
-  const doCheck = useCallback(async () => {
-    if (st.s === "dl" || st.s === "applying") return;
+  const doCheck = useCallback(async (opts?: { silent?: boolean }) => {
+    if (st.s === "dl" || st.s === "applying" || st.s === "checking") return;
     setSt({ s: "checking" });
     try {
       const r = await api.updateCheck();
       if (!r?.ok) {
-        // 网络失败不打扰：静默回 idle（手动点开时才有 err 展示）
-        setSt({ s: "idle" });
+        // 检查失败（网络/服务器）——不再完全静默：浮一个小红条说明原因，
+        // 8 秒后自动收起；用户可点重试。手动场景则常驻卡片。
+        setSt({ s: "err", msg: r?.error || t("update.checkFail"), auto: !opts?.silent });
         return;
       }
       if (r.available && r.latest !== hideFor.current) {
@@ -44,19 +45,38 @@ export default function UpdateNotifier() {
       } else {
         setSt({ s: "idle" });
       }
-    } catch {
-      setSt({ s: "idle" });
+    } catch (e: any) {
+      setSt({ s: "err", msg: String(e?.message ?? e), auto: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [st.s]);
 
-  // 首次挂载 + 定时复查
+  // 首次挂载 + 定时复查（10 分钟 → 5 分钟，更及时感知新版本）
   useEffect(() => {
     doCheck();
-    timer.current = setInterval(doCheck, 10 * 60 * 1000);
+    timer.current = setInterval(doCheck, 5 * 60 * 1000);
     return () => { if (timer.current) clearInterval(timer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 窗口重新聚焦 → 立即复查（从别的窗口切回来就能发现刚发布的新版本）
+  useEffect(() => {
+    const onFocus = () => { if (document.visibilityState === "visible") doCheck(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doCheck]);
+
+  // 自动失败的红条：8 秒后自动回 idle，避免常驻打扰
+  useEffect(() => {
+    if (st.s !== "err" || !st.auto) return;
+    const tm = setTimeout(() => setSt((p) => (p.s === "err" ? { s: "idle" } : p)), 8000);
+    return () => clearTimeout(tm);
+  }, [st.s]);
 
   // 下载中轮询进度
   useEffect(() => {
