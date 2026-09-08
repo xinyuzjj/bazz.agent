@@ -8,8 +8,8 @@
 > **Desktop + Web.** Ships as a double-click Windows portable app *and* a
 > local web app — same FastAPI core, same React cockpit.
 
-[![Release v1.2.9](https://img.shields.io/badge/Release-v1.2.9-f0b90b?logo=github&logoColor=white)](https://github.com/xinyuzjj/bazz.agent/releases/latest)
-[![Download Windows](https://img.shields.io/badge/Download-Windows%20Portable-2ea44f?logo=windows&logoColor=white)](https://github.com/xinyuzjj/bazz.agent/releases/latest/download/BAZZ.AGENT-v1.2.9-win32-x64-portable.zip)
+[![Release v1.2.10](https://img.shields.io/badge/Release-v1.2.10-f0b90b?logo=github&logoColor=white)](https://github.com/xinyuzjj/bazz.agent/releases/latest)
+[![Download Windows](https://img.shields.io/badge/Download-Windows%20Portable-2ea44f?logo=windows&logoColor=white)](https://github.com/xinyuzjj/bazz.agent/releases/latest/download/BAZZ.AGENT-v1.2.10-win32-x64-portable.zip)
 [![Live Pages](https://img.shields.io/badge/Live%20Demo-Pages-181717?logo=githubpages&logoColor=white)](https://xinyuzjj.github.io/bazz.agent/)
 [![中文版](https://img.shields.io/badge/README-中文-f0b90b)](./README.zh-CN.md)
 
@@ -84,7 +84,7 @@ and they persist across restarts.
 
 | Artifact | How to run |
 |----------|------------|
-| [`BAZZ.AGENT-v1.2.9-win32-x64-portable.zip`](https://github.com/xinyuzjj/bazz.agent/releases/latest/download/BAZZ.AGENT-v1.2.9-win32-x64-portable.zip) | Unzip anywhere → double-click `BAZZ.AGENT.exe` |
+| [`BAZZ.AGENT-v1.2.10-win32-x64-portable.zip`](https://github.com/xinyuzjj/bazz.agent/releases/latest/download/BAZZ.AGENT-v1.2.10-win32-x64-portable.zip) | Unzip anywhere → double-click `BAZZ.AGENT.exe` |
 
 - **No Python, no Node, no install.** Electron + PyInstaller fused into one app.
 - First launch takes ~3–5 s (embedded backend warm-up), then the cockpit opens.

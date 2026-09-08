@@ -123,6 +123,9 @@ export function SettingsView({ settings, onSaved, onNav }: { settings: any; onSa
         </div>
       </div>
 
+      {/* 软件更新 —— 置顶展示：打开设置第一眼可见（v1.2.10 起从页底迁到此处） */}
+      <UpdatePanel />
+
       {/* 大模型配置（真实 · 多模型 + fallback 链） */}
       <div className="glass p-4">
         <div className="flex items-center gap-2 mb-3">
@@ -295,10 +298,7 @@ export function SettingsView({ settings, onSaved, onNav }: { settings: any; onSa
 
       {/* Skills footer 已删除（安装/运行统一在左侧「技能库」） */}
 
-      {/* 软件更新（自动更新 · 检查 / 下载 / 重启应用） */}
-      <UpdatePanel />
-
-      {/* Agent 4 通道操作面板 + Cron + MCP */}
+      {/* Agent 4 通道操作面板 + Cron + MCP（软件更新已上移至页首） */}
       <ChannelPanel onNav={onNav} />
       <CronPanel />
       <McpPanel />
