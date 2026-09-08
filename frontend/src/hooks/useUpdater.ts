@@ -78,9 +78,10 @@ export default function useUpdater(t: (key: string, params?: Record<string, stri
     }
   }, [mkErr]);
 
-  // 下载中轮询进度
+  // 下载中/已就绪轮询进度（v1.2.18：avail 态也轮询——后端 check() 已自动触发后台预下载，
+  // 这里顺着就能看到下载进度或直接跳到 ready，无需用户再点一下）
   useEffect(() => {
-    if (st.phase !== "dl") return;
+    if (st.phase !== "dl" && st.phase !== "avail") return;
     let alive = true;
     const tick = async () => {
       try {
@@ -91,14 +92,18 @@ export default function useUpdater(t: (key: string, params?: Record<string, stri
           return;
         }
         if (s?.ready) {
-          setSt((p) => p.phase === "dl" ? {
+          setSt((p) => (p.phase === "dl" || p.phase === "avail") ? {
             phase: "ready", cur: curRef.current, latest: (p as any).latest || "",
             html_url: (p as any).html_url || FALLBACK_URL, zip: s.path || (p as any).zip || "",
           } : p);
           return;
         }
         if (s?.active) {
-          setSt((p) => p.phase === "dl" ? { ...p, done: s.done || 0, total: s.total || 0, zip: s.path || (p as any).zip || "" } : p);
+          setSt((p) => (p.phase === "dl" || p.phase === "avail") ? {
+            phase: "dl", cur: curRef.current, latest: (p as any).latest || "",
+            html_url: (p as any).html_url || FALLBACK_URL, notes: (p as any).notes || "",
+            done: s.done || 0, total: s.total || 0, zip: s.path || (p as any).zip || "",
+          } : p);
         }
       } catch { /* 单次轮询失败忽略，下轮再试 */ }
     };

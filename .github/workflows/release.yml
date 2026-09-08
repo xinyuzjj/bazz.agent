@@ -134,6 +134,77 @@ jobs:
           Write-Host "=== SHA256SUMS ==="
           Get-Content $sums
 
+      - name: 生成 MANIFEST.json 与增量差分包 delta-<ver>.zip
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $root = "$env:BAZZ_STAGE/dist_desktop/BAZZ.AGENT-win32-x64"
+          $ver  = $env:BAZZ_VERSION
+          if (-not (Test-Path $root)) { throw "未找到打包目录: $root" }
+
+          # 1) 当前版全量清单（path 相对 app 根；path -> {s,h}）
+          $files = [ordered]@{}
+          Get-ChildItem -Path $root -Recurse -File | ForEach-Object {
+            $rel = $_.FullName.Substring($root.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+            $rel = $rel -replace '\\','/'
+            $files[$rel] = @{ s = [int64]$_.Length; h = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLower() }
+          }
+          $manifest = @{ version = $ver; generated_at = (Get-Date -Format o); files = $files }
+          $manifestJson = $manifest | ConvertTo-Json -Depth 6 -Compress
+          $outDir = "$env:BAZZ_STAGE/dist_desktop"
+          Set-Content -LiteralPath (Join-Path $outDir "MANIFEST.json") -Value $manifestJson -Encoding utf8
+          Write-Host "MANIFEST 生成：$($files.Count) 个文件"
+
+          # 2) 拉上一 release 的 MANIFEST.json 作为 diff 基线
+          $prevFiles = $null
+          $rels = gh release list --repo $env:GITHUB_REPOSITORY --json tagName,createdAt --limit 20 2>$null | ConvertFrom-Json
+          $prevRel = $rels | Where-Object { $_.tagName -ne $env:BAZZ_TAG } |
+                     Sort-Object { try { [datetime]$_.createdAt } catch { [datetime]::MinValue } } -Descending |
+                     Select-Object -First 1
+          if ($prevRel) {
+            $tmpDir = Join-Path $outDir "_prev_meta"
+            New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
+            gh release download $prevRel.tagName --pattern "MANIFEST.json" --repo $env:GITHUB_REPOSITORY --dir $tmpDir *> $null
+            $prevPath = Join-Path $tmpDir "MANIFEST.json"
+            if (Test-Path $prevPath) {
+              $prevMan = Get-Content $prevPath -Raw | ConvertFrom-Json
+              $prevFiles = $prevMan.files
+              Write-Host "diff 基线：$($prevRel.tagName)（$($prevFiles.PSObject.Properties.Count) 文件）"
+            }
+          }
+          if (-not $prevFiles) { Write-Host "无上一版清单 → 跳过差分包（客户端将整包下载）" }
+
+          # 3) 计算相对上一版的变化文件并打差分 zip
+          $changed = @()
+          foreach ($p in $files.Keys) {
+            $prop = $null
+            if ($prevFiles) { $prop = $prevFiles.PSObject.Properties[$p] }
+            if (-not $prop -or $prop.Value.h -ne $files[$p].h -or $prop.Value.s -ne $files[$p].s) { $changed += $p }
+          }
+          if ($changed.Count -gt 0 -and $prevFiles) {
+            $changedBytes = ($changed | ForEach-Object { [int64]$files[$_].s } | Measure-Object -Sum).Sum
+            $totalBytes = (Get-ChildItem -Path $root -Recurse -File | Measure-Object Length -Sum).Sum
+            $totalFiles  = $files.Count
+            if ($changedBytes -le 120MB -and $changed.Count -le ($totalFiles * 0.6)) {
+              $deltaPath = Join-Path $outDir "delta-$ver.zip"
+              Add-Type -AssemblyName System.IO.Compression.FileSystem
+              $dz = [IO.Compression.ZipFile]::Open($deltaPath, 'Create')
+              try {
+                foreach ($p in $changed) {
+                  $full = Join-Path $root ($p -replace '/','\')
+                  [byte[]]$buf = [IO.File]::ReadAllBytes($full)
+                  $e = $dz.CreateEntry("BAZZ.AGENT-win32-x64/$p", [IO.Compression.CompressionLevel]::Optimal)
+                  $es = $e.Open()
+                  try { $es.Write($buf, 0, $buf.Length) } finally { $es.Dispose() }
+                }
+              } finally { $dz.Dispose() }
+              Write-Host "差分包生成：$($changed.Count) 文件 / $([math]::Round($changedBytes/1MB,1)) MB → $deltaPath"
+            } else {
+              Write-Host "变化过大（$($changed.Count) 文件 / $([math]::Round($changedBytes/1MB,1)) MB）→ 跳过差分包，客户端整包下载"
+            }
+          }
+
       - name: 发布 / 更新 GitHub Release（介绍 = 仓库 RELEASE_NOTES.md）
         shell: pwsh
         env:
@@ -143,7 +214,9 @@ jobs:
           $zip = $env:BAZZ_ZIP
           $setup = "$env:BAZZ_STAGE/dist_desktop/BAZZ.AGENT-v$env:BAZZ_VERSION-setup.exe"
           $sums = Join-Path (Split-Path $env:BAZZ_ZIP -Parent) "SHA256SUMS"
-          $assets = @($zip, $setup, $sums)
+          $assets = @($zip, $setup, $sums, "$env:BAZZ_STAGE/dist_desktop/MANIFEST.json")
+          $delta = "$env:BAZZ_STAGE/dist_desktop/delta-$env:BAZZ_VERSION.zip"
+          if (Test-Path $delta) { $assets += $delta }
           # 优先用仓库内人工维护的产品介绍（更有可读性）；缺失时退回 GitHub 自动生成的 commit 摘要
           $notesFile = Join-Path $env:GITHUB_WORKSPACE "RELEASE_NOTES.md"
           if (-not (Test-Path $notesFile)) { $notesFile = $null }
@@ -158,10 +231,10 @@ jobs:
           } else {
             Write-Host "创建 Release $tag（介绍 = RELEASE_NOTES.md）"
             if ($notesFile) {
-              gh release create $tag $zip $setup $sums --repo $env:GITHUB_REPOSITORY `
+              gh release create $tag $assets --repo $env:GITHUB_REPOSITORY `
                 --title "BAZZ.AGENT $tag" --notes-file $notesFile
             } else {
-              gh release create $tag $zip $setup $sums --repo $env:GITHUB_REPOSITORY `
+              gh release create $tag $assets --repo $env:GITHUB_REPOSITORY `
                 --title "BAZZ.AGENT $tag" --generate-notes
             }
             if ($LASTEXITCODE -ne 0) { throw "release create 失败" }

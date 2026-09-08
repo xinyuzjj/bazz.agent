@@ -26,6 +26,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -47,12 +48,26 @@ FOLDER_NAME = "BAZZ.AGENT-win32-x64"      # zip 顶层目录 + 替换后新应�
 EXE_NAME = "BAZZ.AGENT.exe"
 ASSET_HINT = "win32-x64-portable.zip"
 CHECKSUM_ASSET = "SHA256SUMS"
+MANIFEST_ASSET = "MANIFEST.json"        # 全量文件清单（path -> {s, h}），更新完整性校验的真相源
+DELTA_ASSET_PREFIX = "delta-"           # 差分包资产前缀：delta-<ver>.zip（相对上一版的变化文件）
 VERSION_FILE = "BAZZ_VERSION.txt"
 DL_ATTEMPTS = 3                           # 下载重试次数（网络抖动/被掐断时有用）
 
 # —— 下载进度（模块级共享，前端轮询） —— #
 _dl_lock = threading.Lock()
-_dl_state = {"active": False, "total": 0, "done": 0, "path": "", "error": "", "ready": False, "started_at": 0}
+_dl_state = {"active": False, "total": 0, "done": 0, "path": "", "error": "", "ready": False,
+             "started_at": 0, "stage": "idle"}
+
+
+class _DiffFallback(Exception):
+    """增量差分路径内部失败标记：让调用者回退到整包下载。非网络/环境错误，无需上层处理。"""
+    pass
+
+
+# 本地由「增量差分」构建出来的目标 zip 路径集合。apply() 对这类包跳过「整包 SHA256 比对」
+# （整包 SHA 只能比对官方原始 zip 的哈希，本地重建的 zip blob 与之必然不同），
+# 因为构建时已对清单里每个文件做过 sha256 逐文件校验，安全性不降低。
+_PATCH_BUILT = set()
 
 
 def _ver_tuple(v: str):
@@ -180,6 +195,163 @@ def _sha256_of(path: str) -> str:
     return h.hexdigest()
 
 
+def _sha_stream(path: str) -> str:
+    """与 _sha256_of 等价的文件流式哈希（用于构建 zip 时逐成员校验）。"""
+    return _sha256_of(path)
+
+
+def _safe_rel(r: str) -> str:
+    """清洗清单里的相对路径：去开头 /、去 .. / . /空段，防 zip-slip 逃逸。"""
+    r = (r or "").replace("\\", "/")
+    while r.startswith("/"):
+        r = r[1:]
+    parts = [p for p in r.split("/") if p not in ("", " ", ".", "..")]
+    return "/".join(parts)
+
+
+def _fetch_manifest(rel: dict) -> dict:
+    """从 release 资产里拉 MANIFEST.json。拿不到 / 结构不对返回 {}。"""
+    for a in rel.get("assets", []) or []:
+        if a.get("name", "").lower() != MANIFEST_ASSET:
+            continue
+        url = a.get("browser_download_url", "")
+        try:
+            r = _session().get(url, timeout=(10, 30))
+            if r.status_code == 200:
+                j = r.json()
+                if isinstance(j, dict) and isinstance(j.get("files"), dict):
+                    return j
+        except Exception:
+            pass
+        break
+    return {}
+
+
+def _pick_delta_asset(rel: dict) -> str:
+    """取差分包资产 URL；没有返回 ""。"""
+    for a in rel.get("assets", []) or []:
+        n = a.get("name", "") or ""
+        if n.startswith(DELTA_ASSET_PREFIX) and n.lower().endswith(".zip"):
+            return a.get("browser_download_url", "") or ""
+    return ""
+
+
+def _download_entry(dest: str, url: str):
+    """入口线程：先尝试增量差分；无清单/无差分/校验不符则回退整包下载。"""
+    rel = {}
+    try:
+        rel = fetch_latest(timeout=15)
+    except Exception:
+        rel = {}
+    try:
+        _diff_worker(rel, dest, url)
+    except Exception as e:  # 兜底：任何未捕获异常都回退整包，绝不卡死更新
+        print(f"[updater] 增量差分异常，回退整包下载：{e}")
+        try:
+            _PATCH_BUILT.discard(dest)
+            if os.path.exists(dest + ".part"):
+                os.remove(dest + ".part")
+        except OSError:
+            pass
+        try:
+            _download_worker(url, dest)
+        except Exception:
+            pass
+
+
+def _diff_worker(rel: dict, dest: str, url: str):
+    """增量差分构建目标全量 zip（ZIP_STORED，本地直写）。
+
+    pipeline：
+      1. 拉 MANIFEST.json（当前版全量清单）→ 没有 → 回退整包。
+      2. 下载 delta-<ver>.zip（相对上一版的变化文件，通常只有几 MB）→ 解压到临时目录。
+      3. 按清单流式重建完整新树：成员来源优先取 delta（有就用、并校验），否则取本地
+         app_root 未变文件——边写边算 sha256 与清单比对，任一不符即失败。
+      4. 结构校验通过 → 替换为最终 zip，标记 ready 并记入 _PATCH_BUILT。
+      任一环节失败 → 抛 _DiffFallback / 对应元数据缺失 → 由调用方回退整包。
+    """
+    tmp = dest + ".part"
+    try:
+        _PATCH_BUILT.discard(dest)
+    except Exception:
+        pass
+
+    man = _fetch_manifest(rel)
+    files = man.get("files") if man else None
+    if not files:
+        raise _DiffFallback()
+    delta_url = _pick_delta_asset(rel)
+    if not delta_url:
+        raise _DiffFallback()
+    local = app_root()
+
+    # 1) 下载差分包（小；进度 = 差分字节）
+    patch_zip = os.path.join(update_cache_dir(), "delta-" + (os.path.basename(dest) or "bazz.zip"))
+    try:
+        if os.path.exists(patch_zip + ".part"):
+            os.remove(patch_zip + ".part")
+        _download_once(delta_url, patch_zip, patch_zip + ".part")
+        os.replace(patch_zip + ".part", patch_zip)   # 落盘（.part → 最终）
+    except Exception:
+        raise _DiffFallback()
+
+    # 2) 解压差分包到临时目录（顶层目录 = FOLDER_NAME）
+    patch_dir = os.path.join(update_cache_dir(), "patch-" + str(int(time.time() * 1000)))
+    try:
+        shutil.rmtree(patch_dir, ignore_errors=True)
+    except Exception:
+        pass
+    os.makedirs(patch_dir, exist_ok=True)
+    try:
+        with zipfile.ZipFile(patch_zip) as zf:
+            zf.extractall(patch_dir)
+    except Exception:
+        raise _DiffFallback()
+    patch_root = os.path.join(patch_dir, FOLDER_NAME)
+
+    # 3) 流式重建完整新树并逐文件校验
+    try:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    except OSError:
+        pass
+    try:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED) as zf:
+            for raw, meta in files.items():
+                r = _safe_rel(raw)
+                if not r:
+                    raise _DiffFallback()
+                src = os.path.join(patch_root, r)
+                if not _path_inside(src, patch_root) or not os.path.isfile(src):
+                    src = os.path.normpath(os.path.join(local, *r.split("/")))
+                    if not _path_inside(src, local) or not os.path.isfile(src):
+                        raise _DiffFallback()
+                if _sha_stream(src) != str(meta.get("h") or "").lower():
+                    raise _DiffFallback()
+                zf.write(src, FOLDER_NAME + "/" + r)
+        if not _zip_layout_ok(tmp):
+            raise _DiffFallback()
+    except Exception:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+    # 4) 收尾：替换为最终 zip + 清理临时目录
+    os.replace(tmp, dest)
+    try:
+        shutil.rmtree(patch_dir, ignore_errors=True)
+    except Exception:
+        pass
+    with _dl_lock:
+        _dl_state.update({"ready": True, "active": False, "error": "",
+                          "done": _dl_state.get("total") or 0, "path": dest, "stage": "ready"})
+    _PATCH_BUILT.add(dest)
+    print(f"[updater] 增量差分完成（清单 {len(files)} 项）：{dest}")
+
+
 def check(timeout: float = 12.0) -> dict:
     """对比本地/远端版本，返回给 /api/update/check。永不抛 —— 网络失败给 error 字段。"""
     cur = _local_version()
@@ -190,11 +362,26 @@ def check(timeout: float = 12.0) -> dict:
         mine = _ver_tuple(cur)
         asset = _pick_asset(rel)
         body = rel.get("body") or ""
+        available = bool(tag) and latest > mine
+        if available and asset.get("browser_download_url"):
+            # 后台预下载：检测到新版即开始（增量差分优先），用户打开「立即更新」时大概率已就绪。
+            # 幂等：已就绪/进行中/目标包已存在时都不重复。
+            try:
+                with _dl_lock:
+                    ready = _dl_state.get("ready")
+                    active = _dl_state.get("active")
+                target = os.path.join(update_cache_dir(),
+                                      os.path.basename(asset["browser_download_url"]).split("?", 1)[0])
+                if not ready and not active and not os.path.isfile(target):
+                    start_download(asset["browser_download_url"])
+            except Exception:
+                pass  # 预下载非关键路径，失败不影响 check 结果
         return {
             "ok": True,
             "current": cur,
             "latest": tag or rel.get("name", ""),
-            "available": bool(tag) and latest > mine,
+            "available": available,
+            "pre_downloading": available,
             "asset": {"name": asset.get("name", ""), "size": asset.get("size", 0),
                       "url": asset.get("browser_download_url", "")},
             "html_url": rel.get("html_url", "") or f"https://github.com/{GITHUB_REPO}/releases/latest",
@@ -287,15 +474,22 @@ def _download_worker(url: str, dest: str):
 
 
 def start_download(url: str) -> dict:
-    """后台线程下载 zip 到 update-cache/<asset 文件名>。返回立即。"""
+    """后台预下载更新包到 update-cache/<asset 文件名>。返回立即。
+
+    幂等：· 已 ready → 直接回报已是就绪，不重启线程；
+          · 进行中   → 回报 started:true（让前端轮询接管，不再视为重复任务错误）；
+          · 否则     → 起新线程走「增量差分 →（回退）整包」管线。
+    """
     name = url.rsplit("/", 1)[-1].split("?", 1)[0] or "bazz-agent.zip"
     dest = os.path.join(update_cache_dir(), name)
     with _dl_lock:
+        if _dl_state["ready"]:
+            return {"started": True, "ready": True, "path": _dl_state["path"] or dest}
         if _dl_state["active"]:
-            return {"started": False, "error": "已有下载任务进行中。", "path": _dl_state["path"]}
+            return {"started": True, "path": _dl_state["path"] or dest}
         _dl_state.update({"active": True, "ready": False, "error": "", "done": 0,
-                          "total": 0, "path": dest, "started_at": time.time()})
-    threading.Thread(target=_download_worker, args=(url, dest), daemon=True).start()
+                          "total": 0, "path": dest, "started_at": time.time(), "stage": "delta"})
+    threading.Thread(target=_download_entry, args=(dest, url), daemon=True).start()
     return {"started": True, "path": dest}
 
 
@@ -473,20 +667,26 @@ def apply(zip_path: str, wait_pid: int = 0) -> dict:
         if not _zip_layout_ok(zip_path):
             return {"ok": False, "error": "更新包结构异常（未找到 BAZZ.AGENT-win32-x64 顶层目录），请重新下载。",
                     "log": log}
-        # SHA256 校验（防下载包被篡改/损坏）：能从官 release 拿到校验和就强校验，不符即中止。
-        # 拿不到（网络抖动 / 旧 release 未挂 SHA256SUMS）则仅忽略，不阻塞正常更新。
-        try:
-            sums = _fetch_checksums(fetch_latest(timeout=15))
-            expected = sums.get(os.path.basename(zip_path), "")
-            if expected:
-                actual = _sha256_of(zip_path)
-                if actual != expected:
-                    return {"ok": False,
-                            "error": "更新包校验和不一致（可能被篡改或下载损坏）。已中止替换以保证安全，请重新下载。",
-                            "log": log}
-                print(f"[updater] SHA256 校验通过：{zip_path}")
-        except Exception as e:
-            print(f"[updater] 校验和获取失败，跳过校验：{e}")
+        # SHA256 校验（防下载包被篡改/损坏）：
+        #   · 本地「增量差分」构建的 zip → 构建时已逐文件校验清单 sha，整包 blob 与官方不同，
+        #     直接跳过整包比对。
+        #   · 官方整包下载 → 能从官 release 拿到校验和就强校验，不符即中止。
+        #   拿不到（网络抖动 / 旧 release 未挂 SHA256SUMS）则仅忽略，不阻塞正常更新。
+        if os.path.abspath(zip_path) in _PATCH_BUILT:
+            print(f"[updater] 本地增量构建包，跳过整包 SHA256（逐文件校验已通过）：{zip_path}")
+        else:
+            try:
+                sums = _fetch_checksums(fetch_latest(timeout=15))
+                expected = sums.get(os.path.basename(zip_path), "")
+                if expected:
+                    actual = _sha256_of(zip_path)
+                    if actual != expected:
+                        return {"ok": False,
+                                "error": "更新包校验和不一致（可能被篡改或下载损坏）。已中止替换以保证安全，请重新下载。",
+                                "log": log}
+                    print(f"[updater] SHA256 校验通过：{zip_path}")
+            except Exception as e:
+                print(f"[updater] 校验和获取失败，跳过校验：{e}")
         ps1 = _write_updater_script(zip_path, int(wait_pid or 0), os.getpid())
     except Exception as e:
         return {"ok": False, "error": f"生成更新脚本失败：{e}", "log": log}
