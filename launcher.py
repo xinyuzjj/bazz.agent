@@ -29,10 +29,5 @@ import desktop_app                       # PyInstaller 自动收集
 import state                             # 同上
 state.DB_PATH = os.path.join(_EXE_DIR, ".scout.db")
 
-import uvicorn
-uvicorn.run(
-    desktop_app.app,
-    host="127.0.0.1",
-    port=int(os.environ["BAZZ_PORT"]),
-    log_level="warning",
-)
+# 启动后端：端口被占（重复拉起/冲突）时自动切空闲端口并按中文提示，避免 [Errno 10048] 裸崩
+desktop_app.run_serve(int(os.environ["BAZZ_PORT"]))

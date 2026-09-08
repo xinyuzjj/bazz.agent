@@ -24,6 +24,33 @@ WORK_DIR = os.path.join(PROJECT_ROOT, "workspace")
 READ_BLACKLIST = {".git", ".venv", "venv", "node_modules", "__pycache__", "dist", ".agents", ".curator_backups", "bootstrap-cache"}
 
 
+def _decode_text(data: bytes) -> str:
+    """智能解码子进程/文件字节：优先 UTF-8，失败回退 GBK（中文 Windows 控制台输出），
+    再不行 latin-1 兜底。彻底解决「OS 中文报错在对话里变成乱码」。"""
+    if not data:
+        return ""
+    for enc in ("utf-8", "gbk"):
+        try:
+            return data.decode(enc)
+        except (UnicodeDecodeError, ValueError):
+            continue
+    return data.decode("latin-1")
+
+
+def _looks_binary(raw: bytes) -> bool:
+    """粗略判断是否二进制（SQLite 库/图片等），用于 read_text 提示而非吐乱码。"""
+    sample = raw[:2048]
+    if not sample:
+        return False
+    if b"\x00" in sample:
+        return True
+    ctl = sum(
+        1 for b in sample
+        if b == 0 or (b < 9) or (b in (11, 12)) or (13 < b < 32)
+    )
+    return ctl / len(sample) > 0.3
+
+
 def _allowlist_path(path: str) -> bool:
     """已安装 skill 的公开文件可读/可执行例外：.agents/skills/<name>/SKILL.md 和 scripts/cli.mjs。
     这两个是 npx skills add 拉下来的标准接口，允许 Agent 读说明 + 直接 node 跑 cli。"""
@@ -123,12 +150,14 @@ def read_text(path: str, max_bytes: int = 6000, max_lines: int = 260) -> dict:
         raw = open(p, "rb").read()
     except Exception as e:
         raise SandboxError(f"读取失败: {e}")
+    if _looks_binary(raw):
+        return {"content":
+                "[二进制文件（如 SQLite 数据库 state.db / 图片 / 压缩包），非文本，无法直接在此预览。"
+                "请用数据库工具（如 DB Browser for SQLite）或对应应用查看。]",
+                "path": p, "bytes": len(raw), "truncated": False, "binary": True}
     truncated = len(raw) > max_bytes
     data = raw[:max_bytes]
-    try:
-        text = data.decode("utf-8", "replace")
-    except Exception:
-        text = ""
+    text = _decode_text(data)
     lines = text.splitlines()
     if len(lines) > max_lines:
         lines = lines[:max_lines]
@@ -637,9 +666,10 @@ def _run_one(command: str, timeout: int, max_out: int) -> dict:
     if os.name == "nt" and exe_path.lower().endswith((".cmd", ".bat")):
         argv = ["cmd", "/c"] + argv
     try:
-        proc = subprocess.run(argv, cwd=PROJECT_ROOT, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=timeout)
-        out = (proc.stdout or "") + (("\n[stderr]\n" + proc.stderr) if proc.stderr else "")
+        proc = subprocess.run(argv, cwd=PROJECT_ROOT, capture_output=True, timeout=timeout)
+        out = _decode_text(proc.stdout or b"")
+        if proc.stderr:
+            out += "\n[stderr]\n" + _decode_text(proc.stderr)
         code = proc.returncode
     except subprocess.TimeoutExpired:
         raise SandboxError(f"命令超时（>{timeout}s），已终止: {command[:80]}")

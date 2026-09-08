@@ -1516,6 +1516,29 @@ if os.path.isdir(DIST_DIR):
     app.mount("/", StaticFiles(directory=DIST_DIR, html=True), name="dist")
 
 
-if __name__ == "__main__":
+def run_serve(preferred_port: int = 8080) -> None:
+    """启动 uvicorn。若首选端口已被其它进程占用（重复启动 / 端口冲突），自动向后探测空闲端口，
+    并打印清晰中文提示 —— 避免裸报错 [Errno 10048]，也避免在对话里留下乱码 exit 信息。"""
+    import socket
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8080)
+    chosen = None
+    for port in range(preferred_port, preferred_port + 16):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.bind(("127.0.0.1", port))
+                chosen = port
+            except OSError:
+                continue
+        if chosen is not None:
+            break
+    if chosen is None:
+        sys.exit(f"无法分配可用端口（{preferred_port}~{preferred_port + 15} 全被占用），请先关闭占用该端口的程序。")
+    if chosen != preferred_port:
+        print(f"[BAZZ] 端口 {preferred_port} 已被占用（可能已有一个实例在运行），改用可用端口 {chosen}："
+              f"http://127.0.0.1:{chosen}", flush=True)
+    uvicorn.run(app, host="127.0.0.1", port=chosen, log_level="warning")
+
+
+if __name__ == "__main__":
+    run_serve(int(os.environ.get("BAZZ_PORT", "8080")))
