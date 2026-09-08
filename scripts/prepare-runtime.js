@@ -203,14 +203,16 @@ async function main() {
   if (!fs.existsSync(nodeExe)) fail("找不到 node.exe：" + nodeExe);
   if (!fs.existsSync(npmCli)) fail("找不到 npm-cli.js：" + npmCli + "（Node zip 可能不完整）");
 
-  const env = { ...process.env, npm_config_prefix: RUNTIME, npm_config_registry: NPM_REG };
+  const env = { ...process.env, npm_config_registry: NPM_REG };
   if (BAZZ_PROXY) {
     env.HTTPS_PROXY = BAZZ_PROXY; env.HTTP_PROXY = BAZZ_PROXY; env.NPM_CONFIG_PROXY = BAZZ_PROXY;
-    env.HTTPS_PROXY_LOWER = BAZZ_PROXY; env.HTTP_PROXY_LOWER = BAZZ_PROXY;
   }
-  log("npm install @binance/agentic-wallet （~70MB，可能需要 1-2 分钟）…");
-  const r = spawnSync(nodeExe, [npmCli, "install", "--no-audit", "--no-fund", "--loglevel=error", "@binance/agentic-wallet"], {
-    cwd: RUNTIME, stdio: "inherit", env,
+  log("npm install @binance/agentic-wallet 到 runtime/node_modules（~70MB，1-2 分钟）…");
+  // 用 --prefix CLI 参数（不是 env npm_config_prefix）—— 前者装到 <prefix>/node_modules/，
+  // 后者会装到 <prefix>/lib/node_modules/。cwd 设到 prefix 之外避免 npm 误把它当 package。
+  const r = spawnSync(nodeExe, [npmCli, "install", "--no-audit", "--no-fund", "--no-save",
+    "--prefix", RUNTIME, "--loglevel=error", "@binance/agentic-wallet"], {
+    cwd: PROJ, stdio: "inherit", env,
   });
   if (r.status !== 0) fail("npm install 失败");
 
