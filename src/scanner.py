@@ -85,12 +85,19 @@ def get_snapshot(quote: str = "USDT", limit: int = 0, use_cache: bool = True) ->
     return rows[:limit] if limit and limit > 0 else list(rows)
 
 
+FUNDING_TTL = 30.0  # 秒；资金费率批量拉取较稳，加短 TTL 缓存避免每个 30s 轮询都全量打 premiumIndex
+_funding_cache = {"ts": 0.0, "rates": {}}
+
+
 def get_funding_rates() -> dict:
-    """一次性拉取所有交易对的资金费率（避免逐币请求）。失败回退单请求。"""
+    """一次性拉取所有交易对的资金费率（避免逐币请求）。~30s TTL 缓存。失败回退单请求。"""
+    now = time.time()
+    if _funding_cache["rates"] and now - _funding_cache["ts"] < FUNDING_TTL:
+        return _funding_cache["rates"]
     try:
         r = _session.get(f"{FAPI}/fapi/v1/premiumIndex", timeout=10)
         r.raise_for_status()
-        return {d["symbol"]: float(d.get("lastFundingRate", 0) or 0) for d in r.json()}
+        rates = {d["symbol"]: float(d.get("lastFundingRate", 0) or 0) for d in r.json()}
     except Exception:
         rates = {}
         for sym in TOP_SYMBOLS():  # 动态识别的大盘币（按当前成交额排序）
@@ -99,7 +106,9 @@ def get_funding_rates() -> dict:
                 rates[sym] = float(r.json().get("lastFundingRate", 0) or 0)
             except Exception:
                 rates[sym] = 0.0
-        return rates
+    _funding_cache["ts"] = now
+    _funding_cache["rates"] = rates
+    return rates
 
 
 def _fmt_signal(it: dict, change: float, funding: float,
@@ -126,11 +135,18 @@ def _fmt_signal(it: dict, change: float, funding: float,
 
 
 def scan_universe(min_change_pct: float = 0.5, min_funding: float = 0.01,
-                  universe_size: int = 150, max_signals: int = 16) -> list:
-    """在成交额前 universe_size 的全市场交易对上扫描异动（替代固定 20 币）。"""
+                  universe_size: int = 150, max_signals: int = 16,
+                  min_qv: float = 2e6) -> list:
+    """在成交额前 universe_size 的全市场交易对上扫描异动（替代固定 20 币）。
+
+    min_qv：流动性下限（USDT 成交额），把低流动性灰尘盘的"假异动"从扫描池剔除，
+    避免小盘庄股一根针就触发信号。默认 2M USDT/24h。
+    """
     rows = get_snapshot(limit=universe_size)
     if not rows:
         return []
+    if min_qv and min_qv > 0:
+        rows = [r for r in rows if r["quote_volume"] >= min_qv]
     rates = get_funding_rates()
     results = []
     for it in rows:

@@ -94,6 +94,18 @@ function AppInner() {
     setNav("chat");
   };
 
+  // 从行情 / 妖币页「一键分析」跳到对话，让 Agent 解读某标的（走势 / 位置 / 风险 / 入场）
+  const goAnalyze = (symbol: string) => {
+    const isEn = curLocale === "en";
+    const msg = isEn
+      ? `Analyze ${symbol} for me: using the current price, recent price action, volume and funding rate shown on the Markets page, give the trend direction, where the price sits in its 90-day range, the key risk warnings, and an entry plan with clear invalidation conditions. Clearly separate facts from speculation.`
+      : `帮我分析 ${symbol}：结合行情页当前价位 / 近期走势 / 成交量 / 资金费率，给出趋势方向、当前价位在 90 日区间的位置、关键风险提示，以及入场计划（含失效条件）。请明确区分事实与推测。`;
+    setPendingChatMsg(msg);
+    setTradeSymbol(undefined);
+    setTradeMode(undefined);
+    setNav("chat");
+  };
+
   const openMemory = () => { setNav("memory"); setMemoryOpen(true); };
   const closeMemory = () => { setMemoryOpen(false); setNav("chat"); };
 
@@ -110,7 +122,7 @@ function AppInner() {
     try {
       // 除 chat 外的活动视图（chat 常驻挂载，见下方）
       let active: React.ReactNode = null;
-      if (nav === "markets") active = <MarketsView onTrade={goTrade} onOrder={goChatOrder} />;
+      if (nav === "markets") active = <MarketsView onTrade={goTrade} onOrder={goChatOrder} onAnalyze={goAnalyze} />;
       else if (nav === "wallet") active = <WalletView />;
       else if (nav === "skills") active = <Web3SkillsView />;
       else if (nav === "cex") active = (

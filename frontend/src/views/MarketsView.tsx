@@ -48,9 +48,10 @@ const RADAR_COLS = {
   takeoff:  { tpl: "2fr 0.9fr 0.9fr 0.9fr 0.9fr 1.1fr 0.8fr 1fr 2.2fr", head: ["markets.col.symbol", "markets.h.price", "7D", "30D", "markets.col.fromhigh", "markets.h.quotevol", "markets.col.surge", "markets.col.verdict", "markets.col.action"] },
 } as const;
 
-export function MarketsView({ onTrade, onOrder }: {
+export function MarketsView({ onTrade, onOrder, onAnalyze }: {
   onTrade?: (symbol: string) => void;
   onOrder?: (symbol: string, mode: OrderMode) => void;
+  onAnalyze?: (symbol: string) => void;
 }) {
   const t = useT();
   const [data, setData] = useState<MarketData | null>(null);
@@ -85,9 +86,12 @@ export function MarketsView({ onTrade, onOrder }: {
     finally { setMLoading(false); }
   };
   useEffect(() => { load(); const t = setInterval(load, 30_000); return () => clearInterval(t); }, []);
+  // 每秒 tick，驱动「N 秒前」实时刷新角标
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
   useEffect(() => {
     fetchRadar("ignition"); fetchRadar("takeoff");
-    const t = setInterval(() => { fetchRadar("ignition"); fetchRadar("takeoff"); }, 300_000);
+    const t = setInterval(() => { fetchRadar("ignition"); fetchRadar("takeoff"); }, 180_000);
     return () => clearInterval(t);
   }, []);
   const radarRows = mode === "ignition" ? ign : tk;
@@ -139,7 +143,14 @@ export function MarketsView({ onTrade, onOrder }: {
     return `$${v.toFixed(0)}`;
   };
   const fmtRate = (r?: number) => r === undefined ? "—" : `${r > 0 ? "+" : ""}${(r * 100).toFixed(4)}%`;
-  const updated = data?.updated_at ? new Date(data.updated_at * 1000).toLocaleTimeString() : "—";
+  const updated = data?.updated_at ? (() => {
+    const secs = Math.max(0, Math.floor((now / 1000) - data.updated_at));
+    if (secs < 1) return t("markets.updatedNow");
+    if (secs < 60) return t("markets.updatedAgo", { n: secs });
+    const mins = Math.floor(secs / 60);
+    if (mins < 60) return t("markets.updatedMinAgo", { n: mins });
+    return new Date(data.updated_at * 1000).toLocaleTimeString();
+  })() : "—";
   const baseName = (s: string) => s.replace(/USDT$/, "");
 
   const Arrow = ({ on }: { on: boolean }) => (
@@ -268,6 +279,8 @@ export function MarketsView({ onTrade, onOrder }: {
                 <div className="font-mono tabular text-[12px] text-ink">{m.vol_ratio >= 1 ? "+" : ""}{m.vol_ratio.toFixed(1)}x</div>
                 <div><span className={`pill ${side.cls} text-[10px]`}>{t(side.label)}</span></div>
                 <div className="flex items-center gap-1.5">
+                  <button onClick={(e) => { e.stopPropagation(); onAnalyze?.(m.symbol); }}
+                    className="btn-ghost text-[10.5px] py-1" title={t("markets.analyze")}><I.Search size={10} /> {t("markets.analyze")}</button>
                   {m.side === "LONG" && (
                     <>
                       <button onClick={(e) => { e.stopPropagation(); onOrder?.(m.symbol, "spot-long"); }}
@@ -318,6 +331,8 @@ export function MarketsView({ onTrade, onOrder }: {
               <div className="flex items-center gap-2 min-w-0">
                 <span className="font-mono font-semibold text-ink group-hover:text-gold">{baseName(r.symbol)}</span>
                 <span className="font-mono text-[10px] text-ink-mute">/USDT</span>
+                <button onClick={(e) => { e.stopPropagation(); onAnalyze?.(r.symbol); }}
+                  className="btn-ghost px-1.5 py-0.5 text-[9.5px]" title={t("markets.analyze")}><I.Search size={9} /> {t("markets.analyze")}</button>
               </div>
               <div className="font-mono tabular text-ink text-[12.5px]">{fmtPrice(r.price)}</div>
               <div className={`font-mono tabular text-[12.5px] ${up(r.change_pct) ? "up" : "down"}`}>
@@ -377,6 +392,8 @@ export function MarketsView({ onTrade, onOrder }: {
               <div className="flex items-center gap-2 min-w-0">
                 <span className="font-mono font-semibold text-ink group-hover:text-gold transition-colors">{baseName(r.symbol)}</span>
                 <span className="font-mono text-[10px] text-ink-mute">/USDT</span>
+                <button onClick={(e) => { e.stopPropagation(); onAnalyze?.(r.symbol); }}
+                  className="btn-ghost px-1.5 py-0.5 text-[9.5px]" title={t("markets.analyze")}><I.Search size={9} /> {t("markets.analyze")}</button>
               </div>
               <div className="font-mono tabular text-ink text-[12.5px]">{fmtPrice(r.price)}</div>
               <div className={`font-mono tabular text-[12.5px] ${up(r.change_pct) ? "up" : "down"}`}>
