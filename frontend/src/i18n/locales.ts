@@ -1034,6 +1034,14 @@ export const zh: Dict = {
   "update.failed": "更新失败",
   "update.err": "发生未知错误",
   "update.retry": "重试",
+  "update.title": "软件更新",
+  "update.installed": "当前版本",
+  "update.latestVer": "最新版本",
+  "update.checkNow": "检查更新",
+  "update.upToDate": "已是最新",
+  "update.updateReadyPill": "有新版本",
+  "update.releaseNotes": "更新说明",
+  "update.openRelease": "打开 GitHub Release",
 };
 
 export const en: Dict = {
@@ -2048,4 +2056,12 @@ export const en: Dict = {
   "update.failed": "Update failed",
   "update.err": "Unknown error",
   "update.retry": "Retry",
+  "update.title": "Software Update",
+  "update.installed": "Current version",
+  "update.latestVer": "Latest version",
+  "update.checkNow": "Check for updates",
+  "update.upToDate": "Up to date",
+  "update.updateReadyPill": "Update ready",
+  "update.releaseNotes": "Release notes",
+  "update.openRelease": "Open GitHub Release",
 };

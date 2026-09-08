@@ -3,6 +3,7 @@ import { api } from "../api";
 import { I } from "../components/icons";
 import { CronPanel, McpPanel, ChannelPanel } from "./AdminPanels";
 import { useI18n } from "../i18n/i18n";
+import UpdatePanel from "../components/UpdatePanel";
 
 const LLM_PROVIDERS = [
   // presets 与后端 src/llm.py 的 PROVIDERS 完全对齐（按 2026-09 各厂商官方 API 现役目录核实）。
@@ -293,6 +294,9 @@ export function SettingsView({ settings, onSaved, onNav }: { settings: any; onSa
       {/* System metrics 行已删除 */}
 
       {/* Skills footer 已删除（安装/运行统一在左侧「技能库」） */}
+
+      {/* 软件更新（自动更新 · 检查 / 下载 / 重启应用） */}
+      <UpdatePanel />
 
       {/* Agent 4 通道操作面板 + Cron + MCP */}
       <ChannelPanel onNav={onNav} />
