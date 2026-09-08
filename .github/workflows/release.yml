@@ -120,6 +120,20 @@ jobs:
           $setup = "$env:BAZZ_STAGE/dist_desktop/BAZZ.AGENT-v$env:BAZZ_VERSION-setup.exe"
           if (-not (Test-Path $setup)) { throw "setup.exe 未生成: $setup" }
 
+      - name: 生成 SHA256SUMS 校验和
+        shell: pwsh
+        run: |
+          $zip = $env:BAZZ_ZIP
+          $setup = "$env:BAZZ_STAGE/dist_desktop/BAZZ.AGENT-v$env:BAZZ_VERSION-setup.exe"
+          $dir = Split-Path $zip -Parent
+          $sums = Join-Path $dir "SHA256SUMS"
+          if (Test-Path $sums) { Remove-Item $sums -Force }
+          Get-FileHash -Algorithm SHA256 -LiteralPath $zip, $setup | ForEach-Object {
+            "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf)
+          } | Set-Content -LiteralPath $sums -Encoding ascii
+          Write-Host "=== SHA256SUMS ==="
+          Get-Content $sums
+
       - name: 发布 / 更新 GitHub Release（介绍 = 仓库 RELEASE_NOTES.md）
         shell: pwsh
         env:
@@ -128,7 +142,8 @@ jobs:
           $tag = $env:BAZZ_TAG
           $zip = $env:BAZZ_ZIP
           $setup = "$env:BAZZ_STAGE/dist_desktop/BAZZ.AGENT-v$env:BAZZ_VERSION-setup.exe"
-          $assets = @($zip, $setup)
+          $sums = Join-Path (Split-Path $env:BAZZ_ZIP -Parent) "SHA256SUMS"
+          $assets = @($zip, $setup, $sums)
           # 优先用仓库内人工维护的产品介绍（更有可读性）；缺失时退回 GitHub 自动生成的 commit 摘要
           $notesFile = Join-Path $env:GITHUB_WORKSPACE "RELEASE_NOTES.md"
           if (-not (Test-Path $notesFile)) { $notesFile = $null }
@@ -143,10 +158,10 @@ jobs:
           } else {
             Write-Host "创建 Release $tag（介绍 = RELEASE_NOTES.md）"
             if ($notesFile) {
-              gh release create $tag $zip $setup --repo $env:GITHUB_REPOSITORY `
+              gh release create $tag $zip $setup $sums --repo $env:GITHUB_REPOSITORY `
                 --title "BAZZ.AGENT $tag" --notes-file $notesFile
             } else {
-              gh release create $tag $zip $setup --repo $env:GITHUB_REPOSITORY `
+              gh release create $tag $zip $setup $sums --repo $env:GITHUB_REPOSITORY `
                 --title "BAZZ.AGENT $tag" --generate-notes
             }
             if ($LASTEXITCODE -ne 0) { throw "release create 失败" }

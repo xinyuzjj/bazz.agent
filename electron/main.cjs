@@ -66,12 +66,16 @@ function portBusy() {
 
 async function startBackend() {
   if (await portBusy()) return;                     // 已有后端在跑
-  let cmd, args, cwd;
+  let cmd, args, cwd, env;
   if (PACKAGED) {
     const exeDir = path.join(process.resourcesPath, "scout-bundle", "ScoutBackend");
     cmd = path.join(exeDir, "ScoutBackend.exe");
     args = [];
     cwd = exeDir;
+    // 数据外置：workspace 迁到系统用户数据目录（%APPDATA%\BAZZ.AGENT\workspace），与应用代码分离。
+    // → 自更新只需替换程序文件，用户数据永不触碰；BAZZ_APP_DIR 同时锁定为 exe 目录，避免路径漂移。
+    const wsDir = path.join(app.getPath("appData"), "BAZZ.AGENT", "workspace");
+    env = { ...process.env, BAZZ_APP_DIR: exeDir, BAZZ_WORKSPACE: wsDir };
   } else {
     const venv = process.platform === "win32"
       ? path.join(ROOT, ".venv", "Scripts", "python.exe")
@@ -79,9 +83,10 @@ async function startBackend() {
     cmd = fs.existsSync(venv) ? venv : "python3";
     args = [path.join(ROOT, "desktop_app.py")];
     cwd = ROOT;
+    env = { ...process.env };                       // dev 态 workspace 留在仓库内
   }
   try {
-    backendProc = spawn(cmd, args, { cwd, stdio: "ignore", windowsHide: true });
+    backendProc = spawn(cmd, args, { cwd, env, stdio: "ignore", windowsHide: true });
     backendProc.on("error", (e) => console.error("[backend] 启动失败:", e.message));
   } catch (e) {
     console.error("[backend] spawn 异常:", e.message);

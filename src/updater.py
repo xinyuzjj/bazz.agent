@@ -22,6 +22,7 @@ v1.2.13 设计要点（吸取 v1.2.10「完全无效」教训）：
     等 Electron 主进程退出 → 杀残留后端 → 备份 WORKSPACE → 整目录替换 → 还原 WORKSPACE →
     删除 zip → 重启新 exe。
 """
+import hashlib
 import json
 import os
 import re
@@ -45,6 +46,7 @@ RELEASE_URL = f"{GITHUB_API}/repos/{GITHUB_REPO}/releases/latest"
 FOLDER_NAME = "BAZZ.AGENT-win32-x64"      # zip 顶层目录 + 替换后新应用目录名（build-desktop.js 契约）
 EXE_NAME = "BAZZ.AGENT.exe"
 ASSET_HINT = "win32-x64-portable.zip"
+CHECKSUM_ASSET = "SHA256SUMS"
 VERSION_FILE = "BAZZ_VERSION.txt"
 DL_ATTEMPTS = 3                           # 下载重试次数（网络抖动/被掐断时有用）
 
@@ -147,6 +149,35 @@ def _pick_asset(rel: dict) -> dict:
         if ASSET_HINT in name and name.lower().endswith(".zip"):
             return a
     return {}
+
+
+def _fetch_checksums(rel: dict) -> dict:
+    """解析 release 的 SHA256SUMS 资产 → {文件名: sha256小写}。拿不到返回 {}。"""
+    out = {}
+    for a in rel.get("assets", []) or []:
+        if a.get("name", "").lower() != CHECKSUM_ASSET:
+            continue
+        url = a.get("browser_download_url", "")
+        try:
+            r = _session().get(url, timeout=(10, 30))
+            if r.status_code == 200:
+                for line in r.text.splitlines():
+                    parts = line.strip().split()
+                    if len(parts) >= 2:
+                        out[parts[-1].lstrip("*")] = parts[0].lower()
+        except Exception:
+            pass
+        break
+    return out
+
+
+def _sha256_of(path: str) -> str:
+    """流式计算文件 SHA256（大 zip 防内存爆）。"""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def check(timeout: float = 12.0) -> dict:
@@ -295,10 +326,20 @@ def _write_updater_script(zip_path: str, wait_pid: int, backend_pid: int) -> str
     new_root = os.path.join(parent, FOLDER_NAME)   # 新应用目录（zip 顶层目录名，契约固定）
     new_exe = os.path.join(new_root, EXE_NAME)
     ws = workspace.WORKSPACE
-    ws_bak = os.path.join(parent, ".bazz-ws-backup")
-    new_ws = os.path.join(new_root, os.path.relpath(ws, root)) if _path_inside(ws, root) else ws
+    # workspace 是否仍在应用目录内（旧设计）。自 v1.2.17 起 Electron 已把 workspace 外置到
+    # %APPDATA%\BAZZ.AGENT —— 更新变成「纯程序替换」，绝不挪动用户数据，故不再需要备份/还原。
+    ws_inside_root = _path_inside(ws, root)
+    if ws_inside_root:
+        ws_bak = os.path.join(parent, ".bazz-ws-backup")
+        new_ws = os.path.join(new_root, os.path.relpath(ws, root)) if _path_inside(ws, root) else ws
+        zip_bak = os.path.join(ws_bak, os.path.relpath(zip_path, ws)) if _path_inside(zip_path, ws) else zip_path
+        ps_ws = ws                       # 让 PS 走「备份 WORKSPACE → 替换 → 还原」逻辑
+    else:
+        ws_bak = ""
+        new_ws = ws                      # 外置 workspace 在删除应用目录时不受影响，保持不变
+        zip_bak = zip_path               # workspace 不被挪走，zip 也不会随其迁移
+        ps_ws = ""                       # 外置时 PS 的 workspace 备份/还原块为空 → 自然跳过
     # zip 备份后位置：workspace 若在应用目录内，会被整目录挪到 ws_bak —— 解压前需切到新路径
-    zip_bak = os.path.join(ws_bak, os.path.relpath(zip_path, ws)) if _path_inside(zip_path, ws) else zip_path
     log = _log_path()
 
     log_cmd = ("Add-Content -Path '{log}' -Value ('[' + (Get-Date -Format o) + '] ' + $msg) "
@@ -398,7 +439,7 @@ try {{
 """.format(L_BODY=log_cmd,
            root=_ps1_quote(root), parent=_ps1_quote(parent),
            newRoot=_ps1_quote(new_root), newExe=_ps1_quote(new_exe),
-           ws=_ps1_quote(ws), wsBak=_ps1_quote(ws_bak), newWs=_ps1_quote(new_ws),
+           ws=_ps1_quote(ps_ws), wsBak=_ps1_quote(ws_bak), newWs=_ps1_quote(new_ws),
            zip=_ps1_quote(zip_path), zipBak=_ps1_quote(zip_bak),
            wait=int(wait_pid), backend=int(backend_pid))
     ps1 = os.path.join(update_cache_dir(), "apply-update.ps1")
@@ -432,6 +473,20 @@ def apply(zip_path: str, wait_pid: int = 0) -> dict:
         if not _zip_layout_ok(zip_path):
             return {"ok": False, "error": "更新包结构异常（未找到 BAZZ.AGENT-win32-x64 顶层目录），请重新下载。",
                     "log": log}
+        # SHA256 校验（防下载包被篡改/损坏）：能从官 release 拿到校验和就强校验，不符即中止。
+        # 拿不到（网络抖动 / 旧 release 未挂 SHA256SUMS）则仅忽略，不阻塞正常更新。
+        try:
+            sums = _fetch_checksums(fetch_latest(timeout=15))
+            expected = sums.get(os.path.basename(zip_path), "")
+            if expected:
+                actual = _sha256_of(zip_path)
+                if actual != expected:
+                    return {"ok": False,
+                            "error": "更新包校验和不一致（可能被篡改或下载损坏）。已中止替换以保证安全，请重新下载。",
+                            "log": log}
+                print(f"[updater] SHA256 校验通过：{zip_path}")
+        except Exception as e:
+            print(f"[updater] 校验和获取失败，跳过校验：{e}")
         ps1 = _write_updater_script(zip_path, int(wait_pid or 0), os.getpid())
     except Exception as e:
         return {"ok": False, "error": f"生成更新脚本失败：{e}", "log": log}

@@ -152,3 +152,38 @@ if not os.path.exists(_MIGRATE_V2_FLAG):
             f.write(time.strftime("%Y-%m-%d %H:%M:%S"))
     except OSError:
         pass
+
+
+# —— v3 一次性迁移：workspace 数据外置（%APPDATA%\BAZZ.AGENT\workspace）
+#   v1.2.17 起：Electron 打包态把 BAZZ_WORKSPACE 注入到系统用户数据目录，与应用代码分离，
+#   使自更新=纯程序替换、用户数据永不触碰。老用户升级前数据在 <APP_DIR>/workspace
+#   （旧整目录替换会把旧 workspace 还原到新应用目录），这里在首次启动外置时整体搬入新位置，
+#   写 .migrated_v3 标记防重。仅在「真的外置 + 目标空 + 老内部目录有内容」时执行。
+_MIGRATE_V3_FLAG = os.path.join(WORKSPACE, ".migrated_v3")
+if not os.path.exists(_MIGRATE_V3_FLAG):
+    internal_ws = os.path.join(APP_DIR, "workspace")
+    target_has_data = (
+        os.path.isfile(DB_PATH) or os.path.isfile(WALLET_PROFILE) or os.path.isfile(SQUARE_POSTS)
+        or (os.path.isdir(ATTACHMENTS) and os.listdir(ATTACHMENTS))
+        or (os.path.isdir(LOGS) and os.listdir(LOGS))
+        or os.path.isfile(os.path.join(WORKSPACE, ".migrated_v1"))
+        or os.path.isfile(os.path.join(WORKSPACE, ".migrated_v2"))
+    )
+    workspace_is_external = (
+        os.path.normcase(os.path.normpath(WORKSPACE))
+        != os.path.normcase(os.path.normpath(os.path.join(APP_DIR, "workspace")))
+    )
+    if workspace_is_external and os.path.isdir(internal_ws) and not target_has_data:
+        for name in os.listdir(internal_ws):
+            _move(os.path.join(internal_ws, name), os.path.join(WORKSPACE, name), f"v3 外置 → {name}")
+        try:
+            shutil.rmtree(internal_ws, ignore_errors=True)
+            if not os.path.isdir(internal_ws):
+                print(f"[workspace] v3 清理 {internal_ws}")
+        except Exception as e:
+            print(f"[workspace] v3 清理 {internal_ws} 失败: {e}")
+    try:
+        with open(_MIGRATE_V3_FLAG, "w", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S"))
+    except OSError:
+        pass

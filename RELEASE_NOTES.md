@@ -1,10 +1,16 @@
-# BAZZ.AGENT v1.2.16
+# BAZZ.AGENT v1.2.17
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
 
 本地优先的币安 AI 交易桌面前端：妖币/点火雷达 + 多模型 Agent 对话 + 带止损止盈的交易方案 + CEX 连接 + Agentic Wallet 链上操作 + 广场发文。行情扫描与 Agent 记忆**不需要任何 API Key**；真实下单/写盘一律先确认后执行。
 
-## 🆕 v1.2.16 更新要点
+## 🆕 v1.2.17 更新要点
+
+1. **用户数据外置（数据安全重构）**：`workspace/`（state.db / 钱包资料 / 广场发文 / 附件 / 日志）从应用目录迁到系统用户数据目录 `%APPDATA%\BAZZ.AGENT\workspace`，与应用代码完全分离。自更新从"备份→替换→还原"变成**纯程序替换，用户数据永不触碰**。首次启动会自动把旧数据从应用目录整体搬入新位置，不会丢数据。
+2. **更新包 SHA256 校验**：Release 新增 `SHA256SUMS` 资产；应用替换前先到官方校验和比对下载包哈希，不一致即刻中止（防止下载损坏或被篡改），校验和获取失败才放行并记录日志。
+3. **发行物升级**：每次 Release 同时产出 `win32-x64-portable.zip` + `setup.exe` 安装包 + `SHA256SUMS`。
+
+## ➕ v1.2.16 更新要点
 
 1. **Agent 钱包扫码登录改为在浏览器打开配对页**：点击「扫码登录 Agent 钱包」后不再依赖应用内渲染二维码图片（此前在桌面端经常白屏/不显示二维码），而是调用 `shell.openExternal(urlForWeb)`，在系统默认浏览器里打开 Binance 配对页，用手机 Binance App 扫码确认。等待区显示「已在浏览器打开」+ 配对码，并继续轮询 `verify`，扫码后自动同步登录状态。
 2. **`AgentSigninCard` 自检测内置 runtime**：组件内部自行拉取 `/api/wallet/runtime` 作为兜底，不再仅依赖父组件传参，避免后端 `/api/wallet` 只查系统 PATH 而误判「CLI 未安装」；Chat 弹层同样识别 `runtime.bundled`。
