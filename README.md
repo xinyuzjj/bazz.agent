@@ -10,15 +10,18 @@
 ║   ██████╔╝██║  ██║███████╗███████╗   ██║  ██║╚██████╔╝███████╗ ║
 ║   ╚═════╝ ╚═╝  ╚═╝╚══════╝╚══════╝   ╚═╝  ╚═╝ ╚═════╝ ╚══════╝ ║
 ║                                                              ║
-║            —— 你的币安副驾：先问过你，才替你扣扳机 ——           ║
+║            —— Your Binance Co-Pilot. It asks before it fires. —— ║
 ╚══════════════════════════════════════════════════════════════╝
 ```
 
-**把 Binance Agent OS 四块原生能力（MCP / Agentic Wallet / x402 支付 / Skill Hub）拧成一条真闭环的 AI 交易助手**
+**An AI trading copilot that fuses all four native Binance Agent OS capabilities**
+**(MCP / Agentic Wallet / x402 Payments / Skill Hub) into one real loop.**
 
 > `Scan → Analyze → Propose → Human-Approval → Execute`
 >
-> **装一个没问题？——先问你。** 桌面便携版（双击即跑） · 本地 Web 版 · 同一套代码。
+> **Every other AI chatbox just *talks*. BAZZ.AGENT *acts* — but only after you nod.** Portable desktop · Local web · Same codebase.
+
+**🌐 English | [中文文档](./README.zh-CN.md)**
 
 [![Release](https://img.shields.io/badge/Release-v1.2.18-f0b90b?logo=github&logoColor=white)](https://github.com/xinyuzjj/bazz.agent/releases/latest)
 [![Portable](https://img.shields.io/badge/Download-portable.zip-2ea44f?logo=windows&logoColor=white)](https://github.com/xinyuzjj/bazz.agent/releases/latest/download/BAZZ.AGENT-v1.2.18-win32-x64-portable.zip)
@@ -26,190 +29,190 @@
 [![Pages](https://img.shields.io/badge/Live-Pages-181717?logo=githubpages&logoColor=white)](https://xinyuzjj.github.io/bazz.agent/)
 [![中文](https://img.shields.io/badge/README-中文-f0b90b)](./README.zh-CN.md)
 
-[![Track A](https://img.shields.io/badge/Binance%20Agent%20OS-Track%20A-f0b90b)](#🏆-hackathon)
-[![Python](https://img.shields.io/badge/Python-3.11%2B-3776ab?logo=python&logoColor=white)](#-技术栈)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688?logo=fastapi&logoColor=white)](#-技术栈)
-[![React](https://img.shields.io/badge/React%2018-61dafb?logo=react&logoColor=222)](#-技术栈)
-[![Electron](https://img.shields.io/badge/Electron-31-47848f?logo=electron&logoColor=white)](#-架构)
-[![Vite](https://img.shields.io/badge/Vite-5-646cff?logo=vite&logoColor=white)](#-技术栈)
+[![Track A](https://img.shields.io/badge/Binance%20Agent%20OS-Track%20A-f0b90b)](#-hackathon)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-3776ab?logo=python&logoColor=white)](#-tech-stack)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688?logo=fastapi&logoColor=white)](#-tech-stack)
+[![React](https://img.shields.io/badge/React%2018-61dafb?logo=react&logoColor=222)](#-tech-stack)
+[![Electron](https://img.shields.io/badge/Electron-31-47848f?logo=electron&logoColor=white)](#-architecture)
+[![Vite](https://img.shields.io/badge/Vite-5-646cff?logo=vite&logoColor=white)](#-tech-stack)
 [![MIT](https://img.shields.io/badge/license-MIT-success)](#-license)
 
 ![Main cockpit](./docs/screenshot.png)
 
-> 🎬 **88 秒真实操作实录** —— 历史会话 → 行情雷达 → 一键"现货买入"跳对话等 Agent 分析 → 记忆 → 钱包 → 设置。
-> [▶ 在线观看 (Pages)](https://xinyuzjj.github.io/bazz.agent/#demo) · [⬇ 下载 MP4 (3.2 MB)](./docs/video/BAZZ-demo-v1.mp4)
+> 🎬 **88s real-footage walkthrough** — history → market radar → one-tap "Spot Buy" dropped into an Agent chat and analyzed → memory → wallet → settings.
+> [▶ Watch on Pages](https://xinyuzjj.github.io/bazz.agent/#demo) · [⬇ MP4 (3.2 MB)](./docs/video/BAZZ-demo-v1.mp4)
 
 </div>
 
 ---
 
-## 📑 目录
+## 📑 Table of Contents
 
-1. [它不是另一个聊天框](#-它不是另一个聊天框)
-2. [核心闭环](#-核心闭环)
-3. [看家本领](#-看家本领)
-4. [快速开始](#-快速开始)
-5. [四块原生能力](#-四块原生能力--真实协议不是摆设)
-6. [技术栈](#-技术栈)
-7. [架构](#-架构)
-8. [安全模型](#-安全模型)
-9. [目录结构](#-目录结构)
+1. [It is not another chatbox](#-it-is-not-another-chatbox)
+2. [The core loop](#-the-core-loop)
+3. [What it does](#-what-it-does)
+4. [Quick start](#-quick-start)
+5. [The four native capabilities](#-the-four-native-capabilities--real-protocols-not-widgets)
+6. [Tech stack](#-tech-stack)
+7. [Architecture](#-architecture)
+8. [Security model](#-security-model)
+9. [Project layout](#-project-layout)
 10. [Hackathon](#-hackathon)
 
 ---
 
-## 🎯 它不是另一个聊天框
+## 🎯 It is not another chatbox
 
-AI 助手都在**说话**。BAZZ.AGENT **做事** —— 但你必须先点头。
+AI assistants all **talk**. BAZZ.AGENT **acts** — but you must approve first.
 
-这**不是**给 Binance API 套层聊天皮肤。它是一个跑在你币安账户上的**智能体操作系统**：
+This is **not** a chat skin over the Binance API. It is an **agent operating system** running inside your Binance account:
 
-- 读的是 Agent OS 暴露出来的**真实市场**；
-- 直接驱动**四块官方能力**（MCP / Wallet / x402 / Skill Hub）；
-- 凡是敏感动作（下单 / 转账 / 签名支付）一律在对话里弹出一张 `确认` 卡，**等你亲手确认**，才落在你的真实钥匙 / 无密钥 MPC 钱包上。
+- It reads the **real market** exposed by Agent OS;
+- It drives the **four native capabilities** (MCP / Wallet / x402 / Skill Hub) directly;
+- Every sensitive action (order / transfer / signed payment) drops a `Confirm` card into the chat — **executed only after you click** it, on your real keys / keyless MPC wallet.
 
-工作台是 Hermes 风格的三分区**交易舱**：
+The cockpit is a Hermes-style three-pane **trading desk**:
 
-| 舱位 | 装了什么 |
-|------|----------|
-| **左** | 会话 / 人格 / 工具 / 文件 |
-| **中** | Agent 对话 · 实时工具卡 · SSE 流式输出 |
-| **右** | 实时信号台 · 持仓与账户面板 |
+| Pane | Holds |
+|------|-------|
+| **Left** | Sessions / personas / tools / files |
+| **Center** | Agent chat · live tool cards · SSE streaming |
+| **Right** | Live signal feed · positions & account panel |
 
-顶栏**一键**切换深/浅色主题、中/英界面，且重启后自动记住。
+The top bar toggles **dark/light theme** and **Chinese/English** in one click — remembered across restarts.
 
 ---
 
-## 🔁 核心闭环
+## 🔁 The core loop
 
 ```
         ┌─────────────┐
-   ┌───▶│   📡 扫描    │  全市场雷达 · Monster Radar · 24h 盯盘
+   ┌───▶│   📡 SCAN    │  Full-market radar · Monster Radar · 24h watch
    │    └──────┬──────┘
    │           ▼
    │    ┌─────────────┐
-   │    │   🧠 分析    │  多模型 LLM · 多工具 · 规则引擎兜底
+   │    │   🧠 ANALYZE │  Multi-model LLM · multi-tool · rules engine fallback
    │    └──────┬──────┘
    │           ▼
    │    ┌─────────────┐
-   │    │   💡 建议    │  带杠杆/仓位/止盈止损的信号卡
+   │    │   💡 PROPOSE  │  Signal card with leverage / position / TP-SL
    │    └──────┬──────┘
    │           ▼
    │    ┌─────────────┐
-   │    │   ✅ 人工确认 │  ←——— 关键：你在对话里点「确认」
+   │    │   ✅ APPROVE  │  ←── key: you press Confirm in the chat
    │    └──────┬──────┘
    │           ▼
    │    ┌─────────────┐
-   │    │   ⚡ 执行    │  CEX / Agentic Wallet / x402
+   │    │   ⚡ EXECUTE │  CEX / Agentic Wallet / x402
    │    └─────────────┘
-   └──────────────────┘（执行完回到扫描，继续盯）
+   └──────────────────┘ (after execution, back to scanning)
 
-   敏感动作默认需要确认；可对可信操作勾选白名单。
+   Sensitive actions require approval by default; whitelist trusted ones if you want.
 ```
 
 ---
 
-## ✨ 看家本领
+## ✨ What it does
 
-| | 你得到的是什么 |
+| | What you get |
 |---|---|
-| 📡 **实时行情雷达** | 全市场异动扫描 · Monster Radar 爆发窗口 · 24h 自动盯盘 · BTC/ETH/SOL/BNB 实时报价，**零 API Key**。 |
-| 🗣 **对话式智能体舱** | SSE/NDJSON 流式对话 · 实时工具卡 · 文件/语音输入 · 多供应商 LLM，附**全离线可用的确定性规则引擎**兜底。 |
-| ✅ **人在回路（默认如此）** | 每笔交易 / 转账 / 签名支付都有一张确认卡——**敏感操作从不静默执行**。 |
-| 🧠 **长期记忆** | 从对话自动学习跨会话偏好与风控锚点，索引、可检索，在「记忆」面板回看。 |
-| 👛 **Agentic Wallet（无密钥 MPC）** | 经 `baw` 交换 BSC / Ethereum / Base / Solana，尊重官方每日限额；**私钥永不经过应用**。 |
-| 💹 **真实 CEX 交易** | 经白名单 `binance-cli` profile 在真实账户做现货 / 合约 / 兑换；CEX 与 Web3 两套钥匙体系严格隔离。 |
-| 🧩 **Skill Hub** | 预装 14 个官方技能 · 意图驱动 · install/run/remove 全程防路径穿越。 |
-| 🔌 **插件** | 丢进 `plugins/` 即扩能力（如 `scout-signals`）——一个 `main.py` + 清单挂钩进回路，不动核心。 |
-| 🤖 **多机器人工作区** | 任意创建人格化 bot（各自技能、各自记忆域），各聊各的会话。 |
-| 👥 **群聊 · 派单给 bot** | 建房间 · `@提及` 多个 bot 丢任务 · 成员轮番作答 · 共享房间日志。 |
-| ⏰ **定时自动化（CRON）** | 可视化 cron 面板：用大白话写"每天 09:00 扫一次市场"，可运行 / 暂停 / 手动触发。 |
-| 💸 **x402 / B402 支付** | 机器对机器支付：离线 Permit2 EIP-712 签名，官方 Facilitator 验证并链上结算。 |
-| 📣 **广场发文** | 文字 / 长文 / 图片 / 视频发到 Binance Square，保留所有发布记录的本地台账。 |
-| 🖥 **桌面 + Web，一套代码** | 无边框 Windows 便携版（Electron + 内置 PyInstaller 后端，无需 Python/Node）*和*浏览器同一套舱。 |
-| 🌓 **双语 & 可换肤** | 中 / 英 + 深金 ↔ 浅色，顶栏各一键，重启记住。 |
-| 🔄 **增量自动更新** | MANIFEST + 差分包，只下载变化文件（~几 MB 而非整包），后台预下载、改完秒应用重启。 |
-| 🔒 **本地优先，数据分离** | 会话 / 记忆 / 配置外置到 `%APPDATA%\BAZZ.AGENT`——更新只换程序，**永不触碰你的数据**。 |
+| 📡 **Live market radar** | Full-market anomaly scan · Monster Radar burst windows · 24h auto-watch · real-time BTC/ETH/SOL/BNB prices — **zero API key**. |
+| 🗣 **Conversational agent cockpit** | SSE/NDJSON streaming · live tool cards · file/voice input · multi-provider LLM, plus a **fully offline deterministic rules engine** fallback. |
+| ✅ **Human-in-the-loop (default)** | Every trade / transfer / signed payment has a confirm card — **sensitive ops are never silent**. |
+| 🧠 **Long-term memory** | Learns cross-session preferences & risk anchors from your chats; indexed, searchable, viewable in the Memory panel. |
+| 👛 **Agentic Wallet (keyless MPC)** | Swap BSC / Ethereum / Base / Solana via `baw`, respecting official daily limits; **private keys never touch the app**. |
+| 💹 **Real CEX trading** | Spot / futures / convert on your real account via whitelisted `binance-cli` profile; CEX and Web3 key sets strictly isolated. |
+| 🧩 **Skill Hub** | 14 official skills preloaded · intent-driven · install/run/remove with path-traversal protection. |
+| 🔌 **Plugins** | Drop into `plugins/` to extend (e.g. `scout-signals`) — one `main.py` + manifest hooks into the loop without touching core. |
+| 🤖 **Multi-bot workspaces** | Spin up persona bots (own skills, own memory domains), each with its own conversations. |
+| 👥 **Group chat · assign to bots** | Make a room, `@mention` several bots, drop a task, they answer in turns and share a room log. |
+| ⏰ **Scheduled automation (CRON)** | Visual cron panel: write "scan the market every day at 09:00" — run / pause / trigger manually. |
+| 💸 **x402 / B402 payments** | Machine-to-machine payments: offline Permit2 EIP-712 signing, verified by the official Facilitator and settled on-chain. |
+| 📣 **Square publishing** | Text / long-form / image / video to Binance Square, with a local ledger of everything you've posted. |
+| 🖥 **Desktop + Web, one codebase** | Frameless Windows portable (Electron + embedded PyInstaller backend, no Python/Node needed) *and* the same cockpit in a browser. |
+| 🌓 **Bilingual & skinnable** | Chinese / English + deep-gold ↔ light, each one-key from the top bar, remembered on restart. |
+| 🔄 **Incremental auto-update** | MANIFEST + delta pack — downloads only the changed files (~a few MB vs the whole bundle), prefetches in the background, applies in about a second. |
+| 🔒 **Local-first, data separated** | Sessions / memory / config live outside the app in `%APPDATA%\BAZZ.AGENT` — updates replace only the program, **never touch your data**. |
 
 ---
 
-## ⚡ 快速开始
+## ⚡ Quick start
 
-### 方式一 · Windows 一键下载（推荐）
+### Option 1 · Windows, one-click download (recommended)
 
-| 产物 | 怎么跑 |
+| Artifact | How to run |
 |------|--------|
-| 🎒 [portable.zip](https://github.com/xinyuzjj/bazz.agent/releases/latest/download/BAZZ.AGENT-v1.2.18-win32-x64-portable.zip) | 解压到任意目录 → 双击 `BAZZ.AGENT.exe` |
-| 📦 [setup.exe](https://github.com/xinyuzjj/bazz.agent/releases/latest/download/BAZZ.AGENT-v1.2.18-setup.exe) | 安装到 `%LOCALAPPDATA%`，带开始菜单 / 桌面快捷方式 / 卸载器 |
+| 🎒 [portable.zip](https://github.com/xinyuzjj/bazz.agent/releases/latest/download/BAZZ.AGENT-v1.2.18-win32-x64-portable.zip) | Unzip anywhere → double-click `BAZZ.AGENT.exe` |
+| 📦 [setup.exe](https://github.com/xinyuzjj/bazz.agent/releases/latest/download/BAZZ.AGENT-v1.2.18-setup.exe) | Installs to `%LOCALAPPDATA%` with Start Menu / desktop shortcuts / uninstaller |
 
-- **无需 Python、无需 Node、无需安装**——Electron + PyInstaller 熔成一个应用。
-- 首次启动 ~3–5 秒（后端预热），随后舱门打开。
-- 数据外置在 `%APPDATA%\BAZZ.AGENT\workspace`——便携版整个文件夹随便搬，数据跟着走。
-- 无边框窗口：按住顶栏拖动，右上 `─ / □ / ✕` 控制。
+- **No Python, no Node, no install** — Electron + PyInstaller fused into one app.
+- First launch warms the backend for ~3–5 s, then the hatch opens.
+- Data lives outside the app at `%APPDATA%\BAZZ.AGENT\workspace` — move the whole portable folder and your data comes with it.
+- Frameless window: drag by the top bar; `─ / □ / ✕` on the top-right.
 
-> 面向 Windows 10/11 x64。macOS / Linux 请从源码运行。
+> For Windows 10/11 x64. macOS / Linux: run from source.
 
-### 方式二 · 从源码（任意系统）
+### Option 2 · From source (any OS)
 
 ```bash
-# 1) 后端 —— Python 3.11+
+# 1) Backend — Python 3.11+
 python -m venv .venv && .venv\Scripts\activate    # Windows
 # source .venv/bin/activate                        # macOS / Linux
 pip install -r requirements.txt
 
-# 2) 前端 —— React 构建
+# 2) Frontend — React build
 cd frontend && npm install && npm run build && cd ..
 
-# 3) 启动（后端同源托管 React 构建）
+# 3) Run (backend serves the React build)
 .venv\Scripts\python -m uvicorn desktop_app:app --host 127.0.0.1 --port 8080
 # → http://127.0.0.1:8080
 ```
 
-> 公开市场雷达（币安现货 ticker & 24h 统计）无需任何 Key。设置页可填任意 OpenAI 兼容 `base_url` + key
->（DeepSeek / OpenAI / Moonshot / Ollama / 自定义），配规则引擎兜底，**离线也能跑通主流程**。
+> The public market radar (Binance spot tickers & 24h stats) needs **no key**. In Settings, fill any OpenAI-compatible `base_url` + key
+> (DeepSeek / OpenAI / Moonshot / Ollama / custom). A rules-engine fallback means **the main flow works offline too**.
 
-### 桌面开发模式（Windows）
+### Desktop dev mode (Windows)
 
 ```bash
-start-desktop.bat     # Electron 壳 + .venv 后端，一次双击
-start-dev.bat         # FastAPI + Vite 热更新，盯 UI 用
+start-desktop.bat     # Electron shell + .venv backend, one double-click
+start-dev.bat         # FastAPI + Vite hot-reload for UI work
 ```
 
 ---
 
-## 🧩 四块原生能力 —— 真实协议，不是摆设
+## 🧩 The four native capabilities — real protocols, not widgets
 
-| | 细节 |
+| | Detail |
 |---|---|
-| **① MCP Server** · `agent.binance.com` | Streamable HTTP（JSON-RPC 2.0）· 协议 `2025-06-18` · OAuth 2.0 **RFC 9728** + PKCE(S256) → Bearer · 运行时 `tools/list` 发现，零硬编码工具名 · 公开行情免鉴权，账户/交易走**最小权限 scope（无提现）**。见 `src/mcp_client.py`。 |
-| **② Agentic Wallet** · `baw` CLI | 无密钥 MPC，多链 BSC / ETH / Base / SOL · 官方限额：兑换 $50k/日 · DeFi $100k/日 · x402 $20/日 · Agent 只经**白名单命令垫片**调 `baw`，私钥从不见。 |
-| **③ x402 / B402** · 机器付机 | B402 Facilitator `/papi/v2/b402/{supported,verify,settle}`（BSC）· 卖家回 402 → 买家**离线 Permit2 EIP-712** 签名（无 gas）→ Facilitator 验证 → 链上结算（代付 gas）· `/supported` 实时拉取，无凭据时优雅降级演示。 |
-| **④ Skill Hub** · 官方技能 | 预装 14 个官方技能（CEX 5 + Web3 9），锁文件 `skills-lock.json` · `install/run/remove` 带防路径穿越 · 意图驱动 · 插件扩展同一运行时：`plugins/<id>/{main.py, plugin.json}`。 |
+| **① MCP Server** · `agent.binance.com` | Streamable HTTP (JSON-RPC 2.0) · protocol `2025-06-18` · OAuth 2.0 **RFC 9728** + PKCE(S256) → Bearer · runtime `tools/list` discovery, zero hardcoded tool names · public market data unauthenticated; account/trading uses a **least-privilege scope (no withdrawals)**. See `src/mcp_client.py`. |
+| **② Agentic Wallet** · `baw` CLI | Keyless MPC, multi-chain BSC / ETH / Base / SOL · official limits: swap $50k/day · DeFi $100k/day · x402 $20/day · the agent only calls `baw` through a **whitelisted command shim** — the private key is never seen. |
+| **③ x402 / B402** · machine pays machine | B402 Facilitator `/papi/v2/b402/{supported,verify,settle}` (BSC) · seller replies 402 → buyer signs **offline Permit2 EIP-712** (no gas) → Facilitator verifies → on-chain settle (Facilitator pays the gas) · `/supported` fetched live; degrades gracefully to demo without credentials. |
+| **④ Skill Hub** · official skills | 14 preloaded official skills (CEX 5 + Web3 9), locked via `skills-lock.json` · `install/run/remove` with path-traversal protection · intent-driven · plugins share the same runtime: `plugins/<id>/{main.py, plugin.json}`. |
 
-**与真实 CEX 通道 —— binance-cli**：两套钥匙体系**严格隔离**，本应用从不混用。
+**Real CEX channel — binance-cli**: two key sets are **strictly isolated**; this app never mixes them.
 
-| 系统 | 钥匙 | 用途 |
+| System | Key | Use |
 |------|------|------|
-| **币安 CEX**（交易所账户） | API Key + Secret（HMAC, 64 位, System Generated） | 现货/合约、余额、历史成交，经 `binance-cli` profile |
-| **Web3 Agentic Wallet** | 无密钥 MPC（BX-/Ed25519 经 `baw`） | 链上交换、x402、DeFi |
+| **Binance CEX** (exchange account) | API Key + Secret (HMAC, 64-char, System Generated) | Spot / futures, balance, fills, via `binance-cli` profile |
+| **Web3 Agentic Wallet** | keyless MPC (BX-/Ed25519 via `baw`) | on-chain swap, x402, DeFi |
 
 ---
 
-## 🧭 技术栈
+## 🧭 Tech stack
 
-| 层 | 技术 |
+| Layer | Tech |
 |----|------|
-| Agent 核心 | FastAPI + SSE/NDJSON 流式 · 意图 → 工具 → 审批 → 执行 |
-| LLM | 多供应商 OpenAI 兼容层 + 确定性规则引擎兜底 |
-| 桌面壳 | Electron 31（无边框）+ PyInstaller 后端打包 |
-| 记忆 | SQLite（`state.db`）——会话 / 消息 / 长期偏好 |
-| 前端 | React 18 + TypeScript + Vite + Tailwind（深金 ↔ 浅色 · 中/英） |
-| 图表 | 纯 CSS + SVG，零图表依赖 |
-| 实时 | Server-Sent Events + 轮询 |
+| Agent core | FastAPI + SSE/NDJSON streaming · intent → tool → approval → execute |
+| LLM | Multi-provider OpenAI-compatible layer + deterministic rules-engine fallback |
+| Desktop shell | Electron 31 (frameless) + PyInstaller backend packaging |
+| Memory | SQLite (`state.db`) — sessions / messages / long-term preferences |
+| Frontend | React 18 + TypeScript + Vite + Tailwind (deep-gold ↔ light · CN/EN) |
+| Charts | Pure CSS + SVG, zero chart-dependency |
+| Realtime | Server-Sent Events + polling |
 
 ---
 
-## 🏗 架构
+## 🏗 Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -231,45 +234,45 @@ start-dev.bat         # FastAPI + Vite 热更新，盯 UI 用
 └──────────────────────────────────────────────────────────────┘
 ```
 
-桌面版内嵌 PyInstaller 冻结后端（`ScoutBackend.exe`），托管同一份 React 构建——**一套代码，两种形态**。
+The desktop build embeds a PyInstaller-frozen backend (`ScoutBackend.exe`) that serves the same React build — **one codebase, two shapes**.
 
 ---
 
-## 🗽 安全模型
+## 🗽 Security model
 
-- 每笔真实交易 / 转账 / 签名支付都带 `needs_approval`，后端只有收到显式 `confirm: true` 才继续。
-- 钥匙从不以明文落盘；CEX 钥匙按会话在 UI 输入，仅在你连接并授权后镜像进本地 `binance-cli` profile。
-- Agent 从不动原始私钥——Agentic Wallet 无密钥。
-- `run_command` 白名单仅限 `baw` / `binance-cli` / `node`——任意 shell 直接拒绝。
-- 技能对外层做防路径穿越；广场发文带本地台账，UI 侧钥匙脱敏。
+- Every real trade / transfer / signed payment carries `needs_approval`; the backend proceeds only on an explicit `confirm: true`.
+- Keys are never written to disk in plaintext; CEX keys are typed into the UI per session and mirrored into the local `binance-cli` profile only after you connect and authorize.
+- The agent never touches raw private keys — the Agentic Wallet is keyless.
+- `run_command` whitelist is limited to `baw` / `binance-cli` / `node` — arbitrary shell is rejected outright.
+- Skills are protected against path traversal externally; Square posts keep a local ledger; keys are masked in the UI.
 
 ---
 
-## 📦 目录结构
+## 📦 Project layout
 
 ```
 bazz.agent/
-├── desktop_app.py            FastAPI 后端（托管 frontend/dist + /api/*）
-├── launcher.py               PyInstaller 桌面后端入口
-├── electron/                 桌面壳：main.cjs + preload.cjs（无边框）
+├── desktop_app.py            FastAPI backend (serves frontend/dist + /api/*)
+├── launcher.py               PyInstaller desktop backend entry
+├── electron/                 Desktop shell: main.cjs + preload.cjs (frameless)
 ├── src/
-│   ├── agent_core.py         意图 → 工具编排 → 审批 → 执行
-│   ├── updater.py            增量差分自动更新（MANIFEST + delta + 后台预下载）
-│   ├── mcp_client.py         Binance Agentic MCP（OAuth 2.0 + 运行时发现）
-│   ├── x402_client.py        x402 / B402 支付（Permit2 EIP-712）
-│   ├── wallet_client.py      Agentic Wallet（baw CLI 封装）
-│   ├── cex_wallet.py         Binance CEX HMAC 客户端（读 + 签）
-│   ├── binance_cli.py        真实交易通道：binance-cli profile 同步
-│   ├── skills_client.py      Skill Hub（install / run / remove）
-│   ├── scanner.py            全市场 Binance 行情雷达
-│   ├── llm.py                多供应商 LLM + 规则引擎兜底
-│   ├── scheduler.py          cron 守护
-│   └── state.py              SQLite 持久化
-├── frontend/                 React 18 + TS + Vite + Tailwind（深/浅 · 中/英）
-├── plugins/scout-signals/    示例插件
-├── .agents/bots/             bot 人格 · .agents/skills/ 14 个官方技能
-├── wallet_bridge/            链上钱包的 Node 桥
-└── docs/                     GitHub Pages 落地页
+│   ├── agent_core.py         intent → tool orchestration → approval → execute
+│   ├── updater.py            incremental auto-update (MANIFEST + delta + background prefetch)
+│   ├── mcp_client.py         Binance Agentic MCP (OAuth 2.0 + runtime discovery)
+│   ├── x402_client.py        x402 / B402 payments (Permit2 EIP-712)
+│   ├── wallet_client.py      Agentic Wallet (baw CLI wrapper)
+│   ├── cex_wallet.py         Binance CEX HMAC client (read + sign)
+│   ├── binance_cli.py        real trading channel: binance-cli profile sync
+│   ├── skills_client.py      Skill Hub (install / run / remove)
+│   ├── scanner.py            full-market Binance market radar
+│   ├── llm.py                multi-provider LLM + rules-engine fallback
+│   ├── scheduler.py          cron daemon
+│   └── state.py              SQLite persistence
+├── frontend/                 React 18 + TS + Vite + Tailwind (dark/light · CN/EN)
+├── plugins/scout-signals/    example plugin
+├── .agents/bots/             bot personas · .agents/skills/ 14 official skills
+├── wallet_bridge/            Node bridge for on-chain wallets
+└── docs/                     GitHub Pages landing page
 ```
 
 ---
@@ -282,10 +285,10 @@ bazz.agent/
 
 ## 🏆 Hackathon
 
-- **活动**：Binance Agent OS Mini Hackathon —— Track A：*用 Agent OS 构建一个 AI Agent*
-- **截止**：2026-09-08 23:59 UTC
-- **线上落地页**：https://xinyuzjj.github.io/bazz.agent/
-- **声明**：本仓库为 Hackathon 演示，非投资建议。加密交易有真实风险；每条执行路径都要求显式人工确认。
+- **Event**: Binance Agent OS Mini Hackathon — Track A: *Build an AI Agent on Agent OS*
+- **Deadline**: 2026-09-08 23:59 UTC
+- **Live landing page**: https://xinyuzjj.github.io/bazz.agent/
+- **Disclaimer**: This repo is a Hackathon demo, not investment advice. Crypto trading carries real risk; every execution path requires explicit human confirmation.
 
 ---
 
