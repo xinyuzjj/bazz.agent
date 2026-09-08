@@ -119,58 +119,82 @@ async function main() {
 
   fs.mkdirSync(RUNTIME, { recursive: true });
 
-  // 1) 下载 Node —— 多镜像兜底（GitHub Actions / 国内代理常有 DNS 瞬时失败）
-  const nodeTmpZip = path.join(RUNTIME, `node-${NODE_VER}-win-x64.zip`);
-  // 镜像列表：默认 https://nodejs.org/dist，备 npmmirror 镜像（Node 官方 binary）
-  const nodeMirrors = [
-    `${NODE_DIST}/${NODE_VER}/node-${NODE_VER}-win-x64.zip`,
-    `https://npmmirror.com/mirrors/node/${NODE_VER}/node-${NODE_VER}-win-x64.zip`,
-    `https://mirrors.ustc.edu.cn/node/${NODE_VER}/node-${NODE_VER}-win-x64.zip`,
-  ];
-  if (!fs.existsSync(nodeTmpZip) || FORCE) {
-    let lastErr = null;
-    for (const url of nodeMirrors) {
-      log(`尝试镜像：${url}`);
-      try {
-        // 单镜像内 3 次重试，指数退避（2/4/8 秒）
+  // 1) 准备 Node —— 优先复用系统已装的 Node 20（CI 走 actions/setup-node、dev 走用户 PATH），
+  //    把它的安装目录整目录搬到 runtime/node/。下载从镜像仅作为最后兜底。
+  const nodeDir = path.join(RUNTIME, "node");
+  const nodeExe = path.join(nodeDir, "node.exe");
+  if (fs.existsSync(nodeExe) && !FORCE) {
+    log(`runtime/node 已存在：${nodeDir}`);
+  } else {
+    let copiedFromSys = false;
+    try {
+      // process.execPath = 当前 node 可执行文件的绝对路径（即系统 Node 20）
+      const sysExe = process.execPath;
+      const sysRoot = path.dirname(sysExe);
+      // 校验：必须是 v20+（避免老 Node 把 npm 安错位）
+      const sysVer = (spawnSync(sysExe, ["-p", "process.versions.node"], { encoding: "utf8" }).stdout || "").trim();
+      if (parseInt((sysVer.split(".")[0] || "0"), 10) >= 20) {
+        log(`系统 Node ${sysVer} 在 ${sysRoot}，整目录复制到 ${nodeDir}（~50MB）…`);
+        rmrf(nodeDir);
+        fs.mkdirSync(nodeDir, { recursive: true });
+        // 用 cmd robocopy /E 整目录镜像（含 node.exe + node_modules/ + *.cmd + 其他小文件）
+        //   /NJH /NJS /NDL /NFL 静默输出；/R:0 /W:0 失败立即返；用 xcopy /E /I /Y 兜底（GitHub Actions 镜像里 robocopy 偶发缺位）
+        let r = spawnSync("robocopy", [sysRoot, nodeDir, "/E", "/NFL", "/NDL", "/NJH", "/NJS", "/R:0", "/W:0"], { stdio: "ignore" });
+        if (r.status === 0 || (r.status & 0x7) === 0) {
+          // robocopy 0/1/2/3 都算成功（0=无变化 1=复制完成 2=有额外 3=1+2）
+        } else {
+          // 回退：PowerShell Copy-Item -Recurse
+          r = spawnSync("powershell", ["-NoProfile", "-Command", `Copy-Item -Path "${sysRoot}\\*" -Destination "${nodeDir}" -Recurse -Force`], { stdio: "inherit" });
+          if (r.status !== 0) throw new Error("Copy-Item 失败");
+        }
+        if (!fs.existsSync(nodeExe)) throw new Error("复制后未生成 node.exe");
+        copiedFromSys = true;
+        ok(`✓ Node 复制完成（系统 ${sysVer}）`);
+      } else {
+        console.warn(`⚠ 系统 Node 版本过旧：${sysVer || "?"}（需要 ≥ 20）`);
+      }
+    } catch (e) {
+      console.warn(`⚠ 复用系统 Node 失败：${e.message || e}`);
+    }
+    if (!copiedFromSys) {
+      // 兜底：尝试从镜像下载（之前 ECONNREFUSED 的代码路径保留）
+      const nodeTmpZip = path.join(RUNTIME, `node-${NODE_VER}-win-x64.zip`);
+      const nodeMirrors = [
+        `${NODE_DIST}/${NODE_VER}/node-${NODE_VER}-win-x64.zip`,
+        `https://npmmirror.com/mirrors/node/${NODE_VER}/node-${NODE_VER}-win-x64.zip`,
+        `https://mirrors.ustc.edu.cn/node/${NODE_VER}/node-${NODE_VER}-win-x64.zip`,
+      ];
+      let lastErr = null;
+      for (const url of nodeMirrors) {
+        log(`尝试镜像：${url}`);
         let ok = false;
         for (let attempt = 1; attempt <= 3; attempt++) {
           try {
             if (fs.existsSync(nodeTmpZip)) fs.unlinkSync(nodeTmpZip);
             await downloadTo(url, nodeTmpZip);
-            // 简单校验：zip 至少 5MB（Node win-x64 实际约 30MB）
             const sz = fs.statSync(nodeTmpZip).size;
             if (sz < 5 * 1024 * 1024) throw new Error(`zip 太小（${(sz/1024/1024).toFixed(1)} MB）疑似损坏`);
             ok = true; break;
-          } catch (e) {
-            lastErr = e;
-            console.warn(`  • 镜像 ${new URL(url).host} 第 ${attempt} 次失败：${e.message || e.code || e}`);
-            if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 2000));
-          }
+          } catch (e) { lastErr = e; console.warn(`  • 第 ${attempt} 次失败：${e.message || e.code || e}`); if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 2000)); }
         }
         if (ok) { log(`✓ 镜像成功：${new URL(url).host}`); break; }
-      } catch (e) { lastErr = e; }
+      }
+      if (!fs.existsSync(nodeTmpZip) || fs.statSync(nodeTmpZip).size < 5 * 1024 * 1024) {
+        fail("所有 Node 镜像下载均失败，且无法复用系统 Node：\n  " + (lastErr && (lastErr.message || lastErr.code || String(lastErr))));
+      }
+      // 解压
+      const tmpExtract = path.join(RUNTIME, "_node_tmp");
+      rmrf(tmpExtract); fs.mkdirSync(tmpExtract, { recursive: true });
+      log("解压 Node zip…");
+      extractZip(nodeTmpZip, tmpExtract);
+      const inner = path.join(tmpExtract, `node-${NODE_VER}-win-x64`);
+      if (!fs.existsSync(path.join(inner, "node.exe"))) fail("解压后未找到 node.exe：" + inner);
+      rmrf(nodeDir);
+      fs.renameSync(inner, nodeDir);
+      rmrf(tmpExtract);
+      try { fs.unlinkSync(nodeTmpZip); } catch {}
     }
-    if (!fs.existsSync(nodeTmpZip) || fs.statSync(nodeTmpZip).size < 5 * 1024 * 1024) {
-      fail("所有镜像下载均失败：\n  " + (lastErr && (lastErr.message || lastErr.code || String(lastErr))));
-    }
-  } else {
-    log(`Node zip 已存在：${nodeTmpZip}`);
   }
-
-  // 2) 解压到 runtime/_node_tmp/，再把内部 node-vX.Y.Z-win-x64/ 内容搬到 runtime/node/
-  const tmpExtract = path.join(RUNTIME, "_node_tmp");
-  rmrf(tmpExtract); fs.mkdirSync(tmpExtract, { recursive: true });
-  log("解压 Node zip…");
-  extractZip(nodeTmpZip, tmpExtract);
-  const inner = path.join(tmpExtract, `node-${NODE_VER}-win-x64`);
-  if (!fs.existsSync(path.join(inner, "node.exe"))) fail("解压后未找到 node.exe：" + inner);
-  const nodeDir = path.join(RUNTIME, "node");
-  rmrf(nodeDir);
-  fs.renameSync(inner, nodeDir);
-  rmrf(tmpExtract);
-  // 清理 zip
-  try { fs.unlinkSync(nodeTmpZip); } catch {}
   ok(`Node 运行时就绪：${path.join(nodeDir, "node.exe")}`);
 
   // 3) npm install @binance/agentic-wallet 到 runtime/node_modules
