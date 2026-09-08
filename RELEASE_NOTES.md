@@ -1,10 +1,20 @@
-# BAZZ.AGENT v1.2.12
+# BAZZ.AGENT v1.2.13
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
 
 本地优先的币安 AI 交易桌面前端：妖币/点火雷达 + 多模型 Agent 对话 + 带止损止盈的交易方案 + CEX 连接 + Agentic Wallet 链上操作 + 广场发文。行情扫描与 Agent 记忆**不需要任何 API Key**；真实下单/写盘一律先确认后执行。
 
-## 🆕 v1.2.12 更新要点（hotfix）
+## 🆕 v1.2.13 更新要点
+
+1. **更新弹窗不再反复打扰**：之前右下角更新卡会 5 分钟自动巡检 + 窗口切回焦点立即复查——"一直弹"。本版改为**每次启动只自动检查一次**：有新版本浮一张卡，点「稍后」后本会话不再出现；想再查就去设置页「软件更新」点「检查更新」（结果在面板内展示，不再弹浮窗）。已彻底移除定时轮询与焦点监听。
+2. **恢复「应用内自动更新」——不用再去网页下载覆盖**：上一版（v1.2.11）因旧自动更新链路在部分网络环境下失败，被砍成"浏览器下载页"。本版重做整条链并修好两个致命 bug：
+   - **修复替换路径算错一层**：旧脚本把 `app_root` 当父目录，删除目标 `app_root/BAZZ.AGENT-win32-x64` 实际不存在 → 替换逻辑空转。现在替换目标就是应用目录自身，新包解压到其父目录（替换后目录名恒为 `BAZZ.AGENT-win32-x64`）。
+   - **更新不再误删你的数据**：你的会话/记忆/广场台账存在应用目录内的 `workspace/`。旧方案整目录删除会连数据一起清掉——新脚本先把 `workspace/` 原子挪到同级备份 → 替换 → 挪回新应用，任何一步失败都会把数据还原回去并中止。
+   - 交互：设置页或浮窗内「下载更新」（进度条）→「重启并更新」→ **两步确认**（防手滑）→ 应用自动退出、整目录替换、自动重启，全程无需手动解压。
+   - 下载带 3 次自动重试 + 落盘后校验 zip 顶层结构，包损坏会提示重新下载，不会解压到一半卡死。
+3. **每一步失败都有浏览器兜底**：无论检查、下载还是应用环节出错，界面都会给出原因 + 「打开下载页」按钮——自动更新走不通时一键切到 GitHub release 页手动下载，不把人卡在半自动状态。
+
+## 🔄 v1.2.12 更新要点（历史）
 
 1. **修 v1.2.11 路径错位：内置 runtime/ 找不到的 bug**。v1.2.11 把 runtime 放到 `BAZZ.AGENT-win32-x64/resources/runtime/`（与 scout-bundle/ 同级），但 `workspace.RUNTIME_DIR` 算成了 `BAZZ_APP_DIR/resources/runtime`（= `resources/scout-bundle/ScoutBackend/resources/runtime`，不存在）→ `runtime_available()` 永远 False → Agent 钱包状态位仍显示红色「CLI 未安装 / npm 缺失」+「一键安装」按钮。**正确路径**是从 `BAZZ_APP_DIR` 跳两级到 `BAZZ.AGENT-win32-x64/` 再下 `runtime/`：`os.path.normpath(os.path.join(APP_DIR, "..", "..", "runtime"))`。下载 v1.2.12 后状态位才会真的显示「内置 · baw v1.9.0 / Node 20 LTS」绿色 pill。
 
@@ -48,7 +58,7 @@
 
 ## 🚀 快速开始（Windows 便携版）
 
-1. 下载并解压 `BAZZ.AGENT-v1.2.9-win32-x64-portable.zip`
+1. 下载并解压 `BAZZ.AGENT-v1.2.13-win32-x64-portable.zip`
 2. 运行 `BAZZ.AGENT.exe` —— 先播放完整 5+ 秒启动动画，随后自动生成 `workspace/` 工作区，运行数据全部收口其中
 3. 右上角配置 LLM（OpenAI 兼容端点，支持多模型 + 备份链），即可开始对话
 4. 行情 / 妖币雷达 / 市场扫描开箱即用，无需任何 Key

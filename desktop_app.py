@@ -1169,16 +1169,46 @@ def cex_allorders(symbol: str, limit: int = 50):
         return {"status": "error", "code": "network", "orders": [], "message": str(e)[:200]}
 
 
-# ---------------- 自动更新（v1.2.11：只检查版本，不再下载/替换） ----------------
-#   旧版的 /api/update/download + /api/update/status + /api/update/apply（后台下载 zip、
-#   PS 脚本整目录替换、强制关窗重启）整体废弃 —— 多次在中国代理环境下失败。
-#   新版：APP 只检查 GitHub Releases latest 版本号，由前端显示「打开下载页」按钮
-#   让用户在系统默认浏览器里手动下载、覆盖更新。
+# ---------------- 自动更新（GitHub Releases：检查 / 后台下载 / 应用重启） ----------------
+#   v1.2.11 曾砍成「只检查 + 打开下载页」；v1.2.13 按用户要求恢复应用内自动更新：
+#     check  → download（后台线程 + 前端轮询进度）→ apply（DETACHED PS 脚本：
+#     等 Electron 退出 → 杀残留 → 备份 WORKSPACE → 整目录替换 → 还原 WORKSPACE → 重启）。
+#   前端任何一步失败都会降级给「打开下载页」浏览器兜底按钮。
 
 @app.get("/api/update/check")
 def update_check():
     """对比本地版本与 GitHub Release latest。网络失败给 error 字段，不抛。"""
     return updater.check()
+
+
+@app.post("/api/update/download")
+async def update_download(req: Request):
+    """后台线程下载最新便携 zip 到 update-cache；返回立即，进度走 /api/update/status。"""
+    b = await req.json()
+    url = b.get("url", "")
+    if not url:
+        rel = updater.check()
+        url = (rel.get("asset") or {}).get("url", "")
+        if not url:
+            return {"ok": False, "error": rel.get("error") or "未找到可下载的发布资产。"}
+    return updater.start_download(url)
+
+
+@app.get("/api/update/status")
+def update_status():
+    return updater.download_status()
+
+
+@app.post("/api/update/apply")
+async def update_apply(req: Request):
+    """应用更新：生成 PS 脚本 → DETACHED 启动 → 前端随后关窗触发替换重启。"""
+    b = await req.json()
+    wait_pid = int(b.get("pid") or 0)
+    st = updater.download_status()
+    zip_path = b.get("zip") or st.get("path") or ""
+    if not zip_path or not os.path.exists(zip_path):
+        return {"ok": False, "error": "更新包不存在，请先完成下载。"}
+    return updater.apply(zip_path, wait_pid)
 
 
 # ---- 链上钱包（Binance Web3 Wallet API，BX- Key）：官方连接器桥 ----

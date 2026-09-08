@@ -164,8 +164,11 @@ export const api = {
     const r = await fetch(BASE + "/settings");
     return r.ok ? await r.json() : {};
   },
-  // 自动更新（v1.2.11：只检查版本号，由前端用系统默认浏览器打开下载页）
+  // 自动更新（检查 / 后台下载 / 应用）：v1.2.13 恢复应用内自动更新链路
   updateCheck: () => jget("/update/check"),
+  updateDownload: (url = "") => jpost("/update/download", { url }),
+  updateStatus: () => jget("/update/status"),
+  updateApply: (zip: string, pid: number) => jpost("/update/apply", { zip, pid }),
   // 统一的外链打开：Electron 下走主进程 shell.openExternal（防被 WebView 拦截）；
   // 浏览器开发态下退化到 window.open。包外 URL 必须 https://，否则忽略。
   openExternal: (url: string) => {

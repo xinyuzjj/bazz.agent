@@ -1,135 +1,181 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "../api";
+import React, { useEffect } from "react";
 import { useT } from "../i18n/i18n";
+import useUpdater, { UpdaterState } from "../hooks/useUpdater";
 
 /* ============================================================
- * UpdatePanel —— 设置页「软件更新」区块（v1.2.11 全新设计）
- *   旧版：自动下载 zip + 整目录替换 + 强制关窗重启（多次在中国代理环境失败）
- *   新版：只检查版本 + 用系统默认浏览器打开 GitHub 下载页
- *     · 已是最新 → 绿条「已是最新 vX.Y.Z」
- *     · 有新版本 → 金条「发现新版本 vX.Y.Z」+ 「打开下载页」大按钮
- *     · 检查失败 → 红条 + 原因 + 重试 + 「打开下载页」兜底
- *   任何状态下都展示「打开下载页」按钮，去不去更新用户说了算
+ * UpdatePanel —— 设置页「软件更新」区块（v1.2.13）
+ *   应用内自动更新：检查 → 下载（进度条）→ 就绪 → 两步确认重启 →
+ *   后端 DETACHED 的 PS 脚本完成「备份 WORKSPACE → 整目录替换 → 还原 → 重启」。
+ *   任何一步失败都停在 err 态：给 [重试] + [打开下载页]（浏览器兜底，不把人卡死）。
  * ============================================================ */
-
-type St =
-  | { s: "init"; cur: string }
-  | { s: "checking"; cur: string }
-  | { s: "none"; cur: string; latest: string; html_url: string }
-  | { s: "avail"; cur: string; latest: string; html_url: string; published_at: string; notes: string }
-  | { s: "err"; cur: string; msg: string; html_url: string };
-
-const FALLBACK_URL = "https://github.com/xinyuzjj/bazz.agent/releases/latest";
 
 export default function UpdatePanel() {
   const t = useT();
-  const [st, setSt] = useState<St>({ s: "init", cur: "" });
-  const busyRef = useRef(false);
+  const upd = useUpdater(t);
+  const st = upd.st;
 
-  const doCheck = useCallback(async () => {
-    if (busyRef.current) return;
-    busyRef.current = true;
-    try {
-      const r: any = await api.updateCheck();
-      const cur = r?.current ?? "";
-      const html = r?.html_url || FALLBACK_URL;
-      if (!r?.ok) { setSt({ s: "err", cur, msg: r?.error || t("update.failed"), html_url: html }); return; }
-      if (r.available) {
-        setSt({ s: "avail", cur, latest: r.latest ?? "", html_url: html, published_at: r.published_at ?? "", notes: r.notes ?? "" });
-      } else {
-        setSt({ s: "none", cur, latest: r.latest ?? cur, html_url: html });
-      }
-    } catch (e: any) {
-      setSt((p) => ({ s: "err", cur: p.cur, msg: String(e?.message ?? e), html_url: FALLBACK_URL }));
-    } finally { busyRef.current = false; }
-  }, [t]);
+  useEffect(() => { upd.check({ silent: true }); /* 仅进入页面时自动检查一次 */ }, []);
 
-  useEffect(() => { doCheck(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  const fmtMB = (n: number) => (n > 0 ? (n / 1024 / 1024).toFixed(0) : "");
+  const isGold = st.phase === "avail" || st.phase === "ready" || st.phase === "confirm";
 
-  const openDownloadPage = useCallback(() => {
-    const url = (st as any).html_url || FALLBACK_URL;
-    api.openExternal(url);
-  }, [st]);
-
-  // 三态主体
   let body: React.ReactNode;
-  if (st.s === "checking" || st.s === "init") {
-    body = (
-      <div className="flex items-center gap-2 font-mono text-[11.5px] text-ink-dim py-2">
-        <span className="inline-block w-3 h-3 rounded-full border-2 border-gold/50 border-t-transparent animate-spin" />
-        {t("update.checking")}
-      </div>
-    );
-  } else if (st.s === "none") {
-    body = (
-      <div className="rounded-md border border-green/30 bg-green/[0.05] px-3 py-2.5 font-mono text-[11.5px] text-green flex items-center gap-2">
-        <span>✓</span> {t("update.latest", { v: st.latest })}
-      </div>
-    );
-  } else if (st.s === "avail") {
-    body = (
-      <div className="rounded-md border border-gold/30 bg-gold/[0.05] p-3">
-        <div className="font-mono text-[12.5px] text-gold flex items-center gap-2">
-          <span>⬆</span>{t("update.available")}
-          <span className="pill pill-gold text-[9.5px]">v{st.latest}</span>
+  switch (st.phase) {
+    case "init":
+    case "checking":
+      body = (
+        <div className="flex items-center gap-2 font-mono text-[11.5px] text-ink-dim py-2">
+          <span className="inline-block w-3 h-3 rounded-full border-2 border-gold/50 border-t-transparent animate-spin" />
+          {t("update.checking")}
         </div>
-        <div className="font-mono text-[10.5px] text-ink-dim mt-1.5 leading-relaxed">
-          {t("update.openHint")}
+      );
+      break;
+    case "none":
+      body = (
+        <div className="rounded-md border border-green/30 bg-green/[0.05] px-3 py-2.5 font-mono text-[11.5px] text-green flex items-center gap-2">
+          <span>✓</span> {t("update.latest", { v: st.latest })}
         </div>
-        <button onClick={openDownloadPage} className="btn-gold mt-2.5 w-full justify-center text-[12.5px] py-2">
-          ↗ {t("update.openDownload")}
-        </button>
-        {st.notes && (
-          <details className="mt-2.5">
-            <summary className="cursor-pointer list-none font-mono text-[10.5px] text-ink-dim hover:text-ink select-none">
-              ▸ {t("update.releaseNotes")}
-            </summary>
-            <pre className="mt-1.5 max-h-40 overflow-auto text-[10.5px] text-ink-dim whitespace-pre-wrap leading-relaxed"
-              style={{ fontFamily: "inherit" }}>{st.notes}</pre>
-          </details>
-        )}
-      </div>
-    );
-  } else {
-    body = (
-      <div>
-        <div className="rounded-md border border-red/30 bg-red/[0.05] px-3 py-2 font-mono text-[11px] text-red break-all">
-          ⚠ {st.msg}
+      );
+      break;
+    case "avail":
+      body = (
+        <div className="rounded-md border border-gold/30 bg-gold/[0.05] p-3">
+          <div className="font-mono text-[12.5px] text-gold flex items-center gap-2">
+            <span>⬆</span>{t("update.available")}
+            <span className="pill pill-gold text-[9.5px]">v{st.latest}</span>
+          </div>
+          <div className="font-mono text-[10.5px] text-ink-dim mt-1.5 leading-relaxed">
+            {t("update.autoHint")}
+            {st.size ? `（约 ${fmtMB(st.size)} MB）` : ""}
+          </div>
+          <div className="mt-2.5 flex items-center gap-2">
+            <button onClick={upd.download} className="btn-gold flex-1 justify-center text-[12px] py-1.5">
+              <span className="text-[12px]">↓</span> {t("update.download")}
+              {st.size ? ` · ${t("update.about", { n: fmtMB(st.size) })}` : ""}
+            </button>
+            <button onClick={upd.openDownload} className="btn-ghost text-[11.5px]" title={t("update.openRelease")}>
+              ↗ {t("update.openDownloadShort")}
+            </button>
+          </div>
+          {st.notes && (
+            <details className="mt-2.5">
+              <summary className="cursor-pointer list-none font-mono text-[10.5px] text-ink-dim hover:text-ink select-none">
+                ▸ {t("update.releaseNotes")}
+              </summary>
+              <pre className="mt-1.5 max-h-40 overflow-auto text-[10.5px] text-ink-dim whitespace-pre-wrap leading-relaxed"
+                style={{ fontFamily: "inherit" }}>{st.notes}</pre>
+            </details>
+          )}
         </div>
-        <div className="flex items-center gap-2 mt-2">
-          <button onClick={doCheck} className="btn-ghost text-[11.5px]">
-            <I_Refresh /> {t("update.retry")}
+      );
+      break;
+    case "dl": {
+      const pct = st.total > 0 ? Math.min(99, Math.round((st.done / st.total) * 100)) : 0;
+      body = (
+        <div className="rounded-md border border-gold/30 bg-gold/[0.05] p-3">
+          <div className="flex items-center justify-between font-mono text-[11px]">
+            <span className="text-ink flex items-center gap-2">
+              <span className="inline-block w-3 h-3 rounded-full border-2 border-gold/50 border-t-transparent animate-spin" />
+              ↓ {t("update.downloading")} v{st.latest}
+            </span>
+            <span className="tabular text-ink-dim">{pct}%</span>
+          </div>
+          <div className="mt-2 h-2 rounded-full bg-elevated overflow-hidden">
+            <div className="h-full rounded-full bg-gold transition-all" style={{ width: `${pct || 4}%` }} />
+          </div>
+          <div className="font-mono text-[9.5px] text-ink-mute mt-1 tabular">
+            {(st.done / 1024 / 1024).toFixed(0)} MB / {(st.total / 1024 / 1024).toFixed(0)} MB
+          </div>
+        </div>
+      );
+      break;
+    }
+    case "ready":
+      body = (
+        <div className="rounded-md border border-green/30 bg-green/[0.05] p-3">
+          <div className="font-mono text-[12.5px] text-green flex items-center gap-2">
+            ✓ {t("update.downloaded")} <span className="pill pill-gold text-[9.5px]">v{st.latest}</span>
+          </div>
+          <div className="font-mono text-[10.5px] text-ink-dim mt-1">{t("update.restartHint")}</div>
+          <button onClick={upd.confirmApply} className="btn-gold mt-2.5 w-full justify-center text-[12px] py-1.5">
+            🔄 {t("update.restart")}
           </button>
-          <button onClick={openDownloadPage} className="btn-ghost text-[11.5px]">
-            ↗ {t("update.openDownload")}
-          </button>
         </div>
-      </div>
-    );
+      );
+      break;
+    case "confirm":
+      body = (
+        <div className="rounded-md border border-gold/50 bg-gold/[0.08] p-3">
+          <div className="font-mono text-[12.5px] text-gold">⚠ {t("update.confirmTitle")}</div>
+          <div className="font-mono text-[10.5px] text-ink-dim mt-1 leading-relaxed">{t("update.confirmBody")}</div>
+          <div className="mt-2.5 flex items-center gap-2">
+            <button onClick={upd.apply} className="btn-gold flex-1 justify-center text-[12px] py-1.5">
+              🔄 {t("update.confirmGo")}
+            </button>
+            <button onClick={upd.cancelApply} className="btn-ghost text-[11.5px]">{t("update.cancel")}</button>
+          </div>
+        </div>
+      );
+      break;
+    case "applying":
+      body = (
+        <div className="flex items-center gap-2 font-mono text-[11.5px] text-ink py-2">
+          <span className="inline-block w-3 h-3 rounded-full border-2 border-gold/50 border-t-transparent animate-spin" />
+          {t("update.restarting")}
+        </div>
+      );
+      break;
+    default: { // err
+      const e = st as Extract<UpdaterState, { phase: "err" }>;
+      body = (
+        <div>
+          <div className="rounded-md border border-red/30 bg-red/[0.05] px-3 py-2 font-mono text-[11px] text-red break-all">
+            ⚠ {e.msg}
+          </div>
+          <div className="font-mono text-[10px] text-ink-dim mt-1.5">{t("update.fallbackHint")}</div>
+          <div className="flex items-center gap-2 mt-2">
+            <button onClick={() => upd.check({ silent: false })} className="btn-ghost text-[11.5px]">
+              <I_Refresh /> {t("update.retry")}
+            </button>
+            <button onClick={upd.openDownload} className="btn-ghost text-[11.5px] text-gold">
+              ↗ {t("update.openDownload")}
+            </button>
+          </div>
+        </div>
+      );
+      break;
+    }
   }
 
-  const hasInfo = st.s === "avail";
-  const latestLabel = hasInfo ? (st as any).latest : st.s === "none" ? (st as any).latest : "—";
+  const latestLabel = st.phase === "avail" || st.phase === "dl" || st.phase === "ready" || st.phase === "confirm" || st.phase === "applying"
+    ? (st as any).latest || "—"
+    : st.phase === "none" ? (st as any).latest : "—";
+
   return (
     <div className="glass p-4">
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         <span className="text-gold text-[13px]">⬆</span>
         <span className="font-mono text-[12px] text-ink tracking-wider">{t("update.title")}</span>
-        <span className={`pill ${st.s === "none" ? "pill-green" : st.s === "avail" ? "pill-gold" : st.s === "err" ? "pill-red" : "pill-dim"}`}>
-          <span className={`dot ${st.s === "none" ? "dot-green live" : st.s === "avail" ? "dot-gold" : st.s === "err" ? "dot-red" : "dot-dim"}`} />
-          {st.s === "none" ? t("update.upToDate") : st.s === "avail" ? t("update.updateReadyPill") : st.s === "err" ? t("update.failed") : t("update.checking")}
+        <span className={`pill ${st.phase === "none" ? "pill-green" : isGold ? "pill-gold" : st.phase === "err" ? "pill-red" : "pill-dim"}`}>
+          <span className={`dot ${st.phase === "none" ? "dot-green live" : isGold ? "dot-gold" : st.phase === "err" ? "dot-red" : "dot-dim"}`} />
+          {st.phase === "none" ? t("update.upToDate")
+            : st.phase === "err" ? t("update.failed")
+            : isGold ? t("update.updateReadyPill")
+            : st.phase === "dl" ? "↓"
+            : st.phase === "applying" ? "🔄"
+            : t("update.checking")}
         </span>
-        <button onClick={openDownloadPage} className="ml-auto btn-ghost !px-2.5 !py-1 text-[11px]">
+        <button onClick={upd.openDownload} className="ml-auto btn-ghost !px-2.5 !py-1 text-[11px]">
           ↗ {t("update.openDownloadShort")}
         </button>
-        <button onClick={doCheck} disabled={st.s === "checking"}
+        <button onClick={() => upd.check({ silent: false })} disabled={st.phase === "checking" || st.phase === "dl" || st.phase === "applying"}
           className="btn-ghost !px-2.5 !py-1 text-[11px] disabled:opacity-50">
-          <I_Refresh spin={st.s === "checking"} /> {t("update.checkNow")}
+          <I_Refresh spin={st.phase === "checking"} /> {t("update.checkNow")}
         </button>
       </div>
       <div className="border-t border-line/60 pt-2 mb-2">
-        <Row label={t("update.installed")} value={`v${st.cur || "—"}`} />
-        <Row label={t("update.latestVer")} value={latestLabel} accent={hasInfo ? "text-gold" : "text-ink"} />
+        <Row label={t("update.installed")} value={`v${(st as any).cur || "—"}`} />
+        <Row label={t("update.latestVer")} value={latestLabel} accent={isGold ? "text-gold" : "text-ink"} />
       </div>
       {body}
     </div>

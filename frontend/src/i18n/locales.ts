@@ -1049,6 +1049,13 @@ export const zh: Dict = {
   "update.openDownload": "打开下载页（浏览器）",
   "update.openDownloadShort": "下载页",
   "update.openHint": "下载在浏览器里完成 → 解压到任意目录 → 双击新版 BAZZ.AGENT.exe 即可。",
+  "update.autoHint": "在应用内自动下载并安装新版，完成后一键重启即可，无需手动解压覆盖。",
+  "update.confirmTitle": "确认重启并更新？",
+  "update.confirmBody": "应用将自动退出 → 替换为新版本 → 重新启动（约半分钟）。更新期间请勿关机或断开电源。",
+  "update.confirmGo": "确认，重启更新",
+  "update.cancel": "取消",
+  "update.verifying": "正在校验更新包…",
+  "update.fallbackHint": "自动更新失败，可改用浏览器手动下载。",
 };
 
 export const en: Dict = {
@@ -2078,4 +2085,11 @@ export const en: Dict = {
   "update.openDownload": "Open download page (browser)",
   "update.openDownloadShort": "Download",
   "update.openHint": "Download happens in your browser → unzip to any folder → double-click the new BAZZ.AGENT.exe.",
+  "update.autoHint": "Download and install the new build inside the app, then restart with one click — no manual unzip needed.",
+  "update.confirmTitle": "Restart & update?",
+  "update.confirmBody": "The app will quit, replace itself with the new version, then relaunch (~30s). Keep the machine powered on during the update.",
+  "update.confirmGo": "Restart & update",
+  "update.cancel": "Cancel",
+  "update.verifying": "Verifying update package…",
+  "update.fallbackHint": "Auto-update failed. You can still download it manually in the browser.",
 };
