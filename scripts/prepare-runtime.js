@@ -198,7 +198,7 @@ async function main() {
   ok(`Node 运行时就绪：${path.join(nodeDir, "node.exe")}`);
 
   // 3) npm install @binance/agentic-wallet 到 runtime/node_modules
-  const nodeExe = path.join(nodeDir, process.platform === "win32" ? "node.exe" : "bin/node");
+  //   nodeExe / nodeDir 已在上面 Node 准备块声明
   const npmCli = path.join(nodeDir, "node_modules", "npm", "bin", "npm-cli.js");
   if (!fs.existsSync(nodeExe)) fail("找不到 node.exe：" + nodeExe);
   if (!fs.existsSync(npmCli)) fail("找不到 npm-cli.js：" + npmCli + "（Node zip 可能不完整）");
