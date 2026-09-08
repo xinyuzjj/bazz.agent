@@ -35,6 +35,7 @@ import threading
 import time
 
 from skills_client import list_installed
+import wallet_runtime
 
 # 钱包状态缓存：baw CLI 冷启动极慢（单次 ~11s），缓存后秒回，避免前端假死。
 _STATE_CACHE = {"ts": 0.0, "data": None}
@@ -102,7 +103,8 @@ DAILY_CAPS = {
 
 
 def cli_installed() -> bool:
-    return shutil.which("baw") is not None
+    """CLI 是否可用：内置 runtime 优先，其次 PATH 里的 baw。"""
+    return wallet_runtime.baw_invocation()[1] != "missing"
 
 
 def npm_installed() -> bool:
@@ -116,35 +118,42 @@ def get_version() -> dict:
     if not cli_installed():
         return {"installed": False, "version": None,
                 "detail": "未检测到 baw，请先 npm i -g @binance/agentic-wallet"}
+    argv, mode = wallet_runtime.baw_invocation(["--version"])
     try:
-        p = subprocess.run(["cmd", "/c", "baw", "--version"],
+        p = subprocess.run(["cmd", "/c"] + argv,
                            capture_output=True, text=True, timeout=5)
         return {"installed": True, "version": (p.stdout or p.stderr).strip()[:120],
+                "bundled": mode == "bundled",
                 "detail": None if p.returncode == 0 else (p.stderr or p.stdout).strip()[:200]}
     except subprocess.TimeoutExpired:
-        return {"installed": True, "version": None, "detail": "baw --version 超时（5s），CLI 疑似卡死，请检查安装或重装。"}
+        return {"installed": True, "version": None, "bundled": mode == "bundled",
+                "detail": "baw --version 超时（5s），CLI 疑似卡死，请检查安装或重装。"}
     except Exception as e:
-        return {"installed": True, "version": None, "detail": str(e)[:200]}
+        return {"installed": True, "version": None, "bundled": mode == "bundled",
+                "detail": str(e)[:200]}
 
 
 def get_status() -> dict:
     """读取钱包登录状态：一次 baw wallet status，从输出文本判断 Logged in / Not logged in。"""
     if not cli_installed():
         return {"connected": False, "detail": "baw 未安装"}
+    argv, mode = wallet_runtime.baw_invocation(["wallet", "status"])
     try:
-        p = subprocess.run(["cmd", "/c", "baw", "wallet", "status"],
+        p = subprocess.run(["cmd", "/c"] + argv,
                            capture_output=True, text=True, timeout=5)
         out = (p.stdout or p.stderr or "").strip()
         low = out.lower()
         not_logged = "not logged in" in low or "not logged" in low
         logged = ("logged in" in low or "已登录" in out) and not not_logged
-        return {"connected": logged, "command": "baw wallet status",
+        return {"connected": logged, "command": " ".join(argv),
                 "output": out[-2000:],
+                "bundled": mode == "bundled",
                 "detail": None if logged else "已安装但未登录，请运行 baw auth signin 用 Binance App 扫码登录。"}
     except subprocess.TimeoutExpired:
-        return {"connected": False, "detail": "baw wallet status 超时（5s），CLI 疑似卡死。"}
+        return {"connected": False, "bundled": mode == "bundled",
+                "detail": "baw wallet status 超时（5s），CLI 疑似卡死。"}
     except Exception as e:
-        return {"connected": False, "detail": str(e)[:200]}
+        return {"connected": False, "bundled": mode == "bundled", "detail": str(e)[:200]}
 
 
 def run_command(cmd: str) -> dict:
@@ -161,18 +170,26 @@ def run_command(cmd: str) -> dict:
                 "install_cmd": INSTALL_CMD}
     try:
         parts = cmd.split()
+        argv, mode = wallet_runtime.baw_invocation(parts[1:])
         # Windows 下 .CMD 必须走 cmd /c（shell=True 会引入用户输入注入风险）
-        p = subprocess.run(["cmd", "/c"] + parts, capture_output=True, text=True, timeout=120)
+        p = subprocess.run(["cmd", "/c"] + argv, capture_output=True, text=True, timeout=120)
         return {"status": "ok" if p.returncode == 0 else "error",
                 "code": "ok" if p.returncode == 0 else "non_zero_exit",
                 "returncode": p.returncode,
+                "bundled": mode == "bundled",
                 "stdout": p.stdout[-12000:], "stderr": p.stderr[-4000:]}
     except Exception as e:
         return {"status": "error", "code": "exec_exception", "detail": str(e)[:300]}
 
 
 def install_cli() -> dict:
-    """一键安装 baw：npm i -g @binance/agentic-wallet（要求本机有 npm + Node ≥ 18）。"""
+    """一键安装 baw：npm i -g @binance/agentic-wallet（要求本机有 npm + Node ≥ 18）。
+    若 APP 已内置 runtime，直接返回已就绪，不再重复安装。"""
+    _, mode = wallet_runtime.baw_invocation()
+    if mode == "bundled":
+        return {"status": "ok", "code": "already_bundled",
+                "detail": "v1.2.11+ 已内置 Node 20 + baw CLI，无需安装。请直接点「扫码登录 Agent 钱包」。",
+                "install_cmd": INSTALL_CMD}
     if not npm_installed():
         return {"status": "error", "code": "npm_not_installed",
                 "detail": "未检测到 npm（请先安装 Node.js ≥ 18）。"}
@@ -203,9 +220,11 @@ _BAW_LOCK = threading.Lock()
 
 def _baw_json(parts: list, timeout: int) -> dict:
     """执行一条 baw 命令（含 --json），统一返回结构：
-    {status:'ok', json} | {status:'error', code, message, ...}"""
+    {status:'ok', json} | {status:'error', code, message, ...}
+    parts 以 'baw' 开头；实际 argv 通过 wallet_runtime.baw_invocation 解析（内置 runtime 优先）。"""
     try:
-        p = subprocess.run(["cmd", "/c"] + parts, capture_output=True,
+        argv, mode = wallet_runtime.baw_invocation(parts[1:])
+        p = subprocess.run(["cmd", "/c"] + argv, capture_output=True,
                            text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return {"status": "error", "code": "timeout",

@@ -47,25 +47,30 @@ export function AgentSigninCard({ compact, onDone, onOpenPage, runtimeBundled }:
 }) {
   const t = useT();
   const [state, setState] = useState<any>(null);
+  const [runtime, setRuntime] = useState<any>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState("");
-  const [qr, setQr] = useState<{ qrCodeId: string; qrImage: string } | null>(null);
+  const [qr, setQr] = useState<{ qrCodeId: string; pairingCode: string; urlForWeb: string } | null>(null);
   const [pending, setPending] = useState(false);
   const pollRef = useRef<number | null>(null);
 
   const load = async () => {
     try {
-      const s: any = await api.wallet(true);
-      setState(s);
-      if (s?.status?.connected && onDone) onDone();
+      const [s, r] = await Promise.allSettled([api.wallet(true), api.walletRuntime()]);
+      const sVal = s.status === "fulfilled" ? (s.value as any) : null;
+      const rVal = r.status === "fulfilled" ? (r.value as any) : null;
+      setState(sVal);
+      setRuntime(rVal);
+      if (sVal?.status?.connected && onDone) onDone();
     } catch (e: any) { setErr(errText(e)); }
   };
   useEffect(() => { load(); return () => { if (pollRef.current) window.clearInterval(pollRef.current); }; }, []);
 
   const connected = !!state?.status?.connected;
-  // v1.2.15: runtime 内置优先 —— 后端 /api/wallet 的 cli.installed 只查 PATH，会漏掉 APP 自带的 runtime
-  const installed = !!runtimeBundled || !!state?.cli?.installed;
-  const runtimeVersion = (state as any)?.cli?.version || (state as any)?.runtime?.version || null;
+  // v1.2.15+: 父组件可传入 runtime.bundled；组件内部也会自己拉一份作为兜底
+  const installed = !!runtimeBundled || !!runtime?.bundled || !!state?.cli?.installed;
+  const bundled = !!runtimeBundled || !!runtime?.bundled;
+  const runtimeVersion = runtime?.version || (state as any)?.cli?.version || (state as any)?.runtime?.version || null;
 
   const install = async () => {
     setBusy("install"); setErr("");
@@ -85,10 +90,11 @@ export function AgentSigninCard({ compact, onDone, onOpenPage, runtimeBundled }:
     try {
       const r: any = await api.walletSignin();
       const qrCodeId: string | undefined = r?.qrCodeId ?? r?.qr_code_id;
+      const urlForWeb: string | undefined = r?.urlForWeb ?? r?.url_for_web;
+      const pairingCode: string = r?.pairingCode ?? r?.pairing_code ?? qrCodeId ?? "";
       if (!qrCodeId) throw new Error(t("wallet.bits.noQrCodeId"));
-      const qrUrl = r?.qrUrl || r?.qr_url || r?.qrString || r?.qr_string || "";
-      const qrImage = qrUrl ? await api.walletQr(qrUrl).catch(() => "") : "";
-      setQr({ qrCodeId, qrImage });
+      if (urlForWeb) api.openExternal(urlForWeb);
+      setQr({ qrCodeId, pairingCode, urlForWeb: urlForWeb || "" });
       setPending(true);
       pollRef.current = window.setInterval(async () => {
         try {
@@ -146,14 +152,15 @@ export function AgentSigninCard({ compact, onDone, onOpenPage, runtimeBundled }:
     return (
       <div className="space-y-3">
         <div className="rounded-lg border border-line bg-elevated/30 p-4 flex flex-col md:flex-row gap-4 items-center">
-          <div className="rounded-md border border-gold/40 bg-canvas p-2 flex items-center justify-center" style={{ width: 192, height: 192 }}>
-            {qr.qrImage
-              ? <img src={qr.qrImage} alt="qr" className="w-full h-full object-contain" />
-              : <span className="text-[10px] font-mono text-ink-mute">{t("wallet.bits.noQrImage")}</span>}
+          <div className="rounded-md border border-gold/40 bg-canvas flex items-center justify-center p-4" style={{ width: 192, minHeight: 120 }}>
+            <div className="text-center space-y-2">
+              <I.Globe size={28} className="mx-auto text-gold" />
+              <div className="text-[10px] font-mono text-ink-mute">{t("wallet.bits.openedInBrowser")}</div>
+            </div>
           </div>
           <div className="flex-1 space-y-1.5 font-mono text-[12px]">
             <div className="text-ink">{t("wallet.bits.scanToPair")}</div>
-            <div className="text-ink-mute text-[11px]">{t("wallet.bits.pairingCode")}<code className="text-gold">{qr.qrCodeId}</code></div>
+            <div className="text-ink-mute text-[11px]">{t("wallet.bits.pairingCode")}<code className="text-gold">{qr.pairingCode}</code></div>
             <div className="pill pill-gold mt-2 inline-flex items-center gap-1"><span className="dot dot-gold live" /> {t("wallet.bits.waitingConfirm")}</div>
           </div>
           <button onClick={cancelSignin} className="btn-ghost text-[11px] py-1.5">{t("wallet.bits.cancel")}</button>
@@ -167,7 +174,7 @@ export function AgentSigninCard({ compact, onDone, onOpenPage, runtimeBundled }:
     <div className="space-y-3">
       <div className="rounded-lg border border-line bg-elevated/20 px-4 py-3 font-mono text-[12px] text-ink-dim leading-relaxed">
         {t("wallet.bits.scanPrompt")}
-        {runtimeBundled && (
+        {bundled && (
           <div className="mt-1.5 text-[10.5px] text-green/80 font-mono">
             ✓ {t("wallet.bits.cliReadyHint", { v: runtimeVersion ?? "?" })}
           </div>
