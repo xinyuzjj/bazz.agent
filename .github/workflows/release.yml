@@ -139,6 +139,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # 本步骤里 native 命令（gh 等）非零退出属可控场景（如：上一版没有 MANIFEST 资产时
+          # gh release download 找不到文件）—— 必须继续，不能按 GitHub Actions 默认把
+          # $PSNativeCommandUseErrorActionPreference=$true 当成 terminating 让整个步骤失败。
+          $ErrorActionPreference = 'Continue'
+          $PSNativeCommandUseErrorActionPreference = $false
           $root = "$env:BAZZ_STAGE/dist_desktop/BAZZ.AGENT-win32-x64"
           $ver  = $env:BAZZ_VERSION
           if (-not (Test-Path $root)) { throw "未找到打包目录: $root" }

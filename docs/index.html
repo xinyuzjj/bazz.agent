@@ -3,206 +3,157 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Agent OS Alpha Scout · Binance Agent OS Hackathon</title>
-<meta name="description" content="A Binance-native AI trading copilot built on the four official Agent OS capabilities: MCP Server, Agentic Wallet, x402/B402, Skill Hub." />
-<meta property="og:title" content="Agent OS Alpha Scout" />
-<meta property="og:description" content="scan → analyze → propose → human approval → execute, on top of Binance Agent OS." />
+<title>BAZZ.AGENT · 币安 AI 交易副驾（先问过你，才替你扣扳机）</title>
+<meta name="description" content="把 Binance Agent OS 四块原生能力（MCP Server、Agentic Wallet、x402/B402、Skill Hub）整合成扫描→分析→建议→人工确认→执行的闭环。双击即跑的 Windows 便携版 + 本地 Web 版。" />
+<meta property="og:title" content="BAZZ.AGENT — 币安 AI 交易副驾" />
+<meta property="og:description" content="scan → analyze → propose → human approval → execute, built on Binance Agent OS." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0b0d'/%3E%3Ctext x='16' y='22' font-size='16' font-family='monospace' font-weight='bold' fill='%23f0b90b' text-anchor='middle'%3EB%3C/text%3E%3C/svg%3E" />
 <style>
   :root {
-    --bg: #0a0b0d;
-    --bg2: #111317;
-    --panel: #16191e;
-    --panel2: #1c2026;
-    --border: #262b33;
-    --text: #e7e9ee;
-    --dim: #8a93a3;
-    --gold: #f0b90b;
-    --gold2: #ffd34e;
-    --green: #2ebd85;
-    --red: #f6465d;
-    --blue: #4a9eff;
-    --radius: 14px;
-    --mono: ui-monospace, "JetBrains Mono", "Fira Code", "Cascadia Mono", "Consolas", monospace;
+    --bg:#07080b; --bg2:#0d0f14; --panel:#11141a; --panel2:#171b23;
+    --border:#232834; --text:#e9ecf2; --dim:#8a93a5; --muted:#5a6273;
+    --gold:#f0b90b; --gold2:#ffd34e; --green:#2ebd85; --red:#f6465d; --blue:#4a9eff;
+    --radius:16px; --mono:ui-monospace,"JetBrains Mono","Fira Code","Cascadia Mono","Consolas",monospace;
   }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
-    font-family: "Segoe UI", -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
-    font-size: 15px; line-height: 1.6; }
-  body {
-    background-image:
-      radial-gradient(900px 600px at 80% -10%, rgba(240,185,11,.10), transparent 60%),
-      radial-gradient(700px 500px at 0% 110%, rgba(74,158,255,.07), transparent 60%);
-    background-attachment: fixed;
-  }
-  a { color: var(--gold); text-decoration: none; }
-  a:hover { color: var(--gold2); }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+    font-family:"Segoe UI",-apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    font-size:15px;line-height:1.62;-webkit-font-smoothing:antialiased}
+  /* 背景：暗底 + 币安金辉光 + 细节点阵网格 */
+  body{background-image:
+      radial-gradient(1000px 620px at 78% -10%, rgba(240,185,11,.13), transparent 60%),
+      radial-gradient(760px 520px at -5% 108%, rgba(74,158,255,.09), transparent 60%),
+      linear-gradient(rgba(240,185,11,.028) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(240,185,11,.028) 1px, transparent 1px);
+    background-size:auto,auto,26px 26px,26px 26px;background-attachment:fixed}
+  a{color:var(--gold);text-decoration:none} a:hover{color:var(--gold2)}
+  ::selection{background:rgba(240,185,11,.28)}
 
-  .nav {
-    position: sticky; top: 0; z-index: 10;
-    backdrop-filter: blur(12px);
-    background: rgba(10,11,13,.78);
-    border-bottom: 1px solid var(--border);
-  }
-  .nav-inner {
-    max-width: 1200px; margin: 0 auto; padding: 14px 24px;
-    display: flex; align-items: center; gap: 14px;
-  }
-  .nav .logo { font-weight: 800; letter-spacing: .04em; font-size: 16px; }
-  .nav .logo .dot { color: var(--gold); }
-  .nav .grow { flex: 1; }
-  .nav .pill {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 6px 12px; border-radius: 999px;
-    border: 1px solid var(--border); color: var(--dim); font-size: 13px;
-  }
-  .nav .pill.gold { color: var(--gold); border-color: rgba(240,185,11,.5); }
-  .nav a.btn {
-    padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border);
-    color: var(--text); font-size: 13px; transition: all .15s ease;
-  }
-  .nav a.btn:hover { border-color: var(--gold); color: var(--gold); }
-  .nav a.btn.primary { background: var(--gold); color: #1a1d22; border-color: var(--gold); }
-  .nav a.btn.primary:hover { background: var(--gold2); color: #1a1d22; }
+  /* 顶栏 */
+  .nav{position:sticky;top:0;z-index:20;backdrop-filter:blur(14px);
+    background:linear-gradient(180deg,rgba(7,8,11,.92),rgba(7,8,11,.78));
+    border-bottom:1px solid var(--border)}
+  .nav-inner{max-width:1180px;margin:0 auto;padding:14px 24px;display:flex;align-items:center;gap:12px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:.06em;font-size:16px}
+  .brand .mark{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,var(--gold),var(--gold2));
+    color:#131417;display:grid;place-items:center;font-size:15px;font-weight:900}
+  .brand .dot{color:var(--gold)}
+  .spacer{flex:1}
+  .nav a.btn{padding:6px 13px;border-radius:9px;border:1px solid var(--border);color:var(--text);font-size:13px;transition:all .15s}
+  .nav a.btn:hover{border-color:var(--gold);color:var(--gold)}
+  nav .btn.primary{background:var(--gold);color:#131417;border-color:var(--gold);font-weight:700}
+  nav .btn.primary:hover{background:var(--gold2);color:#131417;border-color:var(--gold2)}
+  @media(max-width:820px){.nav a.btn{display:none}.nav a.btn.primary{display:inline-block}}
 
-  .wrap { max-width: 1200px; margin: 0 auto; padding: 56px 24px 80px; }
+  .wrap{max-width:1180px;margin:0 auto;padding:64px 24px 90px}
 
   /* HERO */
-  .hero { text-align: center; padding: 56px 8px 32px; }
-  .hero .eyebrow {
-    display: inline-flex; gap: 8px; align-items: center;
-    padding: 4px 12px; border-radius: 999px;
-    border: 1px solid rgba(240,185,11,.35); color: var(--gold);
-    background: rgba(240,185,11,.06); font-size: 12px; letter-spacing: .04em;
-    text-transform: uppercase; margin-bottom: 22px;
-  }
-  .hero h1 {
-    font-size: clamp(36px, 6vw, 64px); margin: 0 0 14px; line-height: 1.05;
-    font-weight: 900; letter-spacing: -.02em;
-  }
-  .hero h1 .grad {
-    background: linear-gradient(120deg, var(--gold), var(--gold2) 70%, var(--gold));
-    -webkit-background-clip: text; background-clip: text; color: transparent;
-  }
-  .hero .tag { font-size: 18px; color: var(--dim); max-width: 720px; margin: 0 auto 28px; }
-  .hero .cta { display: inline-flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
-  .hero .cta a {
-    padding: 12px 20px; border-radius: 10px; font-weight: 600; font-size: 14px;
-    border: 1px solid var(--border); color: var(--text); transition: all .15s ease;
-  }
-  .hero .cta a.primary { background: var(--gold); color: #1a1d22; border-color: var(--gold); }
-  .hero .cta a.primary:hover { background: var(--gold2); color: #1a1d22; }
-  .hero .cta a:hover:not(.primary) { border-color: var(--gold); color: var(--gold); }
+  .hero{text-align:center;padding:52px 6px 26px}
+  .eyebrow{display:inline-flex;align-items:center;gap:8px;padding:5px 13px;border-radius:999px;
+    border:1px solid rgba(240,185,11,.4);color:var(--gold);background:rgba(240,185,11,.07);
+    font-size:12px;letter-spacing:.05em;margin-bottom:24px}
+  .hero .kicker{font-family:var(--mono);font-size:13px;color:var(--muted);letter-spacing:.04em;margin:0 0 16px}
+  .hero h1{font-size:clamp(40px,7vw,78px);margin:0 0 10px;line-height:1.02;font-weight:900;letter-spacing:-.025em}
+  .hero h1 .grad{background:linear-gradient(120deg,var(--gold),var(--gold2) 60%,#fff 120%);
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .hero .tag{font-size:18px;color:var(--dim);max-width:760px;margin:0 auto 14px}
+  .hero .tag b{color:var(--text)}
+  .hero .tagline{font-family:var(--mono);font-size:14px;color:var(--gold);margin:0 auto 28px;max-width:640px}
+  .cta{display:flex;gap:12px;flex-wrap:wrap;justify-content:center}
+  .cta a{padding:12px 20px;border-radius:11px;font-weight:700;font-size:14px;
+    border:1px solid var(--border);color:var(--text);transition:all .16s}
+  .cta a.primary{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#131417;border-color:transparent;
+    box-shadow:0 10px 30px -12px rgba(240,185,11,.55)}
+  .cta a.primary:hover{transform:translateY(-1px)}
+  .cta a.ghost:hover{border-color:var(--gold);color:var(--gold)}
 
-  /* META */
-  .meta {
-    display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px;
-    margin-top: 40px; padding: 0; list-style: none;
-  }
-  .meta li {
-    background: var(--panel); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 16px; text-align: center;
-  }
-  .meta li b { display: block; color: var(--gold); font-size: 18px; }
-  .meta li span { color: var(--dim); font-size: 12px; }
+  /* 关键指标条 */
+  .meta{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:38px 0 0;padding:0;list-style:none}
+  .meta li{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--border);
+    border-radius:var(--radius);padding:16px 12px;text-align:center}
+  .meta li b{display:block;color:var(--gold);font-family:var(--mono);font-size:19px}
+  .meta li span{color:var(--muted);font-size:12px}
+  @media(max-width:720px){.meta{grid-template-columns:repeat(2,1fr)}}
 
-  @media (max-width: 720px) { .meta { grid-template-columns: repeat(2, 1fr); } }
+  .shot{margin-top:22px;border-radius:var(--radius);overflow:hidden;border:1px solid var(--border);background:#000;
+    box-shadow:0 40px 90px -45px rgba(0,0,0,.7),0 0 0 1px rgba(240,185,11,.08)}
+  .shot img{display:block;width:100%;height:auto}
+  .shotcap{color:var(--muted);font-size:13px;margin-top:10px;text-align:center}
 
-  /* SECTIONS */
-  section { margin-top: 72px; }
-  h2 {
-    font-size: 26px; margin: 0 0 8px; font-weight: 800; letter-spacing: -.01em;
-  }
-  .h2-sub { color: var(--dim); margin: 0 0 26px; }
+  section{margin-top:78px}
+  h2{font-size:28px;margin:0 0 6px;font-weight:900;letter-spacing:-.015em;display:flex;align-items:center;gap:12px}
+  h2 .h{color:var(--gold);font-family:var(--mono);font-size:14px}
+  .h2-sub{color:var(--dim);margin:0 0 26px;max-width:720px}
 
-  /* SCREENSHOT */
-  .shot {
-    margin-top: 18px; border-radius: var(--radius); overflow: hidden;
-    border: 1px solid var(--border); background: #000;
-    box-shadow: 0 30px 80px -40px rgba(0,0,0,.6);
-  }
-  .shot img { display: block; width: 100%; height: auto; }
-  .shotcap { color: var(--dim); font-size: 13px; margin-top: 10px; text-align: center; }
+  /* 承诺条 */
+  .promise{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  @media(max-width:820px){.promise{grid-template-columns:1fr}}
+  .promise .p{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
+    padding:22px;border-left:3px solid var(--gold)}
+  .promise .p b{display:block;font-size:16px;margin-bottom:6px;color:var(--gold2)}
+  .promise .p span{color:var(--dim);font-size:14px}
 
-  /* UI GALLERY */
-  .ui-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
-  @media (max-width: 860px) { .ui-grid { grid-template-columns: 1fr; } }
-  .ui-card {
-    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
-    overflow: hidden; transition: transform .15s ease, border-color .15s ease;
-  }
-  .ui-card:hover { transform: translateY(-2px); border-color: rgba(240,185,11,.45); }
-  .ui-card img { display: block; width: 100%; height: auto; border-bottom: 1px solid var(--border); }
-  .ui-cap { padding: 10px 14px 12px; color: var(--dim); font-size: 13px; }
-  .ui-cap b { color: var(--text); font-weight: 700; }
+  /* 能力四宫格 */
+  .caps{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+  @media(max-width:820px){.caps{grid-template-columns:1fr}}
+  .cap{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--border);
+    border-radius:var(--radius);padding:22px;transition:transform .16s,border-color .16s}
+  .cap:hover{transform:translateY(-2px);border-color:rgba(240,185,11,.5)}
+  .cap h3{margin:0 0 6px;font-size:18px;font-weight:800;display:flex;align-items:center;gap:10px}
+  .cap .badge{font-size:11px;padding:2px 9px;border-radius:999px;background:rgba(240,185,11,.13);
+    color:var(--gold);border:1px solid rgba(240,185,11,.32);letter-spacing:.05em;font-weight:700}
+  .cap .cmd{font-family:var(--mono);font-size:12px;color:var(--muted);margin:8px 0 12px}
+  .cap p{margin:0 0 12px;color:#c6cad3}
+  .cap ul{margin:0;padding-left:18px;color:#c6cad3}
+  .cap li{margin-bottom:4px;font-size:14px}
 
-  /* CAPABILITIES */
-  .caps { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
-  @media (max-width: 820px) { .caps { grid-template-columns: 1fr; } }
-  .cap {
-    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
-    padding: 22px; transition: transform .15s ease, border-color .15s ease;
-  }
-  .cap:hover { transform: translateY(-2px); border-color: rgba(240,185,11,.45); }
-  .cap h3 {
-    margin: 0 0 6px; font-size: 18px; font-weight: 700;
-    display: flex; align-items: center; gap: 10px;
-  }
-  .cap h3 .badge {
-    font-size: 11px; padding: 2px 8px; border-radius: 999px;
-    background: rgba(240,185,11,.12); color: var(--gold); border: 1px solid rgba(240,185,11,.3);
-    letter-spacing: .03em; font-weight: 600;
-  }
-  .cap .cmd { font-family: var(--mono); font-size: 12px; color: var(--dim); margin: 8px 0 12px; }
-  .cap p { margin: 0 0 12px; color: #c8ccd4; }
-  .cap ul { margin: 0; padding-left: 18px; color: #c8ccd4; }
-  .cap ul li { margin-bottom: 4px; font-size: 14px; }
+  /* 界面画廊 */
+  .ui-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:20px}
+  @media(max-width:860px){.ui-grid{grid-template-columns:1fr}}
+  .ui-card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
+    overflow:hidden;transition:transform .16s,border-color .16s}
+  .ui-card:hover{transform:translateY(-2px);border-color:rgba(240,185,11,.5)}
+  .ui-card img{display:block;width:100%;border-bottom:1px solid var(--border)}
+  .ui-cap{padding:11px 14px 13px;color:var(--muted);font-size:13px}
+  .ui-cap b{color:var(--text);font-weight:800}
 
-  /* ARCHITECTURE */
-  pre.code {
-    background: #0c0e12; border: 1px solid var(--border); border-radius: var(--radius);
-    padding: 20px; overflow: auto; color: #d6d9df; font-family: var(--mono); font-size: 12.5px;
-    line-height: 1.55;
-  }
-  pre.code .gold { color: var(--gold); }
-  pre.code .dim { color: var(--dim); }
-  pre.code .green { color: var(--green); }
-  pre.code .blue { color: var(--blue); }
+  /* 架构 */
+  pre.code{background:#0a0c10;border:1px solid var(--border);border-radius:var(--radius);
+    padding:20px;overflow:auto;color:#d6d9df;font-family:var(--mono);font-size:12.5px;line-height:1.55}
+  pre.code .gold{color:var(--gold)} pre.code .dim{color:var(--muted)}
+  pre.code .green{color:var(--green)} pre.code .blue{color:var(--blue)}
 
-  /* INSTALL */
-  .install {
-    background: var(--panel); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 24px;
-  }
-  .install ol { margin: 0; padding-left: 22px; color: #c8ccd4; }
-  .install ol li { margin-bottom: 8px; }
-  .install code {
-    background: #0c0e12; padding: 2px 7px; border-radius: 6px; font-size: 13px;
-    border: 1px solid var(--border); color: var(--gold);
-  }
+  /* 下载卡 */
+  .dl{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+  @media(max-width:820px){.dl{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:22px}
+  .card h4{margin:0 0 4px;font-size:16px}
+  .card .note{color:var(--muted);font-size:13px;margin:0 0 14px}
+  .card a.dbtn{display:inline-flex;align-items:center;gap:8px;padding:11px 18px;border-radius:10px;
+    font-weight:700;font-size:14px;background:linear-gradient(135deg,var(--gold),var(--gold2));
+    color:#131417;border:1px solid transparent}
+  .card a.dbtn.alt{background:transparent;border:1px solid var(--border);color:var(--text)}
+  .card ol{margin:14px 0 0;padding-left:20px;color:#c6cad3}
+  .card code{background:#0a0c10;padding:2px 7px;border-radius:6px;font-size:13px;
+    border:1px solid var(--border);color:var(--gold)}
 
-  /* FOOTER */
-  footer {
-    margin-top: 96px; padding-top: 28px; border-top: 1px solid var(--border);
-    color: var(--dim); font-size: 13px; display: flex; justify-content: space-between;
-    flex-wrap: wrap; gap: 12px;
-  }
-  footer .hack { color: var(--gold); font-weight: 600; }
+  footer{margin-top:96px;padding-top:28px;border-top:1px solid var(--border);color:var(--muted);
+    font-size:13px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px}
+  footer .hack{color:var(--gold);font-weight:700}
 </style>
 </head>
 <body>
 
 <nav class="nav">
   <div class="nav-inner">
-    <div class="logo">BAZZ<span class="dot">·</span>AGENT</div>
-    <div class="grow"></div>
-    <span class="pill gold">Binance Agent OS · Track A</span>
+    <div class="brand"><span class="mark">B</span>BAZZ<span class="dot">·</span>AGENT</div>
+    <div class="spacer"></div>
+    <span class="pill-gold" style="padding:5px 11px;border-radius:999px;border:1px solid rgba(240,185,11,.5);color:var(--gold);font-size:12px">Agent OS · Track A</span>
     <a class="btn" href="#download">下载</a>
     <a class="btn" href="#demo">演示</a>
     <a class="btn" href="#preview">界面</a>
     <a class="btn" href="#capabilities">能力</a>
     <a class="btn" href="#install">快速开始</a>
-    <a class="btn" href="https://github.com/xinyuzjj/bazz.agent/blob/main/README.zh-CN.md">中文</a>
-    <a class="btn" href="https://github.com/xinyuzjj/bazz.agent/blob/main/README.md">EN</a>
     <a class="btn primary" href="https://github.com/xinyuzjj/bazz.agent">★ GitHub</a>
   </div>
 </nav>
@@ -210,51 +161,58 @@
 <div class="wrap">
 
   <header class="hero">
-    <span class="eyebrow">Hackathon submission · Binance Agent OS · Track A</span>
-    <h1><span class="grad">Agent OS Alpha Scout</span></h1>
+    <span class="eyebrow">Binance Agent OS Mini Hackathon · Track A 报名作品</span>
+    <p class="kicker">$ bazz --trust-level high  &nbsp;·&nbsp;  human_in_the_loop = true</p>
+    <h1>你的币安<b class="grad">副驾</b></h1>
     <p class="tag">
-      币安原生的 AI 交易副驾（桌面版 + Web 版）—— 把 <b>MCP Server</b>、<b>Agentic Wallet</b>、<b>x402/B402</b>、<b>Skill Hub</b> 四块官方能力
-      整合成「<b>扫描 · 分析 · 建议 · 人工确认 · 执行</b>」的闭环。双击即跑的
-      <b>Windows 便携版</b>无需 Python / Node。
+      把 <b>MCP Server</b> · <b>Agentic Wallet</b> · <b>x402/B402</b> · <b>Skill Hub</b> 四块官方能力
+      拧成一条真闭环：<b>扫描 → 分析 → 建议 → 确认 → 执行</b>。
+      双击即跑的 <b>Windows 便携版</b>，无需 Python / Node。
     </p>
+    <p class="tagline">&gt; AI 助手都在说话。BAZZ.AGENT 做事 —— 但你必须先点头。</p>
     <div class="cta">
       <a class="primary" href="#download">↓ 下载 Windows 便携版</a>
-      <a href="https://github.com/xinyuzjj/bazz.agent">在 GitHub 查看 →</a>
-      <a href="#install">从源码运行</a>
-      <a href="#capabilities">四块能力</a>
+      <a class="ghost" href="#capabilities">四块原生能力</a>
+      <a class="ghost" href="#install">从源码运行</a>
+      <a class="ghost" href="https://github.com/xinyuzjj/bazz.agent">GitHub →</a>
     </div>
     <ul class="meta">
-      <li><b>v1.2.12</b><span>软件更新区块置顶 · 自动更新一眼可见</span></li>
+      <li><b>v1.2.18</b><span>增量更新 · 后台预下载</span></li>
       <li><b>14</b><span>官方 Binance Skills</span></li>
       <li><b>0 key</b><span>即可跑市场扫描</span></li>
-      <li><b>100%</b><span>下单 / 支付需确认</span></li>
+      <li><b>100%</b><span>下单 / 支付需你确认</span></li>
     </ul>
   </header>
 
   <div class="shot">
-    <img src="screenshot.png" alt="Agent OS Alpha Scout 主界面：左侧会话列表、中间对话区、右侧实时信号台" />
+    <img src="screenshot.png" alt="BAZZ.AGENT 主界面：左侧会话、中间对话与工具卡、右侧实时信号台" />
   </div>
   <p class="shotcap">主界面：左侧会话历史 · 中间对话与工具卡 · 右侧 Binance 实时信号</p>
 
+  <section>
+    <h2><span class="h">§ 承诺</span>为什么你可以相信它</h2>
+    <p class="h2-sub">不是聊天气泡套 Binance 皮肤 —— 是跑在你账户上的智能体操作系统，且把"你要确认"写在每一行执行路径里。</p>
+    <div class="promise">
+      <div class="p"><b>人在回路，默认如此</b><span>每笔交易 / 转账 / 签名支付都先弹一张确认卡，敏感操作从不静默执行。</span></div>
+      <div class="p"><b>真实协议，不是演示</b><span>四块原生能力全部按官方真实规范对接：OAuth PKCE · 无密钥 MPC · Permit2 签名。</span></div>
+      <div class="p"><b>本地优先，数据分离</b><span>数据存到你自己的目录（%APPDATA%），与应用代码分离——更新只换程序，不碰你的数据。</span></div>
+    </div>
+  </section>
+
   <section id="demo">
-    <h2>演示视频</h2>
-    <p class="h2-sub">88 秒真实操作实录：历史会话 → 行情雷达 → 一键“现货买入”跳对话等 Agent 分析 → 记忆 → 钱包 → 设置（无配音）。</p>
+    <h2><span class="h">§ 演示</span>88 秒看懂怎么用</h2>
+    <p class="h2-sub">真实操作实录：历史会话 → 行情雷达 → 一键"现货买入"跳对话等 Agent 分析 → 记忆 → 钱包 → 设置（无配音）。</p>
     <div class="shot">
-      <video controls preload="metadata" poster="screenshot.png" style="display:block; width:100%; height:auto; background:#000;">
+      <video controls preload="metadata" poster="screenshot.png" style="display:block;width:100%;height:auto;background:#000">
         <source src="video/BAZZ-demo-v1.mp4" type="video/mp4" />
-        你的浏览器不支持 HTML5 视频，可
-        <a href="video/BAZZ-demo-v1.mp4" style="color:var(--gold);">直接下载 MP4（3.2 MB）</a>。
+        你的浏览器不支持 HTML5 视频，可<a href="video/BAZZ-demo-v1.mp4" style="color:var(--gold)">直接下载 MP4（3.2 MB）</a>。
       </video>
     </div>
-    <p class="shotcap">
-      完整 720p 视频：
-      <a href="video/BAZZ-demo-v1.mp4" download>video/BAZZ-demo-v1.mp4</a>
-      · 1280×720 · 88s · 8fps · 3.2 MB
-    </p>
+    <p class="shotcap">完整 720p · 1280×720 · 88s · 8fps · 3.2 MB：<a href="video/BAZZ-demo-v1.mp4" download>video/BAZZ-demo-v1.mp4</a></p>
   </section>
 
   <section id="preview">
-    <h2>界面预览</h2>
+    <h2><span class="h">§ 界面</span>交易舱四景</h2>
     <p class="h2-sub">行情雷达 · Agent 钱包 · 系统设置 · 长期记忆 —— 截图全部来自真实运行的桌面版。</p>
     <div class="ui-grid">
       <div class="ui-card">
@@ -271,25 +229,24 @@
       </div>
       <div class="ui-card">
         <img src="screenshots/memory-zh.png" alt="记忆：跨会话长期偏好与风险锚点" />
-        <div class="ui-cap"><b>记忆</b> —— 跨会话长期记忆 · 风控与资产配置锚点 · 已索引可检索</div>
+        <div class="ui-cap"><b>记忆</b> —— 跨会话长期记忆 · 风控 / 资产配置锚点 · 已索引可检索</div>
       </div>
     </div>
-    <p style="color:var(--dim); font-size:13px; margin-top:10px;">
-      中 / EN 双语界面、深色 ↔ 浅色主题顶栏一键切换（重启自动记住）。右下角四个视图在
-      <a href="https://github.com/xinyuzjj/bazz.agent#-the-cockpit-in-four-panels">README</a>
-      中另有英文界面版。
+    <p style="color:var(--muted);font-size:13px;margin-top:10px">
+      中 / EN 双语、深 ↔ 浅主题顶栏一键切换（重启自动记住）。英文界面版见
+      <a href="https://github.com/xinyuzjj/bazz.agent#-the-cockpit-in-four-panels">README</a>。
     </p>
   </section>
 
   <section id="capabilities">
-    <h2>四块原生能力</h2>
-    <p class="h2-sub">不是聊天气泡套 Binance 皮肤 —— 四块全部按官方真实协议实现。</p>
+    <h2><span class="h">§ 能力</span>四块原生能力</h2>
+    <p class="h2-sub">不是聊天皮肤套 Binance API —— 四块全部按官方真实协议实现。</p>
     <div class="caps">
 
       <div class="cap">
         <h3>MCP Server <span class="badge">core</span></h3>
         <div class="cmd">agent.binance.com · Streamable HTTP · OAuth 2.0 PKCE</div>
-        <p>Binance 官方 Agentic MCP 接入。运行时工具发现，无硬编码工具名；公开行情免鉴权，账户/交易走 OAuth + 最小权限 scope。</p>
+        <p>Binance 官方 Agentic MCP 接入。运行时工具发现，无硬编码工具名；公开行情免鉴权，账户 / 交易走 OAuth + 最小权限 scope。</p>
         <ul>
           <li>RFC 9728 资源元数据挑战 → PKCE(S256) 浏览器流</li>
           <li>工具运行时 <code>tools/list</code> 发现</li>
@@ -300,10 +257,10 @@
       <div class="cap">
         <h3>Agentic Wallet <span class="badge">baw</span></h3>
         <div class="cmd">npm i -g @binance/agentic-wallet</div>
-        <p>官方 MPC 无密钥钱包，多链（BSC / ETH / Base / SOL），QR 扫码登录。Agent 只能通过 <code>run_command</code> 白名单调 <code>baw</code>，从不见私钥。</p>
+        <p>官方 MPC 无密钥钱包，多链（BSC / ETH / Base / SOL），浏览器扫码登录。Agent 只能经 <code>run_command</code> 白名单调 <code>baw</code>，从不见私钥。</p>
         <ul>
           <li>兑换 $50k / DeFi $100k / x402 $20 每日上限</li>
-          <li>支持市价单 / 限价单 / 兑换 / 报价</li>
+          <li>市价单 / 限价单 / 兑换 / 报价</li>
           <li>全部 <code>--json</code> 机器可读</li>
         </ul>
       </div>
@@ -313,16 +270,16 @@
         <div class="cmd">/papi/v2/b402/{supported,verify,settle}</div>
         <p>机器对机器支付：卖家 402 → 买家 Agentic Wallet 离线 Permit2 EIP-712 签名 → Facilitator 验证 → 链上点对点结算（Facilitator 代付 gas）。</p>
         <ul>
-          <li>BNB Smart Chain (<code>eip155:56</code>)，Testnet 当前开放</li>
-          <li>真实 <code>/supported</code> 拉配置；无权限时仿真</li>
-          <li>签名环节无 gas，用户体验顺滑</li>
+          <li>BNB Smart Chain（<code>eip155:56</code>）；真实 <code>/supported</code> 拉配置</li>
+          <li>签名环节无 gas，体验顺滑</li>
+          <li>无权限时优雅降级演示</li>
         </ul>
       </div>
 
       <div class="cap">
         <h3>Skill Hub <span class="badge">14 skills</span></h3>
         <div class="cmd">npx skills add &lt;github path&gt;</div>
-        <p>14 个官方 Binance skill（CEX 5 个 + Web3 9 个），意图驱动：在对话里表达意图，skill 自己决定调哪个底层 API/CLI。</p>
+        <p>14 个官方 Binance skill（CEX 5 + Web3 9），意图驱动：对话里表达意图，skill 自己决定调哪个底层 API / CLI。</p>
         <ul>
           <li>本地已装 <code>.agents/skills/*</code>，锁文件 <code>skills-lock.json</code></li>
           <li>install / run / remove 全套，带路径穿越防护</li>
@@ -334,54 +291,59 @@
   </section>
 
   <section>
-    <h2>架构</h2>
+    <h2><span class="h">§ 架构</span>一套代码，两种形态</h2>
     <p class="h2-sub">FastAPI 后端 + React 前端，全部 SSE/NDJSON 流式，无 WebSocket。</p>
 <pre class="code"><span class="dim">┌──────────────────────────────────────────────────────────────────┐
-│              </span><span class="gold">Agent OS Alpha Scout (Web Cockpit)</span><span class="dim">                  │
+│              </span><span class="gold">BAZZ.AGENT (desktop & web, same core)</span><span class="dim">                  │
 │                                                                  │
-│   </span>React + Vite + Tailwind (UI)<span class="dim"> ─── HTTP / SSE ───► </span>FastAPI<span class="dim">        │
+│   </span>Electron (desktop) <span class="dim">─┐</span>                                          │
+│   Browser (web)      <span class="dim">─┴─► </span>React cockpit <span class="dim">─ HTTP/SSE ─► </span>FastAPI<span class="dim">        │
 │                                                                  │
-│   </span>FastAPI (desktop_app.py)<span class="dim">                                       │
-│        │            │            │        │         │             │
-│        ▼            ▼            ▼        ▼         ▼             │
-│   </span>MCP Client<span class="dim">   </span>x402 Client<span class="dim">   </span>Wallet<span class="dim">   </span>Scheduler<span class="dim">  </span>LLM (compat)<span class="dim">    │
-│   </span>(OAuth)<span class="dim">      </span>(B402 Fac.)<span class="dim">   </span>(baw)<span class="dim">    </span>(cron)<span class="dim">     </span>+ rule engine<span class="dim">   │
+│   </span>FastAPI desktop_app.py<span class="dim">                                         │
+│        │          │          │         │         │         │     │
+│        ▼          ▼          ▼         ▼         ▼         ▼     │
+│   </span>MCP Client<span class="dim"> </span>x402 Cl.<span class="dim"> </span>Wallet<span class="dim">   </span>binance-cli<span class="dim"> </span>Cron<span class="dim">    </span>LLM<span class="dim">      │
+│   </span>(OAuth)   <span class="dim"> </span>(B402)<span class="dim">   </span>(baw)<span class="dim">     </span>(CEX HMAC)<span class="dim">     </span><span class="dim">  </span>+rules<span class="dim">    │
 │        │                                                          │
 │        └──────────────► </span><span class="green">Binance Agent Native</span><span class="dim">                       │
 │                          </span>(MCP / Wallet / x402 / Skill Hub)<span class="dim">        │
 │                                                                  │
-│   </span>SQLite (.scout.db)<span class="dim">: sessions / messages / settings / memory    │
+│   </span>SQLite (state.db)<span class="dim">: sessions / messages / memory / jobs        │
 └──────────────────────────────────────────────────────────────────┘</span></pre>
+    <p style="color:var(--muted);font-size:13px;margin-top:10px">
+      桌面版内嵌 PyInstaller 冻结后端（<code>ScoutBackend.exe</code>），托管同一份 React 构建 —— 一套代码，两种形态。
+    </p>
   </section>
 
   <section id="download">
-    <h2>下载桌面版（Windows）</h2>
-    <p class="h2-sub">免安装便携版：解压 → 双击 BAZZ.AGENT.exe → 开箱即用。</p>
-    <div class="install">
-      <p style="margin-top:0;">
-        <code style="font-size:14px; padding:4px 10px;">BAZZ.AGENT-v1.2.12-win32-x64-portable.zip</code>
-        <span style="display:inline-block; margin-left:10px;">
-          <a class="btn primary" style="display:inline-block; padding:8px 18px; border-radius:10px;" href="https://github.com/xinyuzjj/bazz.agent/releases/latest/download/BAZZ.AGENT-v1.2.12-win32-x64-portable.zip">↓ 下载便携版（约 155 MB）</a>
-        </span>
-      </p>
-      <ol style="margin-top:14px;">
-        <li>下载 zip → 解压到任意目录（建议英文路径）</li>
+    <h2><span class="h">§ 下载</span>Windows 桌面版</h2>
+    <p class="h2-sub">内置 Electron + 冻结后端，无需 Python / Node；支持深/浅主题与中/英一键切换（重启记住）。</p>
+    <div class="dl">
+      <div class="card">
+        <h4>便携版 · zip</h4>
+        <p class="note">免安装：解压 → 双击 BAZZ.AGENT.exe → 开箱即用。整个文件夹可随意搬走。</p>
+        <a class="dbtn" href="https://github.com/xinyuzjj/bazz.agent/releases/latest/download/BAZZ.AGENT-v1.2.18-win32-x64-portable.zip">↓ 下载 portable.zip</a>
+      </div>
+      <div class="card">
+        <h4>安装版 · setup.exe</h4>
+        <p class="note">Inno Setup 制作，装到 <code>%LOCALAPPDATA%</code>（无需管理员），带开始菜单 / 桌面快捷方式与卸载器。</p>
+        <a class="dbtn" href="https://github.com/xinyuzjj/bazz.agent/releases/latest/download/BAZZ.AGENT-v1.2.18-setup.exe">↓ 下载 setup.exe</a>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <ol>
+        <li>下载 → 解压 / 安装到任意目录（建议英文路径）</li>
         <li>双击 <code>BAZZ.AGENT.exe</code>，首次启动等 3–5 秒后端预热</li>
-        <li>数据（<code>.scout.db</code>）在 exe 旁边生成——整个文件夹可随意搬走</li>
-        <li>窗口无边框：按住顶栏拖动，最小化/最大化/关闭在顶栏最右（─ / □ / ✕）</li>
+        <li>数据外置在 <code>%APPDATA%\BAZZ.AGENT\workspace</code> —— 便携版整个文件夹随意搬，数据跟着走</li>
+        <li>窗口无边框：按住顶栏拖动，右上 <code>─ / □ / ✕</code> 控制</li>
       </ol>
-      <p style="margin-top:14px; color:var(--dim);">
-        内置 Electron + PyInstaller 冻结后端，无需 Python / Node；支持
-        <b style="color:var(--text)">深色/浅色主题</b>与<b style="color:var(--text)">中/英文</b>一键切换（重启记住）。
-        Windows 10/11 x64。macOS / Linux 请从源码运行。
-      </p>
     </div>
   </section>
 
   <section id="install">
-    <h2>本地快速开始（从源码）</h2>
+    <h2><span class="h">§ 快速开始</span>本地从源码运行</h2>
     <p class="h2-sub">Python 3.11+ · Node 18+ · 一条命令起服务。</p>
-    <div class="install">
+    <div class="card">
       <ol>
         <li>克隆：<code>git clone https://github.com/xinyuzjj/bazz.agent.git</code></li>
         <li>后端：<code>python -m venv .venv &amp;&amp; .venv\Scripts\activate &amp;&amp; pip install -r requirements.txt</code></li>
@@ -389,16 +351,16 @@
         <li>启动：<code>.venv\Scripts\python -m uvicorn desktop_app:app --host 127.0.0.1 --port 8080</code></li>
         <li>打开：<code>http://127.0.0.1:8080</code></li>
       </ol>
-      <p style="margin-top:16px; color:var(--dim);">
+      <p style="margin-top:16px;color:var(--muted)">
         公开行情扫描与基础分析无需任何凭据。<br />
-        接入真实交易 / LLM / MCP / Agentic Wallet 时，分别在「设置」「MCP」「钱包」面板按引导填写或扫码。
+        接真实交易 / LLM / MCP / Agentic Wallet 时，分别在「设置」「MCP」「钱包」面板按引导填写或扫码。
       </p>
     </div>
   </section>
 
   <footer>
     <div><span class="hack">Binance Agent OS Mini Hackathon · Track A</span> · 截止 2026-09-08 23:59 UTC</div>
-    <div>本项目为 Hackathon 演示，非投资建议 · MIT License · <a href="https://github.com/xinyuzjj/bazz.agent/blob/main/README.zh-CN.md">中文说明</a> / <a href="https://github.com/xinyuzjj/bazz.agent/blob/main/README.md">English</a></div>
+    <div>本项目为 Hackathon 演示，非投资建议 · MIT License · <a href="https://github.com/xinyuzjj/bazz.agent/blob/main/README.md">English</a></div>
   </footer>
 
 </div>
