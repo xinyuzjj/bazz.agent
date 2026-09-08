@@ -104,6 +104,19 @@ def api_market():
             "updated_at": int(time.time())}
 
 
+@app.get("/api/market/overview")
+def api_market_overview():
+    """行情增强综述：市场宽度/突发、资金费率拥挤、24h 成交额热度榜，一次返回。"""
+    from scanner import market_breadth, funding_board, volume_heat
+    try:
+        return {"breadth": market_breadth(),
+                "funding": funding_board(top=10),
+                "volume_top": volume_heat(top=15),
+                "updated_at": int(time.time())}
+    except Exception as e:
+        return {"breadth": None, "funding": None, "volume_top": [], "error": str(e)}
+
+
 @app.get("/api/market/monsters")
 def api_market_monsters(force: int = 0):
     """起飞中·追涨高风险：已暴涨币跟踪（原妖币逻辑降级）。"""

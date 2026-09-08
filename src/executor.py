@@ -91,10 +91,42 @@ def place_oco_order(symbol: str, side: str, quantity: str,
     return {"error": r.text, "status_code": r.status_code}
 
 
+def _wallet_place(signal: dict) -> dict:
+    """Agent 钱包通道：走 baw（沿用现有 send/swap 链路，非 MCP/OAuth）。
+    买入 = USDT→BASE 兑换；卖出 = BASE→USDT。失败返回含 error。"""
+    try:
+        from wallet_client import run_command as baw_run
+    except Exception as e:
+        return {"error": f"钱包执行器不可用：{e}"}
+    symbol = str(signal.get("symbol") or "").upper()
+    base = symbol[:-4] if symbol.endswith("USDT") else symbol
+    if not base:
+        return {"error": f"无法解析标的 {symbol}"}
+    qty = float(signal.get("quantity", 0) or 0)
+    price = float(signal.get("price", 0) or 0)
+    if qty <= 0 or price <= 0:
+        return {"error": "数量或价格无效，无法在钱包执行。"}
+    bull = str(signal.get("direction") or "").upper() in ("BULLISH", "做多")
+    if bull:
+        amt = round(qty * price, 4)  # 买入：按 USDT 计输入额
+        cmd = f"baw token swap USDT {base} {amt}"
+    else:
+        cmd = f"baw token swap {base} USDT {qty}"
+    try:
+        res = baw_run(cmd)
+    except Exception as e:
+        return {"error": str(e)[:300]}
+    if res.get("status") == "ok":
+        return {"orderId": "WALLET", "symbol": symbol, "status": "TRADE_SUBMITTED",
+                "command": cmd, "output": (res.get("stdout") or res.get("stderr") or "")[-1200:]}
+    err = (res.get("stderr") or res.get("detail") or res.get("stdout") or "钱包下单失败").strip()[:300]
+    return {"error": err}
+
+
 def confirm_and_place(signal: dict, confirm: bool = False) -> dict:
     """
-    确认后下单流程
-    confirm=True 时才真实下单
+    确认后下单：confirm=True 时才真实下单。
+    通道由 Agent 决策：route=="wallet" 走 Agent 钱包(baw)；否则走交易所 API 密钥(cex_wallet)。
     """
     summary = {
         "symbol": signal["symbol"],
@@ -103,16 +135,38 @@ def confirm_and_place(signal: dict, confirm: bool = False) -> dict:
         "stop_loss": signal.get("stop_loss"),
         "take_profit": signal.get("take_profit"),
         "max_loss_usdt": signal.get("max_loss_usdt"),
+        "route": signal.get("route", "exchange"),
     }
     if not confirm:
         return {"status": "pending_confirm", "summary": summary,
                 "message": "请人工确认：是否同意按上述参数下单？"}
-    return place_limit_order(
+    # 钱包通道：走 Agent 钱包（baw）
+    if signal.get("route") == "wallet":
+        res = _wallet_place(signal)
+        if "error" in res:
+            return res
+        return place_report(res)
+    # 交易所密钥通道：用界面绑定的密钥（settings 优先 / .env 兜底），不依赖 MCP/OAuth
+    from cex_wallet import place_order as cex_place
+    side = "BUY" if summary["direction"] in ("BULLISH", "做多") else "SELL"
+    return place_report(cex_place(
         symbol=summary["symbol"],
-        side="BUY" if summary["direction"] in ("BULLISH", "做多") else "SELL",
+        side=side,
         quantity=str(signal.get("quantity", "0.001")),
         price=str(summary["entry_price"]),
-    )
+    ))
+
+
+def place_report(res: dict) -> dict:
+    """把 cex_wallet.place_order / 钱包下单结果归一化成下单单所需字段（orderId/symbol/status/error）。"""
+    if res.get("status") == "ok":
+        d = res.get("order", {})
+        return {"orderId": d.get("orderId", "N/A"),
+                "symbol": d.get("symbol", ""),
+                "status": d.get("status", "NEW"),
+                "executedQty": d.get("executedQty"),
+                "fills_cnt": len(d.get("fills", []) or [])}
+    return {"error": res.get("message") or res.get("detail") or res.get("output") or "下单失败"}
 
 
 if __name__ == "__main__":

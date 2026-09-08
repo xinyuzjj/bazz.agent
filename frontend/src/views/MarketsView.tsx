@@ -61,6 +61,20 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "quote_volume", dir: -1 });
   const [loading, setLoading] = useState(true);
 
+  // —— 行情综述：市场宽度 / 资金费率拥挤 / 24h 成交额热度 ——
+  type FundingItem = { symbol: string; price: number; change_pct: number; funding_rate: number; direction: string; crowded: boolean };
+  type VolItem = { symbol: string; price: number; change_pct: number; quote_volume: number };
+  type OverviewData = {
+    breadth?: { advancers: number; decliners: number; unchanged: number; up_ratio: number; avg_abs_chg: number; extreme_count: number; total: number };
+    funding?: { long_crowded: FundingItem[]; short_crowded: FundingItem[] };
+    volume_top?: VolItem[];
+    error?: string;
+  };
+  const [ov, setOv] = useState<OverviewData | null>(null);
+  const loadOverview = async () => {
+    try { setOv(await api.marketOverview()); } catch { /* 网络失败保持旧数据 */ }
+  };
+
   // —— 妖币雷达：启动前(ignition) / 起飞中(takeoff) 双模式 ——
   const [mode, setMode] = useState<"ignition" | "takeoff">("ignition");
   const [ign, setIgn] = useState<RadarRow[]>([]);
@@ -85,7 +99,11 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
     } catch (e: any) { setMErr(e?.message ?? String(e)); }
     finally { setMLoading(false); }
   };
-  useEffect(() => { load(); const t = setInterval(load, 30_000); return () => clearInterval(t); }, []);
+  useEffect(() => {
+    load(); loadOverview();
+    const t = setInterval(() => { load(); loadOverview(); }, 30_000);
+    return () => clearInterval(t);
+  }, []);
   // 每秒 tick，驱动「N 秒前」实时刷新角标
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
@@ -170,7 +188,7 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
           <span className="pill pill-dim">{data?.quote ?? "USDT"} {t("markets.spotPairs", { total })}</span>
         </div>
         <span className="prefix ml-auto">{t("markets.autoRefreshPrefix")} <span className="text-ink-dim tabular">{updated}</span></span>
-        <button onClick={load} className="btn-ghost py-1 px-2.5 text-[12px]"><I.Refresh size={11} /> {t("markets.refresh")}</button>
+        <button onClick={() => { load(); loadOverview(); }} className="btn-ghost py-1 px-2.5 text-[12px]"><I.Refresh size={11} /> {t("markets.refresh")}</button>
       </div>
 
       {/* 妖币雷达：启动前·埋伏（量在价先） / 起飞中·追涨高风险 */}
@@ -310,6 +328,108 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
           </div>
         )}
       </div>
+
+      {/* 行情综述：市场宽度 / 资金费率拥挤 / 24h 成交额热度 */}
+      {ov && (ov.breadth || ov.funding || (ov.volume_top ?? []).length > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {/* 市场宽度 / 突发 */}
+          <div className="glass p-4" style={{ borderRadius: 12 }}>
+            <div className="flex items-center gap-2 mb-3">
+              <I.Zap size={14} className="text-gold" />
+              <span className="font-mono text-[12px] tracking-wider text-ink">{t("markets.breadthTitle")}</span>
+              <span className="pill pill-dim ml-auto text-[10px]">{t("markets.breadthTotal", { n: ov.breadth?.total ?? 0 })}</span>
+            </div>
+            {ov.breadth ? (
+              <>
+                <div className="flex items-center gap-3 font-mono tabular text-[12px] flex-wrap">
+                  <span className="text-green">{ov.breadth.advancers} <span className="text-ink-mute text-[9.5px]">{t("markets.breadthUp")}</span></span>
+                  <span className="text-red">{ov.breadth.decliners} <span className="text-ink-mute text-[9.5px]">{t("markets.breadthDown")}</span></span>
+                  <span className="text-ink-dim">{ov.breadth.unchanged} <span className="text-ink-mute text-[9.5px]">{t("markets.breadthFlat")}</span></span>
+                </div>
+                <div className="flex h-2 rounded overflow-hidden mt-2.5 bg-line">
+                  <div className="bg-green" style={{ flex: Math.max(0.0001, ov.breadth.up_ratio) }} />
+                  <div className="bg-red/70" style={{ flex: Math.max(0.0001, 1 - ov.breadth.up_ratio) }} />
+                </div>
+                <div className="grid grid-cols-3 gap-2 mt-3">
+                  <div className="rounded-md border border-red/40 bg-red/5 px-2 py-1.5 text-center" title={t("markets.breadthExtremeTitle")}>
+                    <div className="font-mono tabular text-[14px] text-red font-semibold">{ov.breadth.extreme_count}</div>
+                    <div className="font-mono text-[9px] text-ink-mute">{t("markets.breadthExtreme")}</div>
+                  </div>
+                  <div className="rounded-md border border-line bg-card/40 px-2 py-1.5 text-center">
+                    <div className="font-mono tabular text-[14px] text-ink">{(ov.breadth.up_ratio * 100).toFixed(0)}%</div>
+                    <div className="font-mono text-[9px] text-ink-mute">{t("markets.breadthUpRatio")}</div>
+                  </div>
+                  <div className="rounded-md border border-line bg-card/40 px-2 py-1.5 text-center">
+                    <div className="font-mono tabular text-[14px] text-ink">{ov.breadth.avg_abs_chg.toFixed(1)}%</div>
+                    <div className="font-mono text-[9px] text-ink-mute">{t("markets.breadthAvgAbs")}</div>
+                  </div>
+                </div>
+              </>
+            ) : <div className="text-[11px] text-ink-dim font-mono">{t("markets.noData")}</div>}
+          </div>
+
+          {/* 资金费率拥挤度 */}
+          <div className="glass p-4" style={{ borderRadius: 12 }}>
+            <div className="flex items-center gap-2 mb-3">
+              <I.Bolt size={14} className="text-gold" />
+              <span className="font-mono text-[12px] tracking-wider text-ink">{t("markets.fundingTitle")}</span>
+            </div>
+            {ov.funding ? (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <div className="font-mono text-[10px] tracking-wider text-green mb-1.5">{t("markets.longCrowded")}</div>
+                  <div className="space-y-1">
+                    {(ov.funding.long_crowded ?? []).map((f, i) => (
+                      <button key={i} onClick={() => onTrade?.(f.symbol)}
+                        className="w-full flex items-center gap-1.5 text-[11px] font-mono hover:bg-elevated/40 rounded px-1 py-0.5 transition-colors">
+                        <span className="flex-1 text-ink truncate text-left">{baseName(f.symbol)}</span>
+                        <span className={`tabular ${f.crowded ? "text-gold font-semibold" : "text-green"}`}>+{(f.funding_rate * 100).toFixed(3)}%</span>
+                      </button>
+                    ))}
+                    {(ov.funding.long_crowded ?? []).length === 0 && <div className="text-[10.5px] text-ink-mute font-mono">{t("markets.noData")}</div>}
+                  </div>
+                </div>
+                <div>
+                  <div className="font-mono text-[10px] tracking-wider text-red mb-1.5">{t("markets.shortCrowded")}</div>
+                  <div className="space-y-1">
+                    {(ov.funding.short_crowded ?? []).map((f, i) => (
+                      <button key={i} onClick={() => onTrade?.(f.symbol)}
+                        className="w-full flex items-center gap-1.5 text-[11px] font-mono hover:bg-elevated/40 rounded px-1 py-0.5 transition-colors">
+                        <span className="flex-1 text-ink truncate text-left">{baseName(f.symbol)}</span>
+                        <span className={`tabular ${f.crowded ? "text-gold font-semibold" : "text-red"}`}>{((f.funding_rate ?? 0) * 100).toFixed(3)}%</span>
+                      </button>
+                    ))}
+                    {(ov.funding.short_crowded ?? []).length === 0 && <div className="text-[10.5px] text-ink-mute font-mono">{t("markets.noData")}</div>}
+                  </div>
+                </div>
+              </div>
+            ) : <div className="text-[11px] text-ink-dim font-mono">{t("markets.noData")}</div>}
+          </div>
+
+          {/* 24h 成交额热度榜 */}
+          <div className="glass p-4" style={{ borderRadius: 12 }}>
+            <div className="flex items-center gap-2 mb-2">
+              <I.Arrow size={14} className="text-gold" />
+              <span className="font-mono text-[12px] tracking-wider text-ink">{t("markets.volumeTitle")}</span>
+              <span className="pill pill-dim ml-auto text-[10px]">24h</span>
+            </div>
+            <div className="space-y-1">
+              {(ov.volume_top ?? []).map((v, i) => (
+                <button key={i} onClick={() => onTrade?.(v.symbol)}
+                  className="w-full flex items-center gap-2 rounded-lg border border-line bg-card/40 px-2.5 py-1.5 hover:border-gold/40 transition-colors group">
+                  <span className="font-mono text-[9.5px] text-ink-mute w-4">#{i + 1}</span>
+                  <span className="font-mono text-[12px] text-ink flex-1 text-left truncate">{baseName(v.symbol)}</span>
+                  <span className={`font-mono tabular text-[11.5px] ${v.change_pct >= 0 ? "up" : "down"}`}>{v.change_pct >= 0 ? "+" : ""}{v.change_pct.toFixed(1)}%</span>
+                  <span className="font-mono tabular text-[11px] text-ink-dim hidden sm:inline">{fmtVol(v.quote_volume)}</span>
+                  <span onClick={(e) => { e.stopPropagation(); onAnalyze?.(v.symbol); }}
+                    className="btn-ghost px-1.5 py-0.5 text-[9.5px] opacity-0 group-hover:opacity-100"><I.Search size={9} /> {t("markets.analyze")}</span>
+                </button>
+              ))}
+              {(ov.volume_top ?? []).length === 0 && <div className="text-[11px] text-ink-dim font-mono">{t("markets.noData")}</div>}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 智能异动信号（全市场扫描） */}
       {data && data.signals && data.signals.length > 0 && (

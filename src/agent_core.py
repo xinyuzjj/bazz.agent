@@ -455,6 +455,24 @@ def _run_meme_watch(mode: str = "both"):
     }
 
 
+def _decide_route(*, signal: str = None) -> str:
+    """Agent 决策执行通道：优先交易所（API 密钥现货限价单，精确可控）；
+    无密钥时退回 Agent 钱包（baw swap）。这由 Agent 自动判断，不让用户手选。"""
+    try:
+        from cex_wallet import configured as cex_configured
+        if cex_configured():
+            return "exchange"
+    except Exception:
+        pass
+    try:
+        import wallet_client
+        if wallet_client.cli_installed():
+            return "wallet"
+    except Exception:
+        pass
+    return "wallet"
+
+
 def _run_execute(confirm: bool = False, signal: dict = None, message: str = ""):
     if confirm and signal:
         res = confirm_and_place(signal, confirm=True)
@@ -495,19 +513,23 @@ def _run_execute(confirm: bool = False, signal: dict = None, message: str = ""):
     if price <= 0:
         return {"reply": "⚠️ 当前无可执行信号，请先「扫描」。", "tools": [
             {"icon": "📈", "name": "交易预检", "status": "warn", "detail": "无信号"}]}
+    # Agent 决策执行通道：有交易所 API 密钥 → 走交易所（现货限价单，更精准）；否则走 Agent 钱包（baw swap）。
+    route = _decide_route(signal=symbol)
     signal = {**best, "direction": direction, "price": price,
               "stop_loss": round(price * 0.97, 4), "take_profit": round(price * 1.08, 4),
-              "quantity": str(round(50 / price, 6)), "max_loss_usdt": 5.0}
+              "quantity": str(round(50 / price, 6)), "max_loss_usdt": 5.0, "route": route}
+    route_txt = "币安交易所（API 密钥）" if route == "exchange" else "Agent 钱包（baw）"
     reply = (f"已生成下单方案（**未真实下单，需你确认**）：\n\n"
              f"- 标的：**{signal['symbol']}** · {signal['direction']}\n- 入场：{price}\n"
              f"- 止损：{signal['stop_loss']} · 止盈：{signal['take_profit']}\n"
-             f"- 数量：{signal['quantity']} · 最大亏损：{signal['max_loss_usdt']} USDT\n\n"
-             "点击下方「确认下单」才会真实提交（需配置 Binance API Key 并开启 Agentic 子账户）。")
+             f"- 数量：{signal['quantity']} · 最大亏损：{signal['max_loss_usdt']} USDT\n"
+             f"- 执行通道：**{route_txt}**（由 Agent 自动判断）\n\n"
+             "点击下方「确认下单」才会真实提交（交易所通道需配置 Binance API Key）。")
     if note:
         reply = note + reply
     return {"reply": reply, "needs_approval": True,
             "approval": {"action": "execute_order", "signal": signal,
-                         "title": f"确认下单 {signal['symbol']}（{signal['direction']}）",
+                         "title": f"确认下单 {signal['symbol']}（{signal['direction']} · 走{route_txt}）",
                          "label": "✅ 确认下单"},
             "tools": [{"icon": "📈", "name": "Binance 下单（待确认）", "status": "info",
                        "detail": f"{signal['symbol']} {signal['direction']} @ {price}"}],

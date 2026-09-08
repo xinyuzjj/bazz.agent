@@ -232,6 +232,51 @@ def market_movers(quote: str = "USDT", liquid_qv: float = 5e6, top: int = 5) -> 
             "losers": [pick(x) for x in losers]}
 
 
+def market_breadth(quote: str = "USDT") -> dict:
+    """市场宽度/突发：全市场涨/跌家数、上涨占比、平均 |涨跌|、极端动量标的数（突发预警）。
+    基于 get_snapshot 快照，零额外请求。"""
+    rows = get_snapshot(quote=quote)
+    if not rows:
+        return {"advancers": 0, "decliners": 0, "unchanged": 0, "up_ratio": 0.0,
+                "avg_abs_chg": 0.0, "extreme_count": 0, "total": 0}
+    up = sum(1 for r in rows if r["change_pct"] > 0)
+    dn = sum(1 for r in rows if r["change_pct"] < 0)
+    uh = len(rows) - up - dn
+    avg_abs = sum(abs(r["change_pct"]) for r in rows) / len(rows)
+    extreme = sum(1 for r in rows if abs(r["change_pct"]) >= 20)  # 20%+ 暴涨暴跌视为突发
+    return {"advancers": up, "decliners": dn, "unchanged": uh,
+            "up_ratio": round(up / len(rows), 4) if rows else 0.0,
+            "avg_abs_chg": round(avg_abs, 2),
+            "extreme_count": extreme, "total": len(rows)}
+
+
+def funding_board(top: int = 10, min_qv: float = 2e6) -> dict:
+    """资金费率板块：正/负资金费率靠前的币（多头/空头拥挤度），只统计流动性交易对。"""
+    rates = get_funding_rates()
+    rows = [r for r in get_snapshot(quote="USDT") if r["quote_volume"] >= min_qv]
+    items = []
+    for r in rows:
+        fr = rates.get(r["symbol"], 0.0)
+        if abs(fr) < 0.00001:
+            continue
+        items.append({"symbol": r["symbol"], "price": r["price"],
+                      "change_pct": r["change_pct"],
+                      "funding_rate": fr})
+    items.sort(key=lambda x: x["funding_rate"], reverse=True)
+    _pick = lambda i: {**i, "direction": "多" if i["funding_rate"] > 0 else "空",
+                       "crowded": abs(i["funding_rate"]) >= 0.001}  # >=0.1% 视为拥挤
+    return {"long_crowded": [_pick(x) for x in items[:top]],
+            "short_crowded": [_pick(x) for x in items[::-1][:top if len(items) >= top else len(items)]]}
+
+
+def volume_heat(top: int = 15, quote: str = "USDT") -> list:
+    """24h 成交额/热度榜：按成交额降序的流动性交易对。"""
+    rows = get_snapshot(quote=quote, limit=top)
+    return [{"symbol": r["symbol"], "price": r["price"],
+             "change_pct": r["change_pct"], "quote_volume": r["quote_volume"]}
+            for r in rows[:top]]
+
+
 # ================= 妖币雷达（Monster Radar） =================
 # 两种模式（避免"涨完才提示"的追高陷阱）：
 #   1) 启动前·埋伏窗口 (ignition)：量在价先 —— 低位横盘/阴跌后温和放量、

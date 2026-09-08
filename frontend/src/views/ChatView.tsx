@@ -1468,7 +1468,10 @@ export function ChatView({
                           const d = String(s.direction ?? "").toUpperCase();
                           const bear = d.includes("SHORT") || d.includes("BEAR") || String(s.direction ?? "").includes("空");
                           const dir = bear ? t("markets.short") : t("markets.long");
+                          const route = s.route === "wallet" ? "wallet" : "exchange"; // 默认交易所；Agent 自动判断
+                          const routeTxt = route === "wallet" ? t("chat.ordRouteWallet") : t("chat.ordRouteExchange");
                           const rows: Array<[string, string]> = [
+                            [t("chat.ordRoute"), routeTxt],
                             [t("chat.ordSymbol"), `${s.symbol ?? "—"} · ${dir}`],
                             [t("chat.ordPrice"), s.price != null && s.price > 0 ? `$${s.price}` : "—"],
                             [t("chat.ordStopLoss"), s.stop_loss != null ? `$${s.stop_loss}` : "—"],
@@ -1480,7 +1483,12 @@ export function ChatView({
                           ];
                           return (
                             <div className="mt-2 mb-2 rounded-md border border-gold/25 bg-gold/[0.05] divide-y divide-gold/10">
-                              <div className="px-2.5 py-1 font-mono text-[9.5px] tracking-wider text-gold/80">{t("chat.ordDetail")}</div>
+                              <div className="flex items-center justify-between px-2.5 py-1 font-mono text-[9.5px] tracking-wider text-gold/80">
+                                <span>{t("chat.ordDetail")}</span>
+                                <span className={`pill ${route === "wallet" ? "pill-gold" : "pill-green"}`}>
+                                  {route === "wallet" ? "🛡️ " + t("chat.ordRouteWallet") : "🏦 " + t("chat.ordRouteExchange")}
+                                </span>
+                              </div>
                               {rows.map(([k, v]) => (
                                 <div key={k} className="flex items-center justify-between px-2.5 py-1 font-mono text-[11px]">
                                   <span className="text-ink-dim">{k}</span>

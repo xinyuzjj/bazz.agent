@@ -63,6 +63,11 @@ def clear_keys() -> None:
     state.set_setting("BINANCE_API_SECRET", "")
 
 
+def get_keypair() -> Tuple[str, str]:
+    """供下单/其它模块复用：返回当前可用密钥对（settings 优先，.env 兜底）。"""
+    return _stored()
+
+
 # ---------------- 签名请求 ----------------
 
 def _sign(params: dict, secret: str) -> str:
@@ -107,6 +112,41 @@ def _get_signed(path: str, params: dict, api_key: str, secret: str) -> dict:
             raise ValueError(f"签名 / 时间戳被拒（{body_code}）：{msg}（请检查 Secret Key 是否对应、机器时钟是否同步）")
         raise PermissionError(msg) if req.status_code in (401, 403) else ConnectionError(msg)
     return req.json()
+
+
+def place_order(symbol: str, side: str, quantity: str, price: str,
+                time_in_force: str = "GTC", keys: Optional[Tuple[str, str]] = None) -> dict:
+    """下现货限价单（API Key + Secret，HMAC 签名），走用户界面绑定的密钥，不依赖 MCP/OAuth。
+
+    side：BUY / SELL。失败返回 {"status":"error",...}，成功返回 order 详情。
+    """
+    if keys is None:
+        keys = _stored()
+    api_key, secret = keys
+    if not api_key or not secret:
+        return {"status": "error", "code": "not_configured",
+                "message": "尚未配置 Binance API Key / Secret（请到交易所页绑定）。"}
+    params = _sign({
+        "symbol": str(symbol).upper(),
+        "side": str(side).upper(),
+        "type": "LIMIT",
+        "timeInForce": time_in_force,
+        "quantity": str(quantity),
+        "price": str(price),
+    }, secret)
+    try:
+        req = requests.post(f"{BASE_URL}/api/v3/order?{params}",
+                            headers={"X-MBX-APIKEY": api_key}, timeout=15)
+    except requests.exceptions.RequestException as e:
+        return {"status": "error", "code": "network", "message": f"请求失败：{e.__class__.__name__}"}
+    if req.status_code == 200:
+        return {"status": "ok", "order": req.json()}
+    msg = ""
+    try:
+        msg = str(req.json().get("msg") or req.text[:200])
+    except Exception:
+        msg = req.text[:200]
+    return {"status": "error", "code": f"http_{req.status_code}", "message": msg}
 
 
 def _all_prices() -> dict:
