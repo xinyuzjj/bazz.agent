@@ -87,10 +87,13 @@ jobs:
 
       - name: 下载 mihomo 内核（v1.3.8 起内置进安装包，用户免单独下载）
         shell: pwsh
+        env:
+          BAZZ_GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = "Stop"
-          # 带 GITHUB_TOKEN 认证：匿名 API 限额 60/h，runner 出口 IP 共享极易耗尽（v1.4.0 构建曾因此失败）
-          $headers = @{ "User-Agent" = "BAZZ.AGENT"; "Authorization" = "Bearer $env:GITHUB_TOKEN" }
+          # 带 token 认证：匿名 API 限额 60/h，runner 出口 IP 共享极易耗尽（v1.4.0 构建曾因此失败）
+          # 注意 GITHUB_TOKEN 默认不注入步骤 env，必须显式从 github.token 上下文传入
+          $headers = @{ "User-Agent" = "BAZZ.AGENT"; "Authorization" = "Bearer $env:BAZZ_GH_TOKEN" }
           $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest" -Headers $headers
           $asset = $rel.assets | Where-Object { $_.name -match "^mihomo-windows-amd64-v[\d.]+\.zip$" } | Select-Object -First 1
           if (-not $asset) { throw "mihomo 最新 Release 未找到 windows-amd64 资产" }
