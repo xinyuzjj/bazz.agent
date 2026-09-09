@@ -123,6 +123,17 @@ def _wallet_place(signal: dict) -> dict:
     return {"error": err}
 
 
+def _tracked(res: dict, signal: dict) -> dict:
+    """v1.4.0：下单成功后登记订单跟踪（状态同步 + SL/TP 提醒），失败不影响下单结果。"""
+    try:
+        if not res.get("error"):
+            from order_tracker import track_from_result
+            track_from_result(res, signal)
+    except Exception:
+        pass
+    return res
+
+
 def confirm_and_place(signal: dict, confirm: bool = False) -> dict:
     """
     确认后下单：confirm=True 时才真实下单。
@@ -145,16 +156,16 @@ def confirm_and_place(signal: dict, confirm: bool = False) -> dict:
         res = _wallet_place(signal)
         if "error" in res:
             return res
-        return place_report(res)
+        return _tracked(place_report(res), signal)
     # 交易所密钥通道：用界面绑定的密钥（settings 优先 / .env 兜底），不依赖 MCP/OAuth
     from cex_wallet import place_order as cex_place
     side = "BUY" if summary["direction"] in ("BULLISH", "做多") else "SELL"
-    return place_report(cex_place(
+    return _tracked(place_report(cex_place(
         symbol=summary["symbol"],
         side=side,
         quantity=str(signal.get("quantity", "0.001")),
         price=str(summary["entry_price"]),
-    ))
+    )), signal)
 
 
 def place_report(res: dict) -> dict:

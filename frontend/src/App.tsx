@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { Shell, NavId } from "./components/Shell";
 import { ChatView } from "./views/ChatView";
@@ -12,6 +12,7 @@ import { MemoryOverlay } from "./views/MemoryOverlay";
 import { PanicHaltModal } from "./views/PanicHaltModal";
 import { I18nProvider, useI18n } from "./i18n/i18n";
 import UpdateNotifier from "./components/UpdateNotifier";
+import Toasts from "./components/Toasts";
 import { ThemeProvider } from "./theme/theme";
 
 // 兜底：捕获子树渲染错误，渲染降级提示而不让整页崩
@@ -66,14 +67,15 @@ function AppInner() {
   }, [settings]);
 
   // 从行情/妖币/对话带 symbol 跳到 CEX；妖币模式决定现货还是合约、方向
-  const goTrade = (symbol: string, mode?: "spot-long" | "futures-long" | "futures-short") => {
+  // useCallback：保持引用稳定，让 MarketsView 的 memo 行组件不至于随状态轮询整表重渲
+  const goTrade = useCallback((symbol: string, mode?: "spot-long" | "futures-long" | "futures-short") => {
     setTradeSymbol(symbol);
     setTradeMode(mode);
     setNav("cex");
-  };
+  }, []);
 
   // 从行情按钮（现货买入 / 合约做多 / 合约做空）跳到对话，并向 Agent 提问仓位建议
-  const goChatOrder = (symbol: string, mode: "spot-long" | "futures-long" | "futures-short") => {
+  const goChatOrder = useCallback((symbol: string, mode: "spot-long" | "futures-long" | "futures-short") => {
     const isEn = curLocale === "en";
     const tag =
       mode === "spot-long"      ? (isEn ? "spot-buy" : "现货买入")
@@ -92,10 +94,10 @@ function AppInner() {
     setTradeSymbol(undefined);
     setTradeMode(undefined);
     setNav("chat");
-  };
+  }, [curLocale]);
 
   // 从行情 / 妖币页「一键分析」跳到对话，让 Agent 解读某标的（走势 / 位置 / 风险 / 入场）
-  const goAnalyze = (symbol: string) => {
+  const goAnalyze = useCallback((symbol: string) => {
     const isEn = curLocale === "en";
     const msg = isEn
       ? `Analyze ${symbol} for me: using the current price, recent price action, volume and funding rate shown on the Markets page, give the trend direction, where the price sits in its 90-day range, the key risk warnings, and an entry plan with clear invalidation conditions. Clearly separate facts from speculation.`
@@ -104,7 +106,7 @@ function AppInner() {
     setTradeSymbol(undefined);
     setTradeMode(undefined);
     setNav("chat");
-  };
+  }, [curLocale]);
 
   const openMemory = () => { setNav("memory"); setMemoryOpen(true); };
   const closeMemory = () => { setMemoryOpen(false); setNav("chat"); };
@@ -170,6 +172,7 @@ function AppInner() {
         onResume={() => { setHalted(false); setPanicOpen(false); }}
       />
       <UpdateNotifier />
+      <Toasts />   {/* v1.4.0：全局事件通知（订单状态 / SL·TP 提醒）——应用内 toast + 系统通知 */}
     </>
   );
 }

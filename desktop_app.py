@@ -15,9 +15,10 @@ if _SRC not in sys.path:
 
 import json
 import time
+import asyncio
 from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket
 from fastapi.requests import Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -88,6 +89,12 @@ scheduler.start()
 
 # v1.3.7：加载代理池并把已启用代理注入环境变量（须在任何对外请求前完成）
 proxy_pool.bootstrap()
+
+# v1.4.0：行情实时流（币安 WS，代理池 env 已就位后启动）+ 订单跟踪/SL·TP 监控
+import market_ws
+import order_tracker
+market_ws.start()
+order_tracker.ensure_started()
 
 # 后台预热钱包状态缓存（baw 冷启动慢，先算好，前端打开钱包页即秒回）
 threading.Thread(target=wallet_client.warm_wallet_cache, daemon=True).start()
@@ -194,6 +201,114 @@ def api_market_ignition(force: int = 0):
     except Exception as e:
         return {"coins": [], "scanned": 0, "candidates": 0, "error": str(e)}
 
+
+# ---------------- v1.4.0 行情实时流（币安 WS → 后端缓存 → 前端推送） ----------------
+
+@app.get("/api/market/tickers")
+def api_market_tickers(scope: str = "spot", symbols: str = ""):
+    """实时 ticker 快照（REST 兜底，WS 不可用时前端 1s 轮询这里；数据源为 WS 内存缓存）。"""
+    try:
+        import market_ws
+        syms = [s for s in (symbols or "").split(",") if s.strip()]
+        return {"scope": scope, "tickers": market_ws.tickers(scope, syms or None),
+                "ws": market_ws.info().get(scope, {}), "ts": int(time.time())}
+    except Exception as e:
+        return {"scope": scope, "tickers": {}, "error": str(e)}
+
+
+@app.get("/api/market/wsinfo")
+def api_market_wsinfo():
+    """实时流连接状态（前端 LIVE 徽标 / 诊断）。"""
+    try:
+        import market_ws
+        return {"ok": True, "ws": market_ws.info()}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.websocket("/api/ws")
+async def api_ws(ws: WebSocket):
+    """前端推送通道：行情 tick + 订单状态 + SL/TP 提醒。
+    鉴权：HTTP 中间件不拦 WebSocket，这里自查 query token（BAZZ_AUTH_TOKEN 设置时）。"""
+    if AUTH_TOKEN and (ws.query_params.get("token") or "") != AUTH_TOKEN:
+        await ws.close(code=4401)
+        return
+    await ws.accept()
+    import market_ws
+    # 每连接独立订阅集 + 事件游标（seq 增量，多客户端互不抢占）
+    subs: dict = {"spot": set(), "futures": set()}
+    ev_seq = 0
+    last_send = 0.0
+    subs_dirty = True
+    try:
+        await ws.send_text(json.dumps({"type": "hello", "ws": market_ws.info()},
+                                       ensure_ascii=False))
+        while True:
+            # 非阻塞收订阅指令：100ms 超时视为无新指令
+            got = None
+            try:
+                got = await asyncio.wait_for(ws.receive_text(), timeout=0.1)
+            except asyncio.TimeoutError:
+                pass
+            except Exception:
+                break
+            if got is not None:
+                try:
+                    m = json.loads(got)
+                    if m.get("type") == "sub":
+                        for scope in ("spot", "futures"):
+                            want = m.get(scope) or []
+                            if isinstance(want, list):
+                                subs[scope] = {str(s).upper() for s in want[:400]}
+                        subs_dirty = True
+                except Exception:
+                    pass
+            # 推送节流：有事件/订阅变更立即推，否则最多 1s 一帧
+            events = market_ws.events_after(ev_seq)
+            now = time.time()
+            if not (subs_dirty or events or now - last_send >= 1.0):
+                continue
+            ticks = {"spot": {}, "futures": {}}
+            for scope, syms in subs.items():
+                if syms:
+                    ticks[scope] = market_ws.tickers(scope, list(syms))
+            if events:
+                ev_seq = events[-1]["seq"]
+            subs_dirty = False
+            last_send = now
+            payload = {"type": "frame", "ticks": ticks, "events": events,
+                       "conn": market_ws.info()}
+            await ws.send_text(json.dumps(payload, ensure_ascii=False))
+    except Exception:
+        pass
+    finally:
+        try:
+            await ws.close()
+        except Exception:
+            pass
+
+
+# ---------------- v1.4.0 订单跟踪 ----------------
+
+@app.get("/api/orders/track")
+def api_orders_track():
+    """下单跟踪列表（exchange 状态由监控线程自动同步）。"""
+    try:
+        import order_tracker
+        return {"status": "ok", "orders": state.track_list()}
+    except Exception as e:
+        return {"status": "error", "orders": [], "message": str(e)[:200]}
+
+
+@app.delete("/api/orders/track")
+def api_orders_untrack(id: str):
+    """停止跟踪某订单。"""
+    try:
+        import order_tracker
+        order_tracker.untrack(id)
+        return {"status": "ok"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)[:200]}
 
 # ---------------- 对话（流式 + 持久化） ----------------
 

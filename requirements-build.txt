@@ -19,3 +19,4 @@ PySocks==1.7.1
 starlette==1.6.0
 urllib3==2.7.0
 uvicorn==0.52.4
+websockets==15.0.1

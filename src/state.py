@@ -92,6 +92,22 @@ def _init():
         created_at REAL NOT NULL,
         updated_at REAL NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS tracked_orders (
+        id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        route TEXT DEFAULT 'exchange',
+        direction TEXT DEFAULT 'BULLISH',
+        quantity TEXT DEFAULT '0',
+        entry REAL DEFAULT 0,
+        stop_loss REAL DEFAULT 0,
+        take_profit REAL DEFAULT 0,
+        status TEXT DEFAULT 'NEW',
+        active INTEGER DEFAULT 1,
+        note TEXT DEFAULT '',
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL
+    );
     CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conv_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_mem ON memory(key);
     """)
@@ -466,6 +482,56 @@ def list_memory():
 @_serialized
 def delete_memory(key):
     _conn_get().execute("DELETE FROM memory WHERE key=?", (key,))
+    _conn_get().commit()
+
+
+# ---------------- 订单跟踪（v1.4.0：下单后状态跟踪 + SL/TP 提醒） ----------------
+
+def _track_out(r):
+    d = dict(r)
+    d["active"] = bool(r["active"] or 0)
+    return d
+
+
+@_serialized
+def track_add(order_id: str, symbol: str, route: str = "exchange", direction: str = "BULLISH",
+              quantity: str = "0", entry: float = 0, stop_loss: float = 0,
+              take_profit: float = 0, status: str = "NEW", note: str = "") -> str:
+    tid = _uid()
+    now = time.time()
+    _conn_get().execute(
+        "INSERT INTO tracked_orders (id,order_id,symbol,route,direction,quantity,entry,stop_loss,"
+        "take_profit,status,active,note,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,1,?,?,?)",
+        (tid, str(order_id), str(symbol).upper(), route or "exchange", direction or "BULLISH",
+         str(quantity or "0"), float(entry or 0), float(stop_loss or 0), float(take_profit or 0),
+         status or "NEW", note or "", now, now))
+    _conn_get().commit()
+    return tid
+
+
+def track_list() -> list:
+    rows = _conn_get().execute(
+        "SELECT * FROM tracked_orders ORDER BY created_at DESC LIMIT 100").fetchall()
+    return [_track_out(r) for r in rows]
+
+
+@_serialized
+def track_set_status(tid: str, status: str) -> None:
+    _conn_get().execute("UPDATE tracked_orders SET status=?, updated_at=? WHERE id=?",
+                        (status, time.time(), tid))
+    _conn_get().commit()
+
+
+@_serialized
+def track_set_active(tid: str, active: bool) -> None:
+    _conn_get().execute("UPDATE tracked_orders SET active=?, updated_at=? WHERE id=?",
+                        (1 if active else 0, time.time(), tid))
+    _conn_get().commit()
+
+
+@_serialized
+def track_remove(tid: str) -> None:
+    _conn_get().execute("DELETE FROM tracked_orders WHERE id=?", (tid,))
     _conn_get().commit()
 
 

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { I } from "../components/icons";
 import { useT } from "../i18n/i18n";
+import { OrderTracking } from "../components/OrderTracking";
 
 /* Binance CEX 账户管理页（精简版）
  * - 顶部 KPI：账户净值 / 可交易 / 可提现 / 交易 CLI 状态 —— 来自 /api/wallet/cex/summary 与 status.cli
@@ -218,6 +219,9 @@ export function ExchangeView({ initialSymbol, initialTab, initialSide, halted, o
           </div>
         )}
       </div>
+
+      {/* v1.4.0 订单跟踪：确认下单后自动登记，状态流转 + 实时价/SL/TP */}
+      <OrderTracking />
 
       {/* 活跃挂单 —— /api/v3/openOrders 真实数据 */}
       <div className="glass">
