@@ -158,6 +158,8 @@ export const api = {
   skillsInstallWallet: () => jpost("/skills/install-wallet-skills", {}),
   skillsRun: (key: string, args?: string) => jpost("/skills/run", { key, args: args ?? "" }),
   skillsRemove: (key: string) => jpost("/skills/remove", { key }),
+  skillsUpdates: (refresh?: boolean) => jget(`/skills/updates${refresh ? "?refresh=1" : ""}`),
+  skillsUpdate: (scope?: "baw" | "skills" | "all") => jpost("/skills/update", { scope: scope ?? "all" }),
   // 币安广场发文台账（Agent 已发帖子记录，只读展示）
   squarePosts: () => jget("/square/posts"),
   squareKey: () => jget("/square/key"),

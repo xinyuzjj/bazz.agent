@@ -113,7 +113,29 @@ export function Web3SkillsView() {
   const [err, setErr] = useState("");
   const [history, setHistory] = useState<{ ts: number; cmd: string; out: string; ok: boolean }[]>([]);
   const [status, setStatus] = useState("");
+  const [upd, setUpd] = useState<any>(null);
   const t = useT();
+
+  // v1.3.9：baw / 技能包 更新状态（启动后台自动检查；这里展示 + 手动触发）
+  const loadUpd = async (refresh?: boolean) => {
+    try { setUpd(await api.skillsUpdates(refresh)); } catch { /* 后端未升级/离线时静默 */ }
+  };
+  useEffect(() => { loadUpd(); }, []);
+  const updBusy = upd && (upd.phase === "updating" || upd.phase === "checking");
+  useEffect(() => {
+    if (!updBusy) return;
+    const iv = setInterval(async () => {
+      try {
+        const d: any = await api.skillsUpdates();
+        setUpd(d);
+        if (d?.phase === "done" || d?.phase === "error") load(); // 更新结束刷新安装状态
+      } catch { /* ignore */ }
+    }, 2500);
+    return () => clearInterval(iv);
+  }, [updBusy]);
+  const doUpdate = async () => {
+    try { setUpd(await api.skillsUpdate("all")); } catch (e: any) { setErr(e?.message ?? String(e)); }
+  };
 
   const load = async () => {
     try {
@@ -171,6 +193,30 @@ export function Web3SkillsView() {
             <span className="pill pill-green">{t("skills.installedCount", { n: skills.filter((s) => s.installed).length, m: skills.length })}</span>
           </div>
         </div>
+        {/* v1.3.9：baw CLI + 技能包 更新条（后端启动后台自动检查，这里展示与手动触发） */}
+        {upd && (
+          <div className="glass px-4 py-2.5 flex items-center gap-2.5 flex-wrap" style={{ borderRadius: 12 }}>
+            <I.Cpu size={13} className="text-gold" />
+            <span className="font-mono text-[12px] text-ink">{t("skills.bawVersion", { v: upd.baw?.installed || "?" })}</span>
+            {upd.baw?.available
+              ? <span className="pill pill-gold">{t("skills.bawNew", { v: upd.baw.latest })}</span>
+              : <span className="pill pill-green">{t("skills.bawUpToDate")}</span>}
+            <span className="pill pill-dim">{t("skills.skillsCount", { n: upd.skills?.installed?.length ?? 0 })}</span>
+            {updBusy ? (
+              <span className="pill pill-gold">
+                <span className="inline-block w-2.5 h-2.5 border border-canvas/40 border-t-canvas rounded-full animate-spin mr-1 align-middle" />
+                {t("skills.updating")}{upd.skills?.total ? ` ${upd.skills.updated.length}/${upd.skills.total}` : ""}
+              </span>
+            ) : upd.message ? <span className="prefix">{upd.message}</span> : null}
+            <span className="prefix ml-auto hidden xl:inline">{t("skills.autoNote")}</span>
+            <div className="ml-auto flex items-center gap-1.5 xl:ml-0">
+              <button onClick={() => loadUpd(true)} disabled={!!updBusy} className="btn-ghost py-1 px-2.5 text-[11px]">{t("skills.checkUpdate")}</button>
+              <button onClick={doUpdate} disabled={!!updBusy} className={`btn-gold text-[11px] py-1 ${updBusy ? "opacity-50 cursor-not-allowed" : ""}`}>
+                <I.Download size={11} /> {t("skills.updateNow")}
+              </button>
+            </div>
+          </div>
+        )}
         {err && <div className="rounded-lg border border-red/40 bg-red/5 px-4 py-2.5 text-[12.5px] text-red font-mono">{err}</div>}
         {status && <div className="rounded-lg border border-gold/30 bg-gold/5 px-4 py-2 text-[12.5px] text-gold font-mono">{status}</div>}
         {skills.length === 0 ? (

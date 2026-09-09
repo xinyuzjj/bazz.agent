@@ -855,11 +855,14 @@ def run_skill_cmd(skill_name: str, args: str = "", timeout: int = 90, max_out: i
                 raise SandboxError("baw 不可用：APP 内置 runtime 未就绪且 PATH 也未找到 baw。")
             cmd = " ".join(shlex.quote(c) for c in cmd)
         elif os.path.isfile(cli):
+            # v1.3.9：node 解析锚定内置 runtime（打包版用户机器没有 PATH node，裸 node 必失败）
+            import workspace as _ws
+            node_exe = _ws.NODE_EXE if _os.path.isfile(_ws.NODE_EXE) else "node"
             if skills_client._cli_uses_meta_url_dispatch(cli):
                 launcher = os.path.join(os.path.dirname(os.path.abspath(skills_client.__file__)), "skill_launcher.mjs")
-                cmd = f"node {shlex.quote(launcher)} {shlex.quote(sdir)} " + (arg_s if arg_s else "")
+                cmd = f'"{node_exe}" {shlex.quote(launcher)} {shlex.quote(sdir)} ' + (arg_s if arg_s else "")
             else:
-                cmd = f"node {shlex.quote(cli)} " + (arg_s if arg_s else "")
+                cmd = f'"{node_exe}" {shlex.quote(cli)} ' + (arg_s if arg_s else "")
         else:
             raise SandboxError(f"skill `{skill_name}` 无本地执行入口（仅指引类，直接问模型要说明即可）")
     except SandboxError:

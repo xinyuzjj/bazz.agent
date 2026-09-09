@@ -1548,6 +1548,36 @@ async def skills_remove(req: Request):
     return remove_skill(b.get("key", ""))
 
 
+# ---------------- 技能/baw 自动更新（v1.3.9） ----------------
+
+import skill_updater  # noqa: E402
+
+
+@app.get("/api/skills/updates")
+def skills_updates(refresh: int = 0):
+    """技能更新状态。refresh=1 强制打 npm 查最新（默认 1h 缓存内复用）。"""
+    try:
+        snap = skill_updater.check(force=bool(refresh))
+        snap.pop("_lock", None)
+        return snap
+    except Exception as e:
+        return {"phase": "error", "message": str(e)[:200],
+                "baw": {"installed": "", "latest": "", "available": False},
+                "skills": {"installed": [], "updated": [], "failed": [], "total": 0},
+                "last_check": 0, "last_updated": 0}
+
+
+@app.post("/api/skills/update")
+async def skills_update(req: Request):
+    """手动触发更新：scope = baw | skills | all（更新中重复调用幂等忽略）。"""
+    b = await req.json()
+    return skill_updater.start_update((b.get("scope") or "all").strip())
+
+
+# 启动后台自动更新守护（45s 后首查 → 有更新自动应用 → 每 6h 循环）
+skill_updater.ensure_background()
+
+
 @app.get("/api/bots/activity")
 def bot_activity():
     """每个 Agent 专属会话的最后活动（assistant 消息时间戳），供前端算未读徽标。"""

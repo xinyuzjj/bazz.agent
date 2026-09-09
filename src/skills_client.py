@@ -12,7 +12,25 @@ import shlex
 import shutil
 import subprocess
 
+import workspace
+
 AGENTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".agents", "skills")
+
+
+def _npx_cmd():
+    """npx 解析：内置 runtime 的 npx.cmd 优先 —— 打包版用户机器没有 PATH node/npx，
+    裸 `cmd /c npx` 在桌面版必失败（v1.3.9 修复）。回退 PATH 供 dev 使用。"""
+    rt = os.path.join(workspace.RUNTIME_DIR, "node", "npx.cmd")
+    if os.path.isfile(rt):
+        return ["cmd", "/c", rt]
+    return ["cmd", "/c", "npx"]
+
+
+def _node_cmd():
+    """node 解析：内置 runtime 的 node.exe 优先（打包版无 PATH node），回退 PATH。"""
+    if os.path.isfile(workspace.NODE_EXE):
+        return ["cmd", "/c", workspace.NODE_EXE]
+    return ["cmd", "/c", "node"]
 
 # Wallet Skills（官方 7 个，docs/products/wallet-skills/supported-skills）：
 # 类别统一为 Read，不需要钱包连接；连接链上钱包（BX-）只是让 query-address-info 等直接用本机地址。
@@ -222,9 +240,12 @@ def install_skill(skill_key: str) -> dict:
             return {"status": "error", "detail": f"未找到 skill: {skill_key}"}
         url = entry["url"]
     try:
+        # cwd 锚定 .agents 的父目录：打包态 AGENTS_DIR 在 _internal/.agents，若跟随进程
+        # cwd（ScoutBackend/）会把技能装到后端读不到的位置（v1.3.9 修复）
         proc = subprocess.run(
-            ["cmd", "/c", "npx", "skills", "add", url, "-y"],
+            _npx_cmd() + ["skills", "add", url, "-y"],
             capture_output=True, text=True, timeout=240,
+            cwd=os.path.dirname(os.path.abspath(AGENTS_DIR)),
         )
         return {
             "status": "ok" if proc.returncode == 0 else "error",
@@ -298,10 +319,10 @@ def run_skill(skill_name: str, args: str = "") -> dict:
         elif os.path.isfile(cli):
             if _cli_uses_meta_url_dispatch(cli):
                 launcher = os.path.join(os.path.dirname(os.path.abspath(__file__)), "skill_launcher.mjs")
-                base = ["node", launcher]
+                base = _node_cmd() + [launcher]
                 toks = [sdir] + (shlex.split(arg_s, posix=True) if arg_s else [])
             else:
-                base = ["node", cli]
+                base = _node_cmd() + [cli]
                 toks = shlex.split(arg_s, posix=True) if arg_s else []
             if not toks:
                 guide = _read_skill_guide(skill_name, limit=30)

@@ -1,3 +1,29 @@
+# BAZZ.AGENT v1.3.9
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.3.9 更新要点（币安技能自动更新）
+
+### 1. baw CLI 自动更新
+- 后端启动 **45 秒后自动检查** npm 上的 `@binance/agentic-wallet` 最新版，落后即自动升级（内置 runtime 原地更新，无需重装应用），此后**每 6 小时循环检查**
+- 技能库页面新增**更新状态条**：显示当前 baw 版本 / 是否可更新 / 更新进度，支持「检查更新」与「一键更新」手动触发
+- 升级自动保留 fetch 代理补丁（undici 同步随装，代理池流量不受影响）
+
+### 2. Skills Hub 技能包自动更新
+- 已安装的官方技能包（meme-rush、query-token-info、广场发帖等）启动后自动重装到 GitHub 最新版，也可在技能库页手动「一键更新」
+- 更新进度实时显示（逐个技能计数），单个失败不影响其余技能
+
+### 3. 修复：打包版技能安装/执行失败
+- **npx 解析**：桌面版用户机器没有全局 node/npx，之前 `npx skills add` 直接失败 —— 现在**锚定内置 runtime** 的 npx.cmd / node.exe（dev 回退 PATH）
+- **安装位置漂移**：打包态技能会被装到后端读不到的目录 —— 现在安装 cwd 锚定 `.agents` 所在位置，装完立即生效
+- 数据类技能（node cli.mjs）执行同样锚定内置 node，用户机器零依赖
+
+### 4. 其它
+- 更新状态持久化 `workspace/.skill_update.json`（避免每次启动重复打 npm）
+- 代理池启用时，技能更新与版本检查自动走代理
+
+---
+
 # BAZZ.AGENT v1.3.8
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
