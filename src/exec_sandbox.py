@@ -1,8 +1,10 @@
 """受限本地执行沙箱（Hermes 式「能干活」但受限）：
 
-- read_file   ：只读项目根内文件；黑名单目录(.git/.venv/node_modules/dist/.agents)不可读；
-- write_file  ：只允许写 .workbuddy/generated/ 与 workspace/（自动建目录），防逃逸/防覆盖工程文件；
-- run_command ：cwd 锁定项目根，可执行文件白名单(python/node/npx/npm/git)，超时 + 输出截断；
+- read_file   ：可读「代码根」与「工作区」内文件；黑名单目录(.git/.venv/node_modules/dist/.agents)不可读；
+- write_file  ：只允许写 workspace/ 与 .workbuddy/generated/（自动建目录），防逃逸/防覆盖工程文件；
+                相对路径一律锚定「工作区根」解析（与进程 cwd 无关）——
+                打包态工作区 = <应用安装目录>/workspace（如 F:\\1\\BAZZ.AGENT\\workspace）；
+- run_command ：cwd 锁定工作区根，可执行文件白名单(python/node/npx/npm/git)，超时 + 输出截断；
                 一律子进程隔离，绝不走 shell=True。
 - run_skill   ：执行已安装 skill（baw / scripts/cli.mjs），同受命令白名单约束。
 
@@ -16,9 +18,15 @@ import subprocess
 import sys
 import time
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # E:/.../binance-agent-os-scout
-GEN_DIR = os.path.join(PROJECT_ROOT, ".workbuddy", "generated")
-WORK_DIR = os.path.join(PROJECT_ROOT, "workspace")
+import workspace  # 统一工作区定位（打包态 Electron 注入 BAZZ_WORKSPACE = <安装目录>/workspace）
+
+# 代码根：开发态 = 仓库根；打包态 = PyInstaller _internal 运行时目录（仅用于读随包文件/技能）。
+# 注意：v1.3.2 及以前沙箱把写白名单也锚在这里 —— 打包态落到 _internal/workspace，
+# 导致「写任何文件都越界/落点不可见」。现改为：模型工作区统一锚 workspace.WORKSPACE。
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SANDBOX_ROOT = workspace.WORKSPACE      # 模型可见工作区根（state.db 等数据同层，安装目录下可见）
+GEN_DIR = workspace.GENERATED           # .workbuddy/generated/ → <工作区>/generated/
+WORK_DIR = SANDBOX_ROOT                 # workspace/ → 工作区根本身
 
 # 读黑名单：这些目录永远不可读（密钥/依赖/构建产物/agent 私档）
 READ_BLACKLIST = {".git", ".venv", "venv", "node_modules", "__pycache__", "dist", ".agents", ".curator_backups", "bootstrap-cache"}
@@ -54,8 +62,11 @@ def _looks_binary(raw: bytes) -> bool:
 def _allowlist_path(path: str) -> bool:
     """已安装 skill 的公开文件可读/可执行例外：.agents/skills/<name>/SKILL.md 和 scripts/cli.mjs。
     这两个是 npx skills add 拉下来的标准接口，允许 Agent 读说明 + 直接 node 跑 cli。"""
-    rel = os.path.relpath(path, PROJECT_ROOT).replace("\\", "/")
-    parts = rel.split("/")
+    try:
+        rel = os.path.relpath(path, PROJECT_ROOT)
+    except ValueError:  # 跨盘符（如工作区在 C:、代码根在 E:）
+        return False
+    parts = rel.replace("\\", "/").split("/")
     if len(parts) >= 4 and parts[0] == ".agents" and parts[1] == "skills":
         # 白名单后缀
         if parts[-1] == "SKILL.md":
@@ -104,24 +115,82 @@ def _under(root: str, p: str) -> bool:
         return False
 
 
+def _disp(p: str) -> str:
+    """展示用相对路径：优先相对工作区根，其次代码根，都不行给绝对路径。"""
+    for base in (SANDBOX_ROOT, PROJECT_ROOT):
+        try:
+            r = os.path.relpath(p, base)
+        except Exception:
+            continue
+        if not r.startswith(".."):
+            return r
+    return p
+
+
+def _resolve_model_path(path: str) -> str:
+    """模型给的路径 → 绝对路径（写白名单用）。
+
+    相对路径一律锚定工作区根解析（与进程 cwd 无关），且必须以
+    workspace/ 或 .workbuddy/generated/ 开头；绝对路径只要落在可写根内即接受
+    （模型常直接回传 write_file 返回的绝对路径）。
+    """
+    raw = (path or "").strip().strip('"').replace("\\", "/")
+    if not raw:
+        raise SandboxError("path 为空")
+    if os.path.isabs(raw):
+        return _norm(raw)
+    low = raw.lower().lstrip("/")
+    if low == "workspace" or low.startswith("workspace/"):
+        rel = raw[len("workspace"):].lstrip("/")
+        return os.path.normpath(os.path.join(WORK_DIR, rel))
+    if low == ".workbuddy/generated" or low.startswith(".workbuddy/generated/"):
+        rel = raw[len(".workbuddy/generated"):].lstrip("/")
+        return os.path.normpath(os.path.join(GEN_DIR, rel))
+    raise SandboxError(
+        "path 必须以 workspace/ 或 .workbuddy/generated/ 开头（相对工作区根），"
+        "或使用之前工具返回的绝对路径")
+
+
 def _is_blacklisted(p: str) -> bool:
-    rel = os.path.relpath(p, PROJECT_ROOT)
-    parts = rel.split(os.sep)
-    if any(part in READ_BLACKLIST for part in parts):
-        # 例外：已安装 skill 的 SKILL.md / scripts/cli.mjs 可读/可执行
-        if _allowlist_path(p):
-            return False
-        return True
-    return False
+    """读黑名单判断：相对「代码根」或「工作区根」的任一有效相对路径里命中即拦截。
+    兼容跨盘符（工作区与代码根在不同盘时 relpath 会抛 ValueError）。"""
+    for base in (PROJECT_ROOT, SANDBOX_ROOT):
+        try:
+            rel = os.path.relpath(p, base)
+        except ValueError:
+            continue
+        if rel.startswith(".."):
+            continue
+        if any(part in READ_BLACKLIST for part in rel.split(os.sep)):
+            return not _allowlist_path(p)
+        return False
+    # 两个根都算不出相对路径（罕见）：按路径组件兜底保守判断
+    parts = os.path.normpath(p).split(os.sep)
+    return any(part in READ_BLACKLIST for part in parts) and not _allowlist_path(p)
 
 
 def resolve_read(path: str) -> str:
-    """校验可读路径，返回绝对路径。非法抛 SandboxError。"""
-    p = _norm(path or "")
-    if not p:
+    """校验可读路径，返回绝对路径。非法抛 SandboxError。
+
+    可读范围 = 代码根（PROJECT_ROOT）∪ 工作区根（SANDBOX_ROOT）。
+    相对路径优先按「workspace/ 或 .workbuddy/generated/」前缀映射到工作区；
+    其余相对路径先试工作区根、再试代码根，取存在者。
+    """
+    raw = (path or "").strip()
+    if not raw:
         raise SandboxError("path 为空")
-    if not _under(PROJECT_ROOT, p):
-        raise SandboxError(f"只能读取项目目录内的文件（越界: {path}）")
+    if os.path.isabs(raw):
+        p = _norm(raw)
+    else:
+        try:
+            p = _resolve_model_path(raw)          # workspace/ · .workbuddy/generated/ 前缀
+        except SandboxError:
+            norm_raw = raw.replace("\\", "/").lstrip("/")
+            cand_ws = os.path.normpath(os.path.join(SANDBOX_ROOT, norm_raw))
+            cand_pr = os.path.normpath(os.path.join(PROJECT_ROOT, norm_raw))
+            p = cand_ws if os.path.exists(cand_ws) else cand_pr
+    if not (_under(PROJECT_ROOT, p) or _under(SANDBOX_ROOT, p)):
+        raise SandboxError(f"只能读取项目目录或工作区内的文件（越界: {path}）")
     if _is_blacklisted(p):
         raise SandboxError(f"路径命中黑名单目录，不可读: {path}")
     if not os.path.isfile(p):
@@ -130,14 +199,18 @@ def resolve_read(path: str) -> str:
 
 
 def resolve_write(path: str) -> str:
-    """校验可写路径：必须落在 WRITE_ROOTS 之下。返回绝对路径。"""
-    p = _norm(path or "")
-    if not p:
-        raise SandboxError("path 为空")
+    """校验可写路径：必须落在 WRITE_ROOTS 之下。返回绝对路径。
+
+    相对路径锚定工作区根（与进程 cwd 无关）——修复打包态 cwd/`__file__`
+    落在 _internal 导致「写任何路径都越界」的问题。
+    """
+    p = _resolve_model_path(path)
     ok = any(_under(root, p) for root in WRITE_ROOTS)
     if not ok:
-        allowed = "、".join(os.path.relpath(r, PROJECT_ROOT) for r in WRITE_ROOTS)
-        raise SandboxError(f"只允许写入工作区白名单目录（{allowed}），越界: {path}")
+        allowed = "；".join(WRITE_ROOTS)
+        raise SandboxError(
+            f"只允许写入工作区白名单目录，越界: {path}。可写根：{allowed}"
+            "（相对路径请以 workspace/ 或 .workbuddy/generated/ 开头）")
     if _is_blacklisted(p):
         raise SandboxError(f"路径命中黑名单目录，不可写: {path}")
     return p
@@ -262,10 +335,17 @@ def _fmt_size(n: int) -> str:
 
 
 def _cwd_path(arg: str) -> str:
-    """解析 wrapper 命令里的相对路径 → 绝对路径（基于项目根）。"""
+    """解析 wrapper 命令里的相对路径 → 绝对路径（锚定工作区根；工作区无此路径而代码根有时回退代码根）。"""
     p = (arg or ".").strip()
+    if p in ("", "."):
+        return SANDBOX_ROOT
     if not os.path.isabs(p):
-        p = os.path.join(PROJECT_ROOT, p)
+        norm = p.replace("\\", "/").lstrip("/")
+        cand_ws = os.path.normpath(os.path.join(SANDBOX_ROOT, norm))
+        cand_pr = os.path.normpath(os.path.join(PROJECT_ROOT, norm))
+        if not os.path.exists(cand_ws) and os.path.exists(cand_pr):
+            return cand_pr
+        return cand_ws
     return _norm(p)
 
 
@@ -325,7 +405,7 @@ def _w_ls(toks):
                         out_lines.append(f"⛔ 跳过黑名单: {e.name}/")
                         continue
                     out_lines.append("")
-                    out_lines.append(f"📁 {os.path.relpath(sub, PROJECT_ROOT)}/")
+                    out_lines.append(f"📁 {_disp(sub)}/")
                     out_lines.extend(_walk(sub, depth_remaining - 1, depth_remaining - 1 > 0))
         return out_lines
 
@@ -336,7 +416,7 @@ def _w_ls(toks):
             raise SandboxError(f"目录不存在: {p}")
         if _is_blacklisted(abs_p):
             raise SandboxError(f"路径命中黑名单目录: {p}")
-        rel = os.path.relpath(abs_p, PROJECT_ROOT) or "."
+        rel = _disp(abs_p) or "."
         body = _walk(abs_p, depth_remaining=99, recurse=flag["R"])
         blocks.append(f"📁 {rel}（{len(body)} 项）\n" + "\n".join(body))
     return "\n\n".join(blocks)
@@ -353,7 +433,7 @@ def _w_cat(toks):
             data = fh.read(8000)
             if len(data) >= 8000:
                 data += "\n... (已截断到 8000 字节)"
-        out.append(f"=== {os.path.relpath(p, PROJECT_ROOT)} ===\n{data}")
+        out.append(f"=== {_disp(p)} ===\n{data}")
     return "\n\n".join(out)
 
 
@@ -376,7 +456,7 @@ def _w_head_tail(toks, kind: str):
     with open(p, "r", encoding="utf-8", errors="replace") as fh:
         lines = fh.readlines()
     sel = lines[:n] if kind == "head" else lines[-n:]
-    return f"=== {os.path.relpath(p, PROJECT_ROOT)}（{kind} -n {n}/{len(lines)}）===\n" + "".join(sel)
+    return f"=== {_disp(p)}（{kind} -n {n}/{len(lines)}）===\n" + "".join(sel)
 
 
 def _w_wc(toks):
@@ -387,7 +467,7 @@ def _w_wc(toks):
     p = resolve_read(args[1])
     with open(p, "r", encoding="utf-8", errors="replace") as fh:
         data = fh.read()
-    return f"{len(data.splitlines())}  {os.path.relpath(p, PROJECT_ROOT)}"
+    return f"{len(data.splitlines())}  {_disp(p)}"
 
 
 def _w_grep(toks):
@@ -416,7 +496,7 @@ def _w_grep(toks):
             with open(fp, "r", encoding="utf-8", errors="replace") as fh:
                 for i, ln in enumerate(fh, 1):
                     if rx.search(ln):
-                        rel = os.path.relpath(fp, PROJECT_ROOT)
+                        rel = _disp(fp)
                         hits.append(f"{rel}:{i}:{ln.rstrip()}")
                         if len(hits) >= 500:
                             break
@@ -529,7 +609,7 @@ def _w_find(toks):
             continue
         for d in list(dirs):
             full = os.path.join(root, d)
-            rel = os.path.relpath(full, PROJECT_ROOT)
+            rel = _disp(full)
             if depth_from_base < mindepth:
                 continue
             if maxdepth is not None and depth_from_base > maxdepth:
@@ -541,7 +621,7 @@ def _w_find(toks):
         if len(out) >= 2000: break
         for f in files:
             full = os.path.join(root, f)
-            rel = os.path.relpath(full, PROJECT_ROOT)
+            rel = _disp(full)
             if depth_from_base < mindepth:
                 continue
             if maxdepth is not None and depth_from_base > maxdepth:
@@ -556,7 +636,7 @@ def _w_find(toks):
 
 
 def _w_pwd(toks):
-    return PROJECT_ROOT
+    return SANDBOX_ROOT
 
 
 def _w_mkdir(toks):
@@ -567,7 +647,7 @@ def _w_mkdir(toks):
         raise SandboxError("mkdir 用法: mkdir [-p] <path>")
     p = resolve_write(rest[0])
     os.makedirs(p, exist_ok=rec)
-    return f"✅ mkdir {os.path.relpath(p, PROJECT_ROOT)}"
+    return f"✅ mkdir {_disp(p)}"
 
 
 def _w_touch(toks):
@@ -580,7 +660,7 @@ def _w_touch(toks):
         open(p, "w", encoding="utf-8").close()
     else:
         os.utime(p, None)
-    return f"✅ touch {os.path.relpath(p, PROJECT_ROOT)}"
+    return f"✅ touch {_disp(p)}"
 
 
 def _w_cp(toks):
@@ -592,7 +672,7 @@ def _w_cp(toks):
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     import shutil
     shutil.copy2(src, dst)
-    return f"✅ cp {os.path.relpath(src, PROJECT_ROOT)} → {os.path.relpath(dst, PROJECT_ROOT)}"
+    return f"✅ cp {_disp(src)} → {_disp(dst)}"
 
 
 def _w_mv(toks):
@@ -601,14 +681,14 @@ def _w_mv(toks):
         raise SandboxError("mv 用法: mv <src> <dst>")
     src = resolve_read(toks[1])
     dst_p = _cwd_path(toks[2])
-    if not _under(PROJECT_ROOT, dst_p) or _is_blacklisted(dst_p):
+    if not (_under(PROJECT_ROOT, dst_p) or _under(SANDBOX_ROOT, dst_p)) or _is_blacklisted(dst_p):
         dst = resolve_write(toks[2])
     else:
         os.makedirs(os.path.dirname(dst_p), exist_ok=True)
         dst = dst_p
     import shutil
     shutil.move(src, dst)
-    return f"✅ mv {os.path.relpath(src, PROJECT_ROOT)} → {os.path.relpath(dst, PROJECT_ROOT)}"
+    return f"✅ mv {_disp(src)} → {_disp(dst)}"
 
 
 def _w_rm(toks):
@@ -623,7 +703,7 @@ def _w_rm(toks):
         raise SandboxError("rm 不接受目录；改用脚本/手动")
     if os.path.isfile(p):
         os.remove(p)
-    return f"✅ rm {os.path.relpath(p, PROJECT_ROOT)}"
+    return f"✅ rm {_disp(p)}"
 
 
 def _w_echo(toks):
@@ -666,7 +746,7 @@ def _run_one(command: str, timeout: int, max_out: int) -> dict:
     if os.name == "nt" and exe_path.lower().endswith((".cmd", ".bat")):
         argv = ["cmd", "/c"] + argv
     try:
-        proc = subprocess.run(argv, cwd=PROJECT_ROOT, capture_output=True, timeout=timeout)
+        proc = subprocess.run(argv, cwd=SANDBOX_ROOT, capture_output=True, timeout=timeout)
         out = _decode_text(proc.stdout or b"")
         if proc.stderr:
             out += "\n[stderr]\n" + _decode_text(proc.stderr)

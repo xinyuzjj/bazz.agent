@@ -72,9 +72,21 @@ async function startBackend() {
     cmd = path.join(exeDir, "ScoutBackend.exe");
     args = [];
     cwd = exeDir;
-    // 数据外置：workspace 迁到系统用户数据目录（%APPDATA%\BAZZ.AGENT\workspace），与应用代码分离。
-    // → 自更新只需替换程序文件，用户数据永不触碰；BAZZ_APP_DIR 同时锁定为 exe 目录，避免路径漂移。
-    const wsDir = path.join(app.getPath("appData"), "BAZZ.AGENT", "workspace");
+    // 工作区放「应用安装目录」（数据跟着应用走，安装目录下一眼可见）：
+    //   <安装根>/workspace（如 F:\1\BAZZ.AGENT\workspace），state.db / Agent 产出 / 附件全在里面。
+    // 安装目录只读（如管理员装到受保护盘）时兜底回 %APPDATA%\BAZZ.AGENT\workspace。
+    // BAZZ_APP_DIR 仍锁 exe 目录，避免运行时路径漂移。
+    const appRoot = path.dirname(process.resourcesPath);
+    let wsDir = path.join(appRoot, "workspace");
+    try {
+      fs.mkdirSync(wsDir, { recursive: true });
+      const probe = path.join(wsDir, ".write-probe");
+      fs.writeFileSync(probe, "1");
+      fs.unlinkSync(probe);
+    } catch {
+      wsDir = path.join(app.getPath("appData"), "BAZZ.AGENT", "workspace");
+      try { fs.mkdirSync(wsDir, { recursive: true }); } catch {}
+    }
     env = { ...process.env, BAZZ_APP_DIR: exeDir, BAZZ_WORKSPACE: wsDir };
   } else {
     const venv = process.platform === "win32"

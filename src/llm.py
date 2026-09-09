@@ -570,7 +570,7 @@ TOOLS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "write_file",
-            "description": "受限本地写入：把内容写到工作区白名单目录（.workbuddy/generated/ 或 workspace/），自动建目录。写文件需用户确认。参数 path 须以 .workbuddy/generated/ 或 workspace/ 开头。",
+            "description": "受限本地写入：把内容写到工作区白名单目录（workspace/ 或 .workbuddy/generated/，后者映射到工作区 generated/ 子目录），自动建目录。写文件需用户确认。参数 path 须以 workspace/ 或 .workbuddy/generated/ 开头（相对工作区根，与进程 cwd 无关），或直接用之前工具返回的绝对路径。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -586,7 +586,7 @@ TOOLS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "run_command",
-            "description": ("受限本地执行：cwd 锁项目根，15s 超时、输出截断。运行需用户确认。"
+            "description": ("受限本地执行：cwd 锁工作区根（打包态 = 应用安装目录下的 workspace），15s 超时、输出截断。运行需用户确认。"
                             "支持的命令：\n"
                             "- 真二进制白名单：python / node / npx / npm / git\n"
                             "- 内置 wrapper（POSIX 跨平台）：ls, cat, head, tail, wc, grep, find, pwd, mkdir, touch, cp, mv, rm, echo\n"

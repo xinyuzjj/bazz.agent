@@ -26,8 +26,10 @@ os.environ.setdefault("BAZZ_PORT", "8080")
 os.chdir(_EXE_DIR)
 
 import desktop_app                       # PyInstaller 自动收集
-import state                             # 同上
-state.DB_PATH = os.path.join(_EXE_DIR, ".scout.db")
+
+# 注意：不要再覆写 state.DB_PATH！旧版这里曾把 state.DB_PATH 指到 <exe_dir>/.scout.db，
+# 导致打包态状态库永远落在 ScoutBackend/ 里、不进工作区（更新即丢）。
+# state.py 已统一走 workspace.DB_PATH（Electron 注入 BAZZ_WORKSPACE = <安装根>/workspace）。
 
 # 启动后端：端口被占（重复拉起/冲突）时自动切空闲端口并按中文提示，避免 [Errno 10048] 裸崩
 desktop_app.run_serve(int(os.environ["BAZZ_PORT"]))

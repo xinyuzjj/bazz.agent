@@ -14,10 +14,35 @@
 import os
 import shutil
 import subprocess
+import sys
 import time
 
 APP_DIR = os.environ.get("BAZZ_APP_DIR") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-WORKSPACE = os.environ.get("BAZZ_WORKSPACE") or os.path.join(APP_DIR, "workspace")
+
+
+def _app_root_frozen() -> str:
+    """冻结态兜底：从 APP_DIR 向上找应用安装根（含 BAZZ.AGENT.exe 或 resources/ 的目录）。
+    Electron 未注入 BAZZ_WORKSPACE 时（如直接双击 ScoutBackend.exe），工作区仍落在安装目录。"""
+    cand = APP_DIR
+    for _ in range(6):
+        if os.path.isfile(os.path.join(cand, "BAZZ.AGENT.exe")) or os.path.isdir(os.path.join(cand, "resources")):
+            return cand
+        parent = os.path.dirname(cand)
+        if parent == cand:
+            break
+        cand = parent
+    return APP_DIR
+
+
+# v1.3.3 起：工作区落回「应用安装目录」——打包态默认 <安装根>/workspace（用户要求：数据跟着应用走，
+# 安装目录下一眼可见，如 F:\1\BAZZ.AGENT\workspace）。Electron 会注入 BAZZ_WORKSPACE 覆盖此默认；
+# 安装目录只读时 Electron 兜底注入 %APPDATA%\BAZZ.AGENT\workspace。
+if os.environ.get("BAZZ_WORKSPACE"):
+    WORKSPACE = os.environ["BAZZ_WORKSPACE"]
+elif getattr(sys, "frozen", False):
+    WORKSPACE = os.path.join(_app_root_frozen(), "workspace")
+else:
+    WORKSPACE = os.path.join(APP_DIR, "workspace")
 os.makedirs(WORKSPACE, exist_ok=True)
 
 # —— 运行时统一路径 —— #
@@ -95,7 +120,12 @@ def _move(old: str, new: str, label: str) -> None:
             shutil.copytree(old, new)
             subprocess.run(["cmd", "/c", "rmdir", "/s", "/q", old], check=False, capture_output=True)
         else:
-            os.replace(old, new)
+            try:
+                os.replace(old, new)
+            except OSError:
+                # 跨盘符（如 C:→F:）os.replace 不支持 → 复制 + 删除兜底
+                shutil.copy2(old, new)
+                os.remove(old)
         print(f"[workspace] 迁移 {label}: {old} → {new}")
     except Exception as e:
         print(f"[workspace] 迁移 {label} 失败 {old}: {e}")
@@ -184,6 +214,63 @@ if not os.path.exists(_MIGRATE_V3_FLAG):
             print(f"[workspace] v3 清理 {internal_ws} 失败: {e}")
     try:
         with open(_MIGRATE_V3_FLAG, "w", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S"))
+    except OSError:
+        pass
+
+
+# —— v4 一次性迁移：工作区落回应用安装目录（v1.3.3）——
+#   用户要求工作区放在安装应用的位置（如 F:\1\BAZZ.AGENT\workspace），数据跟着应用走。
+#   v1.2.17~v1.3.2 打包态工作区被外置到 %APPDATA%\BAZZ.AGENT\workspace，这里整体搬回；
+#   另收编两处历史遗留：
+#     · <APP_DIR>/.scout.db —— 旧 launcher 曾把 state.DB_PATH 覆写到 exe 目录（v1 迁移可能
+#       因 .migrated_v1 标记已在外置区而被跳过），目标无 state.db 时兜底搬入；
+#     · <APP_DIR>/_internal/workspace —— v2 同理补扫一次。
+#   安装目录只读时 Electron 兜底注入 APPDATA：source==target → 自然跳过，不会自搬自。
+_MIGRATE_V4_FLAG = os.path.join(WORKSPACE, ".migrated_v4")
+if not os.path.exists(_MIGRATE_V4_FLAG):
+    appdata_ws = os.path.join(os.environ.get("APPDATA") or "", "BAZZ.AGENT", "workspace")
+    same_as_appdata = (
+        os.path.normcase(os.path.normpath(appdata_ws))
+        == os.path.normcase(os.path.normpath(WORKSPACE))
+    )
+    src_has_data = (
+        os.path.isfile(os.path.join(appdata_ws, "state.db"))
+        or os.path.isfile(os.path.join(appdata_ws, ".wallet_profile.json"))
+        or os.path.isfile(os.path.join(appdata_ws, "square_posts.json"))
+        or os.path.isfile(os.path.join(appdata_ws, ".migrated_v3"))
+    )
+    packaged_ctx = getattr(sys, "frozen", False) or bool(os.environ.get("BAZZ_WORKSPACE"))
+    if packaged_ctx and (not same_as_appdata) and os.path.isdir(appdata_ws) and src_has_data:
+        for name in os.listdir(appdata_ws):
+            _move(os.path.join(appdata_ws, name), os.path.join(WORKSPACE, name), f"v4 回迁 → {name}")
+        try:
+            # 迁移标记文件（.migrated_v*）在新工作区已被 v1~v3 块预先写入 → _move 会跳过，
+            # 这里直接删掉源里的旧标记，让旧目录能清空
+            for leftover in (".migrated_v1", ".migrated_v2", ".migrated_v3"):
+                try:
+                    lp = os.path.join(appdata_ws, leftover)
+                    if os.path.isfile(lp):
+                        os.remove(lp)
+                except OSError:
+                    pass
+            if os.path.isdir(appdata_ws) and not os.listdir(appdata_ws):
+                os.rmdir(appdata_ws)
+                try:
+                    os.rmdir(os.path.dirname(appdata_ws))  # BAZZ.AGENT 空壳目录一并清掉
+                except OSError:
+                    pass
+                print(f"[workspace] v4 清理 {appdata_ws}")
+        except OSError:
+            pass
+    # 遗留 .scout.db 收编（launcher 曾覆写 state.DB_PATH 到 exe 目录）
+    for legacy in (os.path.join(APP_DIR, ".scout.db"), os.path.join(APP_DIR, "_internal", ".scout.db")):
+        if os.path.isfile(legacy) and not os.path.isfile(DB_PATH):
+            _move(legacy, DB_PATH, "v4 遗留状态库收编")
+            for suf in ("-journal", "-wal", "-shm"):
+                _move(legacy + suf, DB_PATH + suf, f"v4 sqlite 副作用 ({suf})")
+    try:
+        with open(_MIGRATE_V4_FLAG, "w", encoding="utf-8") as f:
             f.write(time.strftime("%Y-%m-%d %H:%M:%S"))
     except OSError:
         pass
