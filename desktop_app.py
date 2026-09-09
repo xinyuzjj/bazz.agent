@@ -1050,8 +1050,8 @@ def memory_stats():
     total = len(rows)
     cats: dict = {}
     for r in rows:
-        k = r.get("key", "")
-        head = k.split(".", 1)[0] if "." in k else (k or "misc")
+        # v1.4.1：按 kind 字段分类统计（旧数据回退 key 前缀）
+        head = r.get("kind") or (r.get("key", "").split(":", 1)[0] if r.get("key") else "misc")
         cats[head] = cats.get(head, 0) + 1
     top = sorted(rows, key=lambda r: r.get("updated_at", 0), reverse=True)[:10]
     last = rows[0].get("updated_at") if rows else 0
@@ -1114,7 +1114,7 @@ async def post_memory(req: Request):
     value = body.get("value", "").strip()
     if not key:
         return JSONResponse({"error": "key required"}, status_code=400)
-    state.set_memory(key, value)
+    state.set_memory(key, value, kind=body.get("kind", "fact"), source="manual")
     return {"ok": True, "memory": state.list_memory()}
 
 

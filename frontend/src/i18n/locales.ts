@@ -132,6 +132,7 @@ export const zh: Dict = {
   "mem.delConfirm": "删除记忆「{key}」？",
   "mem.clearConfirm": "将清空全部 {n} 条记忆（操作前请先导出备份），确定？",
   "mem.delTitle": "删除",
+  "mem.hitsTitle": "注入命中次数（记忆被使用的活跃度）",
   "mem.emptyVal": "（空值）",
   "mem.emptyRec": "暂无记录",
 
@@ -1340,6 +1341,7 @@ export const en: Dict = {
   "mem.delConfirm": "Delete memory \"{key}\"?",
   "mem.clearConfirm": "This will clear all {n} memories (export a backup first). Continue?",
   "mem.delTitle": "Delete",
+  "mem.hitsTitle": "Injection hits (memory usage activity)",
   "mem.emptyVal": "(empty)",
   "mem.emptyRec": "No records yet",
 

@@ -13,6 +13,7 @@ import os
 import re
 import time
 import json
+import threading
 from typing import Optional, Iterator, Dict, Any
 from concurrent.futures import ThreadPoolExecutor
 
@@ -114,11 +115,13 @@ def _best_signal() -> dict:
     return {"symbol": "BTCUSDT", "price": 0, "change_pct": 0, "funding_rate": 0}
 
 try:
-    from state import set_memory, get_memory, list_memory
+    from state import set_memory, get_memory, list_memory, bump_memory_hits, search_memory
 except Exception:
-    def set_memory(k, v): pass
+    def set_memory(k, v, kind="fact", source="auto"): pass
     def get_memory(k, d=""): return d
     def list_memory(): return []
+    def bump_memory_hits(keys): pass
+    def search_memory(q, limit=10): return []
 
 # 人格
 try:
@@ -134,34 +137,61 @@ PERSONA_NAME = "BAZZ Agent"
 DANGEROUS = ["清空账户", "全仓", "all in", "梭哈", "借款", "杠杆 100", "liquidate", "transfer all", "提现全部"]
 
 
-def memory_context() -> str:
-    """把长期记忆注入 system prompt。
+# 记忆注入总字符预算（v1.4.1 对齐 Hermes char limits：防记忆膨胀撑爆 system prompt）
+_MEMORY_BUDGET = 3500
+# 提示注入清洗：记忆文本里混入的「指令性」内容一律剥离后再入 prompt
+_MEM_INJECT_PAT = re.compile(
+    r"(忽略(以上|之前|上面)[^\n。；;]*|ignore\s+(all\s+)?(previous|above|prior)[^\n。;]*"
+    r"|disregard[^\n。;]*|system\s*prompt[^\n。;]*|你(现在)?是[^\n。；;]{0,20}(系统|管理员|开发)"
+    r"|</?[a-z_]{1,20}>|<\|[^>]{0,20}\|>)",
+    re.IGNORECASE)
 
-    - pref: 开头（或含「只做/不要/偏好」等约束字样）→ 提炼为【对用户的了解·请遵守】，作为行为规则；
-    - 其余 → 归入【长期记忆·背景】。
-    记忆越攒越多 → 模型自动按记忆调整风格与建议（记忆驱动的自我提升）。
+
+def _sanitize_mem(text: str) -> str:
+    """记忆注入前清洗：剥离疑似提示注入的片段、压成单行、去首尾空白。"""
+    t = str(text or "")
+    t = _MEM_INJECT_PAT.sub("□", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t[:500]
+
+
+def memory_context() -> str:
+    """把长期记忆注入 system prompt（v1.4.1 精选式）。
+
+    - 按 kind 字段分组（写入时已定类型，不再靠关键词猜）：
+      pref → 【对用户的了解·请遵守】；fact/event → 【长期记忆·背景】；
+    - 组内按 updated_at 新者优先，总字符预算 _MEMORY_BUDGET 封顶；
+    - 每条注入前 _sanitize_mem 清洗提示注入；命中的 key 异步 bump_memory_hits。
     """
     mem = list_memory()
     if not mem:
         return ""
-    prefs, facts = [], []
-    for m in mem[:24]:
-        v = (m.get("value") or "").strip()
-        k = (m.get("key") or "")
-        if not v:
-            continue
-        if k.startswith("pref:") or any(x in v for x in ("我只做", "不要", "别", "偏好", "只用", "习惯",
-                                                          "不做", "不碰", "风险", "仓位", "止损", "止盈",
-                                                          "现货", "合约", "默认", "喜欢", "每次")):
-            prefs.append(v)
-        else:
-            facts.append(f"- {k}: {v}")
+    rank = {"pref": 0, "fact": 1, "event": 2}
+    for m in mem:
+        m["_san"] = _sanitize_mem(m.get("value"))
+    mem = [m for m in mem if m["_san"]]
+    mem.sort(key=lambda m: (rank.get(m.get("kind"), 1), -(m.get("updated_at") or 0)))
+    prefs, facts, used = [], [], 0
+    for m in mem:
+        if used >= _MEMORY_BUDGET:
+            break
+        line = f"- {m['_san']}"
+        if used + len(line) > _MEMORY_BUDGET:
+            break
+        (prefs if m.get("kind") == "pref" else facts).append(line)
+        used += len(line)
+        m["_hit"] = True
+    if not prefs and not facts:
+        return ""
     blocks = []
     if prefs:
-        uniq = list(dict.fromkeys(prefs))[:8]
-        blocks.append("【对用户的了解（记忆驱动行为 · 请遵守）】\n" + "\n".join(f"- {p}" for p in uniq))
+        blocks.append("【对用户的了解（记忆驱动行为 · 请遵守）】\n" + "\n".join(prefs[:12]))
     if facts:
-        blocks.append("【长期记忆·背景】\n" + "\n".join(facts[:12]))
+        blocks.append("【长期记忆·背景】\n" + "\n".join(facts[:16]))
+    hit_keys = [m["key"] for m in mem if m.get("_hit")]
+    if hit_keys:
+        threading.Thread(target=bump_memory_hits, args=(hit_keys,), daemon=True,
+                         name="bazz-mem-hits").start()
     return "\n".join(blocks) + "\n" if blocks else ""
 
 
@@ -815,6 +845,25 @@ _AUTO_MEM_PREF_HINTS = ("我只做", "我不做", "不要", "别用", "偏好", 
                         "止损", "喜欢", "不喜欢", "记住", "以后", "每次都", "默认")
 _AUTO_MEM_COOLDOWN = 180  # 同一会话 3 分钟内至多沉淀一次，防每轮烧模型
 
+# 敏感信息模式：API key / secret / 私钥 / 助记词等绝不入记忆（Hermes 式写入验证）
+_SECRET_PAT = re.compile(
+    r"(api[_\s-]?(key|secret)|私钥|助记词|mnemonic|seed\s*phrase|password|密码|token\s*[:=]"
+    r"|[A-Za-z0-9]{48,}|0x[a-fA-F0-9]{40,})", re.IGNORECASE)
+
+
+def _has_secret(text: str) -> bool:
+    return bool(_SECRET_PAT.search(str(text or "")))
+
+
+def _mem_similarity(a: str, b: str) -> float:
+    """字符 bigram 重合度（0-1）：轻量相似度，用于合并式去重（对齐 Hermes replace 语义）。"""
+    a, b = str(a or ""), str(b or "")
+    if len(a) < 2 or len(b) < 2:
+        return 0.0
+    ga = {a[i:i + 2] for i in range(len(a) - 1)}
+    gb = {b[i:i + 2] for i in range(len(b) - 1)}
+    return len(ga & gb) / max(1, len(ga | gb))
+
 
 def auto_memorize(user_msg: str, reply: str, llm_cfg: dict = None) -> dict:
     """对话结束后调用：从「用户说了什么 + 我答了什么」提炼值得跨会话记住的信息。
@@ -822,11 +871,13 @@ def auto_memorize(user_msg: str, reply: str, llm_cfg: dict = None) -> dict:
     门控：
     - 用户消息含明显偏好信号词才触发（避免把闲聊也沉淀）；
     - 冷却时间内（_AUTO_MEM_COOLDOWN 秒）跳过；
+    - 敏感信息（API key/助记词/密码等）一律拒绝入库；
+    - 合并式去重：与现有记忆高相似（bigram ≥0.6）→ replace 更新原条目，不新增；
     - 提炼失败/无可记内容静默返回，绝不影响主流程。
     返回 {"stored": int, "keys": [...], "skipped": str}。
     """
     try:
-        from state import get_setting, set_setting, set_memory
+        from state import get_setting, set_setting, set_memory, list_memory
     except Exception:
         return {"stored": 0, "keys": [], "skipped": "state 不可用"}
     um = (user_msg or "").strip()
@@ -840,63 +891,142 @@ def auto_memorize(user_msg: str, reply: str, llm_cfg: dict = None) -> dict:
             return {"stored": 0, "keys": [], "skipped": "冷却中"}
     except Exception:
         pass
+    existing = list_memory()
     sysp = (
         "你是一个记忆提炼器。用户在与 BAZZ Agent（币安交易助手）对话中透露了偏好/习惯/规则/重要背景。"
         "从下面的『用户消息』与『助手回复』中，提炼 1-3 条值得长期记住的内容（跨会话有用）。\n"
-        "规则：只记稳定的偏好/习惯/约束/重要背景，不记一次性行情数字；每条一句话 ≤50 字；避免重复。\n"
-        "只输出 JSON：{\"items\": [\"…\", \"…\"]}，无可记内容时输出 {\"items\": []}。")
+        "规则：只记稳定的偏好/习惯/约束/重要背景，不记一次性行情数字；每条一句话 ≤50 字；"
+        "kind 取值：pref=偏好/规则约束，fact=事实背景，event=重要事件。\n"
+        + ("已有记忆（内容相似的不要再出，除非是明确更新——此时在 replace_key 里填已有记忆的 key）：\n"
+           + "\n".join(f"- [{m['key']}] {m['value'][:60]}" for m in existing[:20]) + "\n" if existing else "")
+        + '只输出 JSON：{"items": [{"text": "…", "kind": "pref|fact|event", "replace_key": ""}], "无可记内容时 items 为空}。')
     prompt = f"用户消息：{um[:600]}\n\n助手回复：{(reply or '')[:600]}"
     try:
-        out = llm.chat(sysp, prompt, temperature=0.1, max_tokens=300, llm_cfg=llm_cfg, task="summarize")
+        out = llm.chat(sysp, prompt, temperature=0.1, max_tokens=400, llm_cfg=llm_cfg, task="summarize")
         if not out:
             return {"stored": 0, "keys": [], "skipped": "模型无输出"}
-        items = json.loads(out)
-        items = items.get("items", []) if isinstance(items, dict) else (items if isinstance(items, list) else [])
+        parsed = json.loads(out)
+        items = parsed.get("items", []) if isinstance(parsed, dict) else (parsed if isinstance(parsed, list) else [])
     except Exception:
         return {"stored": 0, "keys": [], "skipped": "提炼失败"}
-    items = [str(x).strip()[:80] for x in items if str(x).strip() and len(str(x).strip()) >= 6][:3]
-    if not items:
-        return {"stored": 0, "keys": [], "skipped": "无值得记忆"}
     keys = []
     try:
         set_setting("auto_mem_last_ts", str(time.time()))
-        for it in items:
-            # 去重：已存在完全相同的 value 则不重复写
-            dup = any(m.get("value") == it for m in list_memory())
-            if dup:
+        for it in items[:3]:
+            if not isinstance(it, dict):
+                it = {"text": str(it)}
+            text = str(it.get("text") or "").strip()
+            if len(text) < 6 or len(text) > 200:
                 continue
-            key = f"pref:{it[:20]}"
-            set_memory(key, it)
+            if _has_secret(text):
+                continue  # 敏感信息绝不入库
+            kind = str(it.get("kind") or "pref").lower()
+            if kind not in ("pref", "fact", "event"):
+                kind = "pref" if any(w in text for w in ("只", "不要", "偏好", "习惯", "默认")) else "fact"
+            # 合并式去重：LLM 指定 replace_key，或与现有记忆高相似 → 原地更新
+            target_key = str(it.get("replace_key") or "").strip()
+            if not (target_key and any(m["key"] == target_key for m in existing)):
+                target_key = ""
+                for m in existing:
+                    if _mem_similarity(text, m["value"]) >= 0.6:
+                        target_key = m["key"]
+                        break
+            if target_key:
+                set_memory(target_key, text, kind=kind, source="auto")
+                keys.append(target_key)
+                continue
+            key = f"{kind}:{int(time.time() * 1000) % 100000000}-{len(existing) + len(keys) + 1}"
+            set_memory(key, text, kind=kind, source="auto")
             keys.append(key)
     except Exception:
         pass
     return {"stored": len(keys), "keys": keys, "skipped": ""}
 
 
-def _run_memory_write(message: str):
-    m = re.search(r"(?:记住|笔记|记录|记一下|存一下)[：:：]?\s*(.+)", message)
-    text = m.group(1).strip() if m else message
+def _run_memory_write(message: str = "", action: str = "add", key: str = "",
+                      text: str = "", kind: str = "", agent_call: bool = False):
+    """记忆统一入口（v1.4.1 对齐 Hermes 动作模型）：add / replace / remove / read。
+
+    - Agent memory_write 工具与中文「记住：…」指令都走这里；
+    - 敏感信息（API key/助记词/密码）一律拒绝入库；
+    - add 自动合并式去重（与现有记忆相似 ≥0.6 → 原地更新不新增）；
+    - agent_call=True（工具路径）时 remove 仅限非 manual 来源的记忆。
+    """
+    from state import delete_memory  # 局部导入避免顶部 fallback 缺失
+    action = (action or "add").lower()
+    if message and not text:
+        m = re.search(r"(?:记住|笔记|记录|记一下|存一下)[：:：]?\s*(.+)", message)
+        text = m.group(1).strip() if m else message
+    text = str(text or "").strip()[:500]
+
+    if action == "read":
+        rows = search_memory(text) if text else list_memory()
+        if not rows:
+            return {"reply": "我目前还没有记住任何长期信息。试试「记住：你只做现货」。", "tools": [
+                {"icon": "📓", "name": "读取记忆", "status": "info", "detail": "空"}]}
+        tag = {"pref": "偏好", "fact": "事实", "event": "事件"}
+        lines = ["**我的长期记忆**：\n"] if not text else [f"**记忆检索「{text[:40]}」**：\n"]
+        for m in rows[:12]:
+            lines.append(f"- 📌 [{tag.get(m.get('kind'), '事实')}] {m['value']}"
+                         + (f"（key: {m['key']}）" if not text else ""))
+        return {"reply": "\n".join(lines), "tools": [
+            {"icon": "📓", "name": "读取记忆", "status": "success", "detail": f"{len(rows)} 条"}],
+            "data": {"memory": rows}}
+
+    if action == "remove":
+        mem = list_memory()
+        target = ""
+        if key:
+            target = key if any(m["key"] == key for m in mem) else ""
+        if not target and text:
+            best = max(mem, key=lambda m: _mem_similarity(text, m["value"]), default=None)
+            if best and _mem_similarity(text, best["value"]) >= 0.5:
+                target = best["key"]
+        if not target:
+            return {"reply": "没找到要删除的记忆。用 memory_write read 先查看现有记忆与 key。",
+                    "tools": [{"icon": "📓", "name": "删除记忆", "status": "warn", "detail": "未匹配"}]}
+        mrow = next((m for m in mem if m["key"] == target), None)
+        if agent_call and mrow and mrow.get("source") == "manual":
+            return {"reply": "该记忆由用户手动创建，Agent 不能删除。", "tools": [
+                {"icon": "📓", "name": "删除记忆", "status": "error", "detail": "用户手动记忆"}]}
+        delete_memory(target)
+        return {"reply": f"🗑️ 已删除记忆：{target}", "tools": [
+            {"icon": "📓", "name": "删除记忆", "status": "success", "detail": target}],
+            "data": {"memory": list_memory()[:10]}}
+
+    # add / replace
     if not text:
         return {"reply": "你想让我记住什么？例如「记住：我只做现货，不做合约」。", "tools": [
             {"icon": "📓", "name": "记忆", "status": "warn", "detail": "空内容"}]}
-    key = text[:24]
-    set_memory(key, text)
-    tools = [{"icon": "📓", "name": "写入长期记忆", "status": "success", "detail": key}]
-    return {"reply": f"✅ 已记住：**{text}**（将用于后续所有会话）。", "tools": tools,
-            "data": {"memory": list_memory()[:10]}}
+    if _has_secret(text):
+        return {"reply": "⚠️ 内容包含 API Key / 私钥 / 密码等敏感信息，出于安全考虑不会写入长期记忆。",
+                "tools": [{"icon": "🛡️", "name": "记忆安全拦截", "status": "warn", "detail": "含敏感信息"}]}
+    if kind not in ("pref", "fact", "event"):
+        kind = "pref" if (action == "add" and any(
+            w in text for w in ("只", "不要", "别", "偏好", "习惯", "默认", "每次"))) else "fact"
+    mem = list_memory()
+    source = "agent" if agent_call else "manual"
+    if action == "replace":
+        target = key if key and any(m["key"] == key for m in mem) else ""
+        if not target:
+            return {"reply": "replace 需要提供要更新的记忆 key（先用 read 查看）。", "tools": [
+                {"icon": "📓", "name": "更新记忆", "status": "warn", "detail": "缺 key"}]}
+    else:  # add：合并式去重
+        target = ""
+        for m in mem:
+            if _mem_similarity(text, m["value"]) >= 0.6:
+                target = m["key"]
+                break
+    set_memory(target or f"{kind}:{int(time.time() * 1000) % 100000000}-{len(mem) + 1}",
+               text, kind=kind, source=source)
+    verb = "已更新" if target else "已记住"
+    return {"reply": f"✅ {verb}：**{text}**（将用于后续所有会话）。", "tools": [
+        {"icon": "📓", "name": "写入长期记忆", "status": "success", "detail": target or kind}],
+        "data": {"memory": list_memory()[:10]}}
 
 
 def _run_memory_read():
-    mem = list_memory()
-    if not mem:
-        return {"reply": "我目前还没有记住任何长期信息。试试「记住：你只做现货」。", "tools": [
-            {"icon": "📓", "name": "读取记忆", "status": "info", "detail": "空"}]}
-    lines = ["**我的长期记忆**：\n"]
-    for m in mem[:12]:
-        lines.append(f"- 📌 {m['key']}: {m['value']}")
-    return {"reply": "\n".join(lines), "tools": [
-        {"icon": "📓", "name": "读取记忆", "status": "success", "detail": f"{len(mem)} 条"}],
-        "data": {"memory": mem}}
+    return _run_memory_write(action="read")
 
 
 def _run_parallel():
@@ -1036,7 +1166,9 @@ def _dispatch_tool(name: str, args: dict, confirmed: bool = False) -> Dict[str, 
             enabled=args.get("enabled", True),
         )
     if name == "memory_write":
-        return _run_memory_write("记住：" + (args.get("text", "") or ""))
+        return _run_memory_write(action=args.get("action", "add"), key=args.get("key", ""),
+                                 text=args.get("text", ""), kind=args.get("kind", ""),
+                                 agent_call=True)
     if name == "fetch_url":
         return _run_fetch_url(args.get("url", ""))
     if name == "get_help":

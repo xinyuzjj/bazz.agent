@@ -17,7 +17,7 @@ import { useI18n } from "../i18n/i18n";
  * 添加或删除；聊天里 Agent 也会自动写入。
  */
 
-type MemRow = { key: string; value: string; updated_at: number };
+type MemRow = { key: string; value: string; updated_at: number; kind?: string; source?: string; hits?: number };
 type Stats = {
   ok: boolean;
   total: number;
@@ -29,8 +29,10 @@ type Stats = {
   engine: string;
 };
 
-function classify(key: string): string {
-  return (key.split(".", 1)[0] || "misc").trim() || "misc";
+// v1.4.1：优先用后端 kind 字段（pref/fact/event）分组；旧数据回退 key 前缀
+function classify(r: MemRow): string {
+  if (r.kind) return r.kind;
+  return (r.key.split(".", 1)[0] || "misc").trim() || "misc";
 }
 
 // 已知 key 前缀 → i18n key；未知返回原名（不吞用户自定义前缀）
@@ -157,7 +159,7 @@ function MemoryBody({ onClose }: { onClose?: () => void }) {
   // 分组
   const grouped = useMemo(() => {
     const m: Record<string, MemRow[]> = {};
-    for (const r of items) (m[classify(r.key)] ??= []).push(r);
+    for (const r of items) (m[classify(r)] ??= []).push(r);
     for (const k of Object.keys(m)) m[k].sort((a, b) => b.updated_at - a.updated_at);
     return m;
   }, [items]);
@@ -232,7 +234,7 @@ function MemoryBody({ onClose }: { onClose?: () => void }) {
             ) : (
               <div className="space-y-1.5">
                 {prefs.map((r) => (
-                  <KVRow key={r.key} k={r.key} v={r.value} ts={r.updated_at} onDel={() => del(r.key)} />
+                  <KVRow key={r.key} k={r.key} v={r.value} ts={r.updated_at} kind={r.kind} hits={r.hits} onDel={() => del(r.key)} />
                 ))}
               </div>
             )}
@@ -256,7 +258,7 @@ function MemoryBody({ onClose }: { onClose?: () => void }) {
             ) : (
               <div className="space-y-1.5">
                 {habits.map((r) => (
-                  <KVRow key={r.key} k={r.key} v={r.value} ts={r.updated_at} onDel={() => del(r.key)} />
+                  <KVRow key={r.key} k={r.key} v={r.value} ts={r.updated_at} kind={r.kind} hits={r.hits} onDel={() => del(r.key)} />
                 ))}
               </div>
             )}
@@ -325,7 +327,7 @@ function MemoryBody({ onClose }: { onClose?: () => void }) {
                     </div>
                     <div className="space-y-1.5">
                       {rows.map((r) => (
-                        <KVRow key={r.key} k={r.key} v={r.value} ts={r.updated_at} onDel={() => del(r.key)} />
+                        <KVRow key={r.key} k={r.key} v={r.value} ts={r.updated_at} kind={r.kind} hits={r.hits} onDel={() => del(r.key)} />
                       ))}
                     </div>
                   </div>
@@ -372,13 +374,16 @@ function SectionCard({ title, sub, icon, children }: any) {
   );
 }
 
-function KVRow({ k, v, ts, onDel }: { k: string; v: string; ts: number; onDel: () => void }) {
+function KVRow({ k, v, ts, kind, hits, onDel }: { k: string; v: string; ts: number; kind?: string; hits?: number; onDel: () => void }) {
   const { t, locale } = useI18n();
   const isEn = locale === "en";
+  const kindKey = kind ? CAT_I18N[kind] : undefined;
   return (
     <div className="rounded-md border border-line bg-card/40 p-2.5">
       <div className="flex items-center gap-2">
+        {kindKey && <span className="pill pill-dim text-[9px] shrink-0">{t(kindKey)}</span>}
         <span className="font-mono text-[11.5px] text-ink-dim truncate" title={k}>{k}</span>
+        {!!hits && hits > 0 && <span className="font-mono text-[9px] text-ink-mute shrink-0" title={t("mem.hitsTitle")}>⚡{hits}</span>}
         <span className="ml-auto font-mono text-[9.5px] text-ink-mute shrink-0" title={fmtTs(ts, locale)}>{relTime(ts, isEn)}</span>
         <button onClick={onDel} className="rounded p-1 hover:bg-elevated shrink-0" title={t("mem.delTitle")}><I.Trash size={11} className="text-red" /></button>
       </div>

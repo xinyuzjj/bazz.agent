@@ -79,6 +79,9 @@ def _init():
     CREATE TABLE IF NOT EXISTS memory (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,
+        kind TEXT DEFAULT 'fact',
+        source TEXT DEFAULT 'auto',
+        hits INTEGER DEFAULT 0,
         updated_at REAL NOT NULL
     );
     CREATE TABLE IF NOT EXISTS agents (
@@ -138,6 +141,17 @@ def _init():
         c.commit()
     if mcols and "model" not in mcols:
         c.execute("ALTER TABLE messages ADD COLUMN model TEXT DEFAULT ''")
+        c.commit()
+    # 记忆分类升级（v1.4.1）：旧库补 kind/source/hits 列，旧记忆默认 fact/auto
+    ycols = {r[1] for r in c.execute("PRAGMA table_info(memory)").fetchall()}
+    if ycols and "kind" not in ycols:
+        c.execute("ALTER TABLE memory ADD COLUMN kind TEXT DEFAULT 'fact'")
+        c.commit()
+    if ycols and "source" not in ycols:
+        c.execute("ALTER TABLE memory ADD COLUMN source TEXT DEFAULT 'auto'")
+        c.commit()
+    if ycols and "hits" not in ycols:
+        c.execute("ALTER TABLE memory ADD COLUMN hits INTEGER DEFAULT 0")
         c.commit()
     c.commit()
 
@@ -459,13 +473,23 @@ def last_persona_conv(persona: str):
 
 
 # ---------------- 长期记忆（跨会话） ----------------
+# v1.4.1 对齐 Hermes「精选式记忆」：kind 分类（pref/fact/event）+ source 来源
+# （auto/agent/manual）+ hits 注入命中数（活跃度）；value 截断 500 字符防 prompt 膨胀。
+
+_MEM_VALUE_MAX = 500
 
 
 @_serialized
-def set_memory(key, value):
+def set_memory(key, value, kind="fact", source="auto"):
+    v = str(value or "")[:_MEM_VALUE_MAX]
+    k = str(kind or "fact").lower()
+    if k not in ("pref", "fact", "event"):
+        k = "fact"
     _conn_get().execute(
-        "INSERT INTO memory(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-        (key, value, time.time()))
+        "INSERT INTO memory(key,value,kind,source,hits,updated_at) VALUES(?,?,?,?,0,?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value, kind=excluded.kind, "
+        "source=excluded.source, updated_at=excluded.updated_at",
+        (key, v, k, str(source or "auto"), time.time()))
     _conn_get().commit()
 
 
@@ -475,8 +499,37 @@ def get_memory(key, default=""):
 
 
 def list_memory():
-    rows = _conn_get().execute("SELECT key,value,updated_at FROM memory ORDER BY updated_at DESC").fetchall()
-    return [{"key": r["key"], "value": r["value"], "updated_at": r["updated_at"]} for r in rows]
+    rows = _conn_get().execute(
+        "SELECT key,value,kind,source,hits,updated_at FROM memory ORDER BY updated_at DESC").fetchall()
+    return [{"key": r["key"], "value": r["value"], "kind": r["kind"] or "fact",
+             "source": r["source"] or "auto", "hits": r["hits"] or 0,
+             "updated_at": r["updated_at"]} for r in rows]
+
+
+def search_memory(query, limit=10):
+    """简易相关性检索：LIKE 全词匹配 key/value，按 hits 与更新时间排序（无向量库，够用）。"""
+    q = str(query or "").strip()
+    if not q:
+        return []
+    rows = _conn_get().execute(
+        "SELECT key,value,kind,source,hits,updated_at FROM memory "
+        "WHERE value LIKE ? OR key LIKE ? "
+        "ORDER BY hits DESC, updated_at DESC LIMIT ?",
+        (f"%{q}%", f"%{q}%", int(limit))).fetchall()
+    return [{"key": r["key"], "value": r["value"], "kind": r["kind"] or "fact",
+             "source": r["source"] or "auto", "hits": r["hits"] or 0,
+             "updated_at": r["updated_at"]} for r in rows]
+
+
+@_serialized
+def bump_memory_hits(keys):
+    """注入命中 +1（活跃度追踪）。keys 为空跳过；未知 key 忽略。"""
+    ks = [str(k) for k in (keys or []) if k]
+    if not ks:
+        return
+    c = _conn_get()
+    c.executemany("UPDATE memory SET hits = COALESCE(hits,0) + 1 WHERE key=?", [(k,) for k in ks])
+    c.commit()
 
 
 @_serialized

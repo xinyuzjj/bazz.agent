@@ -502,11 +502,17 @@ TOOLS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "memory_write",
-            "description": "把用户的长期偏好/约束写入记忆（跨会话生效）。当用户说‘记住…’时调用。",
+            "description": "长期记忆管理（跨会话生效）。actions：add=新记（用户说‘记住…’或透露稳定偏好时）；replace=更新已有记忆（需 key）；remove=删除（需 key 或 text 相似匹配；用户手动创建的不可删）；read=查看/检索记忆（text 作关键词过滤，返回 key 列表）。含 API Key/私钥/密码的内容会被拒绝。",
             "parameters": {
                 "type": "object",
-                "properties": {"text": {"type": "string", "description": "要记住的内容"}},
-                "required": ["text"],
+                "properties": {
+                    "action": {"type": "string", "enum": ["add", "replace", "remove", "read"],
+                               "description": "默认 add"},
+                    "text": {"type": "string", "description": "要记住的内容（add/replace），或检索关键词（read/remove 匹配用）"},
+                    "key": {"type": "string", "description": "replace/remove 时目标记忆的 key"},
+                    "kind": {"type": "string", "enum": ["pref", "fact", "event"],
+                             "description": "pref=偏好/规则约束，fact=事实背景，event=事件；默认自动判断"},
+                },
             },
         },
     },
