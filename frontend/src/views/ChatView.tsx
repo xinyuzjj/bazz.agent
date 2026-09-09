@@ -27,6 +27,7 @@ const AGENT_TOOLS = [
   "explain_x402", "list_skills", "run_skill", "onchain_ops",
   "memory_write", "fetch_url", "read_file", "write_file",
   "run_command", "gateway_status", "mcp_call", "get_help",
+  "schedule_task", "clarify", "delegate",
 ];
 type Agent = { id: string; name: string; title: string; description: string; avatar: string; color: string; config?: AgentCfg };
 

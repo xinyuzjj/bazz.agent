@@ -730,6 +730,38 @@ TOOLS: List[Dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "delegate",
+            "description": ("并行子代理委派：把**相互独立**的子任务拆成 tasks=[{name, prompt}]（最多 4 个），"
+                            "每个子任务由一个全新 Agent 并行真实执行（带全部工具，行情/技能/文件/命令都可用，但不能再次委派），"
+                            "返回各子任务的最终摘要。\n"
+                            "**prompt 必须自包含**——子代理看不到当前对话，把背景、目标、关注点、输出格式写全。\n"
+                            "适合：多标的独立研究（BTC/ETH/SOL 各查各的）、多路径同时排查、批量重复性子任务；"
+                            "用户说『并行/同时/分开查/每个币都查一遍』或任务天然可拆时调用。\n"
+                            "不适合：子任务间有依赖（后一步要用前一步结果）→ 自己顺序做；"
+                            "单一简单查询 → 直接用对应工具，别为委派而委派。"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tasks": {
+                        "type": "array",
+                        "description": "1-4 个子任务，每项 {name, prompt}",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string", "description": "子任务短名（如『BTC 研究』）"},
+                                "prompt": {"type": "string", "description": "完整自包含的任务指令（子代理看不到父对话）"},
+                            },
+                            "required": ["prompt"],
+                        },
+                    },
+                },
+                "required": ["tasks"],
+            },
+        },
+    },
 ]
 
 

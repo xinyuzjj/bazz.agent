@@ -83,6 +83,101 @@ def _norm_tools(items):
 TOOL_SPILL_THRESHOLD = 20000
 
 
+# ---------- delegate 并行子代理（Hermes delegate_tool 语义，v1.4.6） ----------
+# 子代理 = 全新会话（无父对话历史）+ 工具集减去 delegate（防递归）；
+# 父级只看每个子任务的最终摘要（中间工具过程不回流），摘要按预算截断。
+DELEGATE_MAX_TASKS = 4          # 单次委派子任务上限（Hermes max_concurrent_children 收敛）
+DELEGATE_MAX_CONCURRENT = 3     # 并行线程数
+DELEGATE_SUMMARY_BUDGET = 2500  # 每个子任务回传父级的摘要预算（字符）
+DELEGATE_TIMEOUT_TOTAL = 420    # 全部子任务总超时（秒）；超时任务标记失败，线程自然结束不强杀
+DELEGATE_BLOCKED_TOOLS = {"delegate"}  # 子代理禁用工具（防递归；后续可按需扩充）
+
+
+def _filter_tool_schemas(tools: list, blocked: set = None) -> list:
+    """按名字过滤工具 schema（子代理禁用集）。"""
+    if not blocked:
+        return tools
+    return [t for t in tools if isinstance(t, dict) and t.get("function", {}).get("name") not in blocked]
+
+
+def _run_delegate(args: dict) -> Dict[str, Any]:
+    """并行子代理委派：tasks=[{name, prompt}]，每个子任务一个全新 Agent 循环（带工具、禁 delegate）。
+    prompt 必须自包含——子代理看不到父对话历史。返回各子任务最终摘要。"""
+    tasks_raw = args.get("tasks") or []
+    if isinstance(tasks_raw, dict):
+        tasks_raw = [tasks_raw]
+    if isinstance(tasks_raw, str):
+        tasks_raw = [{"prompt": tasks_raw}]
+    tasks = []
+    for i, item in enumerate(tasks_raw[:DELEGATE_MAX_TASKS]):
+        if isinstance(item, str):
+            item = {"prompt": item}
+        if not isinstance(item, dict):
+            continue
+        prompt = str(item.get("prompt") or item.get("goal") or "").strip()
+        if not prompt:
+            continue
+        name = str(item.get("name") or item.get("title") or f"子任务{i + 1}")[:40]
+        tasks.append({"name": name, "prompt": prompt})
+    if not tasks:
+        return {"reply": "delegate 需要至少一个子任务：tasks=[{name, prompt}]。prompt 必须自包含"
+                         "（子代理看不到当前对话，把背景/目标/输出要求写全）。",
+                "tools": [{"icon": "🤖", "name": "委派子代理", "status": "error", "detail": "缺 tasks"}]}
+    results: list = [None] * len(tasks)
+
+    def _worker(idx: int, t: dict):
+        acc = {"text": "", "reply": ""}
+        try:
+            for ev in _run_llm_agent(t["prompt"], auto_exec=False, history=None,
+                                     locale="zh", cid="", blocked_tools=DELEGATE_BLOCKED_TOOLS):
+                et = ev.get("type")
+                if et == "text":
+                    acc["text"] += ev.get("delta") or ""
+                elif et == "done":
+                    if ev.get("reply"):
+                        acc["reply"] = ev["reply"]
+                    if ev.get("needs_approval"):
+                        acc["reply"] += "\n（子任务停在待确认操作——父任务无法代批，请人工处理。）"
+                        break
+                    if ev.get("needs_clarify"):
+                        acc["reply"] += "\n（子任务发起追问但无人应答，已终止。）"
+                        break
+        except Exception as e:
+            acc["reply"] = f"子任务异常：{type(e).__name__}: {str(e)[:200]}"
+        summary = (acc["reply"] or acc["text"] or "（无输出）").strip()[:DELEGATE_SUMMARY_BUDGET]
+        results[idx] = {"name": t["name"], "summary": summary,
+                        "ok": not summary.startswith("子任务异常")}
+
+    import concurrent.futures as _cf
+    pool = _cf.ThreadPoolExecutor(max_workers=min(len(tasks), DELEGATE_MAX_CONCURRENT),
+                                  thread_name_prefix="delegate")
+    try:
+        futs = [pool.submit(_worker, i, t) for i, t in enumerate(tasks)]
+        try:
+            for _f in _cf.as_completed(futs, timeout=DELEGATE_TIMEOUT_TOTAL):
+                pass
+        except _cf.TimeoutError:
+            pass  # 超时：未完成子任务下面标记，线程不强杀（自然结束）
+    finally:
+        pool.shutdown(wait=False)
+    out = []
+    for i, t in enumerate(tasks):
+        if results[i] is None:
+            out.append({"name": t["name"], "summary": "子任务超时未完成（可能仍在后台运行）", "ok": False})
+        else:
+            out.append(results[i])
+    ok_n = sum(1 for r in out if r["ok"])
+    lines = [f"**并行子代理完成（{ok_n}/{len(out)} 成功）**", ""]
+    for r in out:
+        mark = "✅" if r["ok"] else "⚠️"
+        lines.append(f"- {mark} **{r['name']}**：{r['summary']}")
+    return {"reply": "\n".join(lines),
+            "tools": [{"icon": "🤖", "name": f"委派 · {r['name']}",
+                       "status": "success" if r["ok"] else "error",
+                       "detail": r["summary"][:80]} for r in out],
+            "intent": "delegate", "data": {"delegated": out}}
+
+
 def _spill_tool_output(tool_name: str, content: str):
     """把超长工具输出写入 <WORKSPACE>/spill/<ts>_<tool>.txt，返回句柄路径；失败返回 None。"""
     try:
@@ -285,6 +380,7 @@ def _system_prompt(locale: str = "zh") -> str:
             "     ),不要走 mcp_call —— MCP binance 网关只有公开行情/账户/交易端点，没有发广场的能力，OAuth 授权也帮不上**。\n"
             "   **『帮我做个定时任务 / 每天 9 点分析妖币 / 每天早上定时扫描 / 每隔 30 分钟扫一次 / 加个日报 / 加个定时提醒 / cron / 自动定时』→ 立即用 schedule_task(action='create', name=…, time=…, task=…) 在后台真实注册 cron / interval 任务（不是给一句手动话术，也不要走 mcp_call 写系统级 cron）**。time 支持 `09:00`/`9 点`/`0 9 * * *`/`interval:30m`；task 默认 daily_scan_report，做妖币雷达传 meme_scan_report；**用户给出自定义周期指令（如『每天 9 点总结 BTC 行情并给关键位』）→ task='custom_prompt' 且把完整指令写进 prompt 参数（Agent 到点带全部工具无头真实执行）**。内置任务结果写『BAZZ Agent 日报』会话，custom_prompt 写专属会话「定时任务 · <name>」（都不需要用户在场）。**\n"
             "   **需求存在关键分叉（币种/周期/方向/预算不明且猜错代价高）→ 用 clarify 工具发结构化选择题让用户点选；能用合理默认值继续就不要问**。\n"
+            "   **多个相互独立的子任务（多标的各查各的/多路径排查）→ 用 delegate 并行委派子代理（tasks=[{name, prompt}]，prompt 必须自包含）；子任务间有依赖就自己做**。\n"
             "2) **绝不要先用文字叙述『我先调用 xxx』或『正在调用 xxx』！**\n"
             "   直接在 reply 之外、以 tool_calls 形式调用；用户必须看到真实数据。\n"
             "   调完拿到数据后再用中文总结结论；不要在 text 里编造数字。\n"
@@ -1456,6 +1552,8 @@ def _dispatch_tool(name: str, args: dict, confirmed: bool = False) -> Dict[str, 
         return _run_meme_watch(mode=(args.get("mode") or "both"))
     if name == "clarify":
         return _run_clarify(args)
+    if name == "delegate":
+        return _run_delegate(args)
     if name == "schedule_task":
         return _run_schedule_tool(
             action=args.get("action") or "list",
@@ -1956,7 +2054,7 @@ def _dispatch_is_approval_needed(name: str) -> bool:
 
 # Hermes bots：persona 可声明 config.tools 工具子集白名单（留空/缺省 = 全部工具）
 _TOOL_UNIVERSAL = {"get_help", "memory_write", "memory_read", "fetch_url", "gateway_status",
-                   "search_history", "todo_write"}
+                   "search_history", "todo_write", "clarify", "delegate"}
 
 
 def _persona_allowed_tools(persona: dict) -> set:
@@ -2151,7 +2249,7 @@ def _history_blocks(history: list, llm_cfg: dict = None, cid: str = ""):
 def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, approval: dict = None,
                    persona: dict = None, llm_cfg: dict = None, images: list = None,
                    auto_exec: bool = False, history: list = None, locale: str = "zh",
-                   cid: str = ""):
+                   cid: str = "", blocked_tools: set = None):
     """真 LLM 接上（Hermes 风格 function-calling 循环）。
 
     1) LLM 看 system + 历史上下文(history) + 用户消息 + TOOLS(含插件命令)，决定调用哪些工具；
@@ -2186,7 +2284,8 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
     accumulated_tools = []
     model_used = ""
     forced_once = False  # _detect 兜底只在首轮强制一次，防多轮重复派发卡死
-    tools = _persona_filter_tools(llm.TOOLS + llm.plugin_tools(), persona)
+    tools = _filter_tool_schemas(_persona_filter_tools(llm.TOOLS + llm.plugin_tools(), persona),
+                                 blocked_tools)
     turns = 0
     heal_left = _HEAL_MAX  # 工具失败自愈预算（同一请求内共享）
     ever_failed = False    # 出现过工具失败（用于轮次用尽时区分提示语）

@@ -1,6 +1,17 @@
-# BAZZ.AGENT v1.4.5
+# BAZZ.AGENT v1.4.6
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.4.6 更新要点（delegate 并行子代理）
+
+### 1. 并行子代理委派（学习 Hermes delegate_tool）
+- 新增 `delegate` 工具：把**相互独立**的子任务拆成 tasks=[{name, prompt}]（最多 4 个），每个子任务由一个**全新 Agent 并行真实执行**（带全部工具：行情/技能/文件/命令，但不能再次委派）
+- 典型场景：多标的独立研究（BTC/ETH/SOL 各查各的）、多路径同时排查、批量重复性子任务；说「并行 / 同时 / 分开查」就会触发
+- **父级只看每个子任务的最终摘要**（子代理中间工具过程不回流），摘要按预算截断，防止撑爆上下文
+- 防递归：子代理工具集自动剔除 delegate（spawn depth=1）；prompt 必须自包含（子代理看不到父对话）；总超时保护，超时任务如实标记不挂死
+- Bot 工具白名单候选新增 schedule_task / clarify / delegate 三个，档案可按需开关
+
+---
 
 ## 🆕 v1.4.5 更新要点（自定义定时盯盘 + 结构化追问 + 工具输出落盘）
 
