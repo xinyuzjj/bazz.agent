@@ -4,6 +4,7 @@ import { I } from "../components/icons";
 import { CronPanel, McpPanel, ChannelPanel } from "./AdminPanels";
 import { useI18n } from "../i18n/i18n";
 import UpdatePanel from "../components/UpdatePanel";
+import { ProxyPoolView } from "./ProxyPoolView";
 
 const LLM_PROVIDERS = [
   // presets 与后端 src/llm.py 的 PROVIDERS 完全对齐（按 2026-09 各厂商官方 API 现役目录核实）。
@@ -44,6 +45,7 @@ export function SettingsView({ settings, onSaved, onNav }: { settings: any; onSa
   const [gwBusy, setGwBusy] = useState(false);
   const [mcpToolCount, setMcpToolCount] = useState(0);
   const [deepThinking, setDeepThinking] = useState(true);
+  const [proxyExpanded, setProxyExpanded] = useState(false);
   const gwOnline = gwList.filter((g: any) => g.connected).length;
   const gwTotal = gwList.length;
   const gwOk = gwTotal > 0 && gwOnline === gwTotal;
@@ -243,6 +245,21 @@ export function SettingsView({ settings, onSaved, onNav }: { settings: any; onSa
           {gwList.length === 0 && <div className="col-span-full font-mono text-[10.5px] text-ink-mute">{t("gw.none")}</div>}
         </div>
         {mcpToolCount > 0 && <div className="mt-2 font-mono text-[10px] text-ink-dim">{t("gw.mcpTools", { n: mcpToolCount })}</div>}
+      </div>
+
+      {/* 代理池 —— 仿 Ant Browser：导入代理/订阅/测速/一键启用 */}
+      <div className="glass p-4">
+        <button className="flex items-center gap-2 w-full text-left" onClick={() => setProxyExpanded((v) => !v)}>
+          <I.Globe size={14} className="text-gold" />
+          <span className="font-mono text-[12px] text-ink tracking-wider">{t("proxy.title")}</span>
+          <span className="prefix ml-auto">{t("proxy.hintShort")}</span>
+          <span className={`text-ink-dim text-[12px] transition-transform ${proxyExpanded ? "rotate-90" : ""}`}>▸</span>
+        </button>
+        {proxyExpanded && (
+          <div className="mt-3 -mx-2">
+            <ProxyPoolView embedded />
+          </div>
+        )}
       </div>
 
       {/* Agent 思考行为 */}

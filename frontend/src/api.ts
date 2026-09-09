@@ -184,6 +184,17 @@ export const api = {
   updateApply: (zip: string, pid: number) => jpost("/update/apply", { zip, pid }),
   // 统一的外链打开：Electron 下走主进程 shell.openExternal（防被 WebView 拦截）；
   // 浏览器开发态下退化到 window.open。包外 URL 必须 https://，否则忽略。
+  // v1.3.7 代理池 / mihomo 内核
+  proxies: () => jget("/proxies"),
+  proxyImport: (body: { text?: string; url?: string; group?: string }) => jpost("/proxies/import", body),
+  proxyRefresh: () => jpost("/proxies/refresh", {}),
+  proxyTest: (id?: string) => jpost("/proxies/test", { id: id || null }),
+  proxyActive: (id: string) => jpost("/proxies/active", { id }),
+  proxyDelete: (id: string) => jdel(`/proxies/${id}`),
+  kernelStatus: () => jget("/proxies/kernel"),
+  kernelDownload: () => jpost("/proxies/kernel/download", {}),
+  kernelStart: () => jpost("/proxies/kernel/start", {}),
+  kernelStop: () => jpost("/proxies/kernel/stop", {}),
   openExternal: (url: string) => {
     const u = String(url || "").trim();
     if (!/^https?:\/\//i.test(u)) return false;

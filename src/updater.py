@@ -131,11 +131,17 @@ def update_cache_dir() -> str:
 
 
 def _session():
-    """会话：默认直连（trust_env=False，绕开 Windows 系统代理把 GitHub 打成 403）；
-    设了 BAZZ_GH_PROXY 时走显式代理。"""
+    """会话：默认不读系统代理（trust_env=False，绕开 Windows 系统代理把 GitHub 打成 403）；
+    代理来源优先级：BAZZ_GH_PROXY 环境变量 → v1.3.7 代理池启用的节点。"""
     s = requests.Session()
     s.trust_env = False
     proxy = os.environ.get("BAZZ_GH_PROXY", "").strip()
+    if not proxy:
+        try:
+            import proxy_pool
+            proxy = proxy_pool.active_url()
+        except Exception:
+            proxy = ""
     if proxy:
         s.proxies = {"http": proxy, "https": proxy}
     s.headers.update({"Accept": "application/vnd.github+json", "User-Agent": "BAZZ.AGENT-updater"})

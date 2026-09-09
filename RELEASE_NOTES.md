@@ -1,3 +1,26 @@
+# BAZZ.AGENT v1.3.7
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.3.7 更新要点（代理池 · 仿 Ant Browser）
+
+### 1. 代理池（设置页 · 可折叠卡片）
+参考 Ant Browser 指纹浏览器的代理池体验，添加完整代理管理：
+- **两类节点自动识别**：http/https/socks4/socks5 直连即用；hysteria2/vmess/trojan/ss/vless 等走可下载的 mihomo（Clash Meta）内核转发
+- **一键下载内核**（~15MB）：GitHub 直连失败自动轮询 gh-proxy.com / ghfast.top / ghproxy.net 镜像，落 `<安装根>/.system/kernel/`
+- **导入三种方式**：订阅 URL（自动识别 Clash YAML + base64）、批量粘贴（URI 列表、host:port）
+- **真实测速**：直连型走真实 HTTPS 转发请求 Binance API；内核型走 mihomo provider healthcheck，失败 3 次自动标记 dead
+- **切换即生效**：启用节点自动注入 `HTTP_PROXY/HTTPS_PROXY/ALL_PROXY` 环境变量，全应用（含更新器）流量自动走代理；切「直连」即恢复
+- **持久化**：导入列表 + 启用状态落 `workspace/proxies.json`，启动自动恢复；可删除节点、刷新订阅
+- **内核转发链路实测**：selector 切换 → 混合端口 7899 → 真实 HTTP 200 ~400ms
+
+### 2. 体验细节
+- 代理池从顶层导航并入「设置」页（可折叠卡片，点 ▸ 展开即完整功能），导航栏保持干净
+- workspace 文件列表加 proxies.json 用途说明（聊天页文件区）
+- 修复 mihomo 订阅节点测速：新版不在 `/proxies/<name>/delay` 暴露（404），改用 provider healthcheck + 读取节点 history
+
+---
+
 # BAZZ.AGENT v1.3.6
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**

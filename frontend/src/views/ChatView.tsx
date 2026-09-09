@@ -940,6 +940,7 @@ export function ChatView({
     : name === "logs" ? "chat.desc.logs"
     : name === "backups" ? "chat.desc.backups"
     : name === "square_posts.json" ? "chat.desc.squarePosts"
+    : name === "proxies.json" ? "chat.desc.proxies"
     : name === "update-cache" ? "chat.desc.updateCache"
     : name === "workspace" ? "chat.desc.workspaceDir"
     : "";

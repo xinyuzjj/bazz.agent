@@ -1,0 +1,430 @@
+"""mihomo（Clash Meta）内核管理（v1.3.7）—— 给连不上的用户兜底。
+
+- 一键下载 mihomo windows-amd64 内核（GitHub 直连失败自动走镜像），落 <安装根>/.system/kernel/；
+- 订阅原始内容作为 proxy-provider 落盘，生成 config 后拉起内核；
+- 内核在本地起混合端口（HTTP+SOCKS），应用流量走 127.0.0.1:<mixed> 转发，
+  hysteria2/vmess/trojan/ss 等协议全部可用；
+- 节点切换/测速走 mihomo 外部控制 API（external-controller）。
+- 本地能直连 Binance 的用户完全不需要内核 —— 直连型 http/socks 节点由 requests 直接走。
+"""
+import atexit
+import hashlib
+import json
+import os
+import re
+import socket
+import subprocess
+import threading
+import time
+import zipfile
+
+import requests
+
+import workspace
+
+KERNEL_DIR = os.path.join(workspace.SYSTEM_DIR, "kernel")
+PROVIDERS_DIR = os.path.join(KERNEL_DIR, "providers")
+MIHOMO_EXE = os.path.join(KERNEL_DIR, "mihomo.exe")
+CONFIG_PATH = os.path.join(KERNEL_DIR, "config.yaml")
+LOG_PATH = os.path.join(KERNEL_DIR, "kernel.log")
+
+GROUP_NAME = "BAZZ"
+TEST_URL = "https://api.binance.com/api/v3/ping"
+
+_LOCK = threading.RLock()
+_proc = None
+_mixed_port = 0
+_ctrl_port = 0
+
+# 下载进度（前端轮询）
+_dl = {"active": False, "total": 0, "done": 0, "error": "", "ready": False, "version": ""}
+
+_MIRRORS = [
+    "",  # 直连优先
+    "https://gh-proxy.com/",
+    "https://ghfast.top/",
+    "https://ghproxy.net/",
+]
+
+
+# ---------------- 基础状态 ----------------
+
+def is_installed():
+    return os.path.isfile(MIHOMO_EXE)
+
+
+def _free_port(prefer):
+    def _ok(p):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.bind(("127.0.0.1", p))
+            return True
+        except OSError:
+            return False
+        finally:
+            s.close()
+    if _ok(prefer):
+        return prefer
+    for p in range(prefer + 1, prefer + 20):
+        if _ok(p):
+            return p
+    return prefer
+
+
+def mixed_port():
+    return _mixed_port
+
+
+def _ctrl():
+    return f"http://127.0.0.1:{_ctrl_port}"
+
+
+def is_running():
+    global _proc
+    if _proc is None:
+        return False
+    if _proc.poll() is not None:
+        _proc = None
+        return False
+    try:
+        r = requests.get(_ctrl() + "/version", timeout=2)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+def version():
+    try:
+        r = requests.get(_ctrl() + "/version", timeout=2)
+        if r.status_code == 200:
+            return r.json().get("version", "") or ""
+    except Exception:
+        pass
+    # 未运行时从 exe 取
+    if is_installed():
+        try:
+            out = subprocess.run([MIHOMO_EXE, "-v"], capture_output=True, text=True,
+                                 timeout=8, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            m = re.search(r"mihomo\s+([0-9.]+)", (out.stdout or "") + (out.stderr or ""))
+            return m.group(1) if m else "已安装"
+        except Exception:
+            return "已安装"
+    return ""
+
+
+def status():
+    return {"installed": is_installed(), "running": is_running(),
+            "version": version(), "mixed_port": _mixed_port if is_running() else 0,
+            "download": dict(_dl)}
+
+
+# ---------------- 订阅 provider ----------------
+
+def _provider_id(sub_url):
+    return "sub_" + hashlib.md5(sub_url.encode("utf-8")).hexdigest()[:10]
+
+
+def save_provider(sub_url, raw):
+    """把订阅原始内容落盘给内核做 file provider。仅 Clash YAML 格式可直接用。"""
+    os.makedirs(PROVIDERS_DIR, exist_ok=True)
+    if "proxies:" not in raw:
+        return  # base64/URI 列表格式内核 file provider 不直接吃，跳过
+    path = os.path.join(PROVIDERS_DIR, _provider_id(sub_url) + ".yaml")
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(raw)
+    os.replace(tmp, path)
+
+
+def _provider_files():
+    if not os.path.isdir(PROVIDERS_DIR):
+        return []
+    return [f for f in os.listdir(PROVIDERS_DIR) if f.endswith(".yaml")]
+
+
+# ---------------- 配置生成 / 启停 ----------------
+
+def _write_config():
+    global _mixed_port, _ctrl_port
+    _mixed_port = _free_port(7899)
+    _ctrl_port = _free_port(9099)
+    providers = _provider_files()
+    lines = [
+        f"mixed-port: {_mixed_port}",
+        "allow-lan: false",
+        "mode: rule",
+        "log-level: warning",
+        f"external-controller: 127.0.0.1:{_ctrl_port}",
+    ]
+    if providers:
+        lines.append("proxy-providers:")
+        for f in providers:
+            pid = f[:-5]
+            lines += [
+                f"  {pid}:",
+                "    type: file",
+                f"    path: providers/{f}",
+                "    health-check:",
+                "      enable: true",
+                f"      url: {TEST_URL}",
+                "      interval: 300",
+            ]
+    lines += [
+        "proxy-groups:",
+        f"  - name: {GROUP_NAME}",
+        "    type: select",
+    ]
+    use_list = [f[:-5] for f in providers]
+    if use_list:
+        lines.append("    use:")
+        for u in use_list:
+            lines.append(f"      - {u}")
+    lines.append("    proxies:")
+    lines.append("      - DIRECT")
+    lines += [
+        "rules:",
+        f"  - MATCH,{GROUP_NAME}",
+    ]
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def _kill_proc():
+    global _proc
+    if _proc is None:
+        return
+    try:
+        # Windows：taskkill /T 连孙进程一起收，避免 mihomo 孤儿化
+        subprocess.run(["taskkill", "/PID", str(_proc.pid), "/T", "/F"],
+                       capture_output=True, timeout=10,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:
+        try:
+            _proc.kill()
+        except Exception:
+            pass
+    _proc = None
+
+
+def start():
+    """拉起内核。已在跑则直接返回。"""
+    global _proc
+    with _LOCK:
+        if is_running():
+            return {"ok": True, "running": True, "port": _mixed_port}
+        if not is_installed():
+            return {"ok": False, "error": "内核未下载，请先点「下载内核」。"}
+        os.makedirs(KERNEL_DIR, exist_ok=True)
+        _write_config()
+        logf = open(LOG_PATH, "a", encoding="utf-8")
+        try:
+            _proc = subprocess.Popen(
+                [MIHOMO_EXE, "-d", KERNEL_DIR, "-f", CONFIG_PATH],
+                cwd=KERNEL_DIR, stdout=logf, stderr=logf,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except Exception as e:
+            return {"ok": False, "error": f"内核启动失败：{e}"}
+        # 等控制面就绪（最多 20s）
+        for _ in range(40):
+            try:
+                r = requests.get(_ctrl() + "/version", timeout=1)
+                if r.status_code == 200:
+                    return {"ok": True, "running": True, "port": _mixed_port}
+            except Exception:
+                pass
+            if _proc.poll() is not None:
+                return {"ok": False, "error": "内核进程启动后退出，详见 kernel.log。"}
+            time.sleep(0.5)
+        return {"ok": False, "error": "内核启动超时（控制面无响应），详见 kernel.log。"}
+
+
+def stop():
+    with _LOCK:
+        _kill_proc()
+    return {"ok": True}
+
+
+def ensure_running():
+    if not is_running():
+        r = start()
+        if not r.get("ok"):
+            raise RuntimeError(r.get("error", "内核启动失败"))
+
+
+def select(node_name):
+    """切换 BAZZ 组当前节点。"""
+    r = requests.put(_ctrl() + f"/proxies/{GROUP_NAME}",
+                     json={"name": node_name}, timeout=5)
+    return r.status_code in (200, 204)
+
+
+def _provider_proxies():
+    """{provider_name: [ {name, history}, ... ]}，只取订阅型 provider（跳过 default）。"""
+    out = {}
+    try:
+        data = requests.get(_ctrl() + "/providers/proxies", timeout=5).json()
+        for pname, p in (data.get("providers") or {}).items():
+            if pname == "default":
+                continue
+            nodes = p.get("proxies") or []
+            if nodes:
+                out[pname] = [{"name": n.get("name"),
+                               "history": n.get("history") or []} for n in nodes]
+    except Exception:
+        pass
+    return out
+
+
+def _find_provider_of(node_name):
+    """返回节点所属 provider 名；找不到返回 None。"""
+    for pname, nodes in _provider_proxies().items():
+        if any(n["name"] == node_name for n in nodes):
+            return pname
+    return None
+
+
+def _history_delay(nodes, node_name):
+    for n in nodes:
+        if n["name"] == node_name and n["history"]:
+            d = n["history"][-1].get("delay")
+            if isinstance(d, (int, float)) and d > 0:
+                return int(d)
+    return None
+
+
+def _healthcheck(provider_name, timeout_ms):
+    """触发某个 provider 全节点健康检查（204 = 已在同步执行完）。"""
+    try:
+        r = requests.get(_ctrl() + f"/providers/proxies/{requests.utils.quote(provider_name)}/healthcheck",
+                         params={"url": TEST_URL, "timeout": timeout_ms},
+                         timeout=timeout_ms / 1000 + 6)
+        return r.status_code in (200, 204)
+    except Exception:
+        return False
+
+
+def node_delay(node_name, timeout_ms=8000):
+    """单节点延迟（ms）。新版 mihomo 中订阅 provider 节点不在 /proxies/<name>/delay 暴露，
+    走 provider healthcheck + 读取节点 history。失败返回 None。"""
+    try:
+        pname = _find_provider_of(node_name)
+        if not pname:
+            return None
+        _healthcheck(pname, timeout_ms)
+        return _history_delay(_provider_proxies().get(pname, []), node_name)
+    except Exception:
+        return None
+
+
+def group_delays(timeout_ms=8000):
+    """全部订阅节点测速：{节点名: 延迟ms}。对每个 provider 触发 healthcheck 后汇总 history。"""
+    result = {}
+    try:
+        providers = _provider_proxies()
+        for pname in providers:
+            _healthcheck(pname, timeout_ms)
+        for nodes in _provider_proxies().values():
+            for n in nodes:
+                d = _history_delay([n], n["name"])
+                if d:
+                    result[n["name"]] = d
+    except Exception:
+        pass
+    return result
+
+
+# ---------------- 下载内核 ----------------
+
+def _find_asset():
+    r = requests.get("https://api.github.com/repos/MetaCubeX/mihomo/releases/latest",
+                     timeout=15, headers={"User-Agent": "BAZZ.AGENT"})
+    r.raise_for_status()
+    rel = r.json()
+    tag = rel.get("tag_name", "")
+    for a in rel.get("assets", []):
+        n = a.get("name", "")
+        # 标准 windows-amd64 包（排除 -compatible- / arm 等变体）
+        if re.match(r"^mihomo-windows-amd64-v[\d.]+\.zip$", n):
+            return tag, a["browser_download_url"], a.get("size", 0)
+    raise RuntimeError("未在 mihomo 最新 Release 中找到 windows-amd64 包。")
+
+
+def _download_one(url, dest, total_hint):
+    r = requests.get(url, timeout=30, stream=True,
+                     headers={"User-Agent": "BAZZ.AGENT"})
+    r.raise_for_status()
+    total = int(r.headers.get("content-length", 0) or total_hint or 0)
+    done = 0
+    with open(dest, "wb") as f:
+        for chunk in r.iter_content(chunk_size=256 * 1024):
+            if not chunk:
+                continue
+            f.write(chunk)
+            done += len(chunk)
+            with _LOCK:
+                _dl["done"] = done
+                _dl["total"] = total
+    return done
+
+
+def _download_worker():
+    zip_path = os.path.join(KERNEL_DIR, "mihomo.zip")
+    os.makedirs(KERNEL_DIR, exist_ok=True)
+    try:
+        tag, gh_url, size = _find_asset()
+        last_err = ""
+        for prefix in _MIRRORS:
+            url = prefix + gh_url if prefix else gh_url
+            try:
+                with _LOCK:
+                    _dl["error"] = "" if not prefix else f"直连失败，正在尝试镜像 {prefix} …"
+                _download_one(url, zip_path, size)
+                last_err = ""
+                break
+            except Exception as e:
+                last_err = f"{type(e).__name__}: {e}"
+                continue
+        if last_err:
+            raise RuntimeError(f"全部下载源均失败（{last_err}）。可稍后重试，或手动下载 mihomo.exe 放入 {KERNEL_DIR}")
+        # 解压找内核 exe（包内名为 mihomo-windows-amd64.exe 等变体）
+        with zipfile.ZipFile(zip_path) as zf:
+            exe_member = next((n for n in zf.namelist()
+                               if re.search(r"mihomo[\w\-]*\.exe$", n.replace("\\", "/").lower())), None)
+            if not exe_member:
+                raise RuntimeError("压缩包内未找到 mihomo.exe。")
+            with zf.open(exe_member) as src, open(MIHOMO_EXE, "wb") as dst:
+                while True:
+                    b = src.read(1024 * 1024)
+                    if not b:
+                        break
+                    dst.write(b)
+        try:
+            os.remove(zip_path)
+        except OSError:
+            pass
+        ver = version()
+        with _LOCK:
+            _dl.update({"active": False, "ready": True, "error": "", "version": ver or tag})
+    except Exception as e:
+        with _LOCK:
+            _dl.update({"active": False, "ready": False, "error": str(e)[:200]})
+
+
+def start_download():
+    """后台下载内核（幂等）。"""
+    with _LOCK:
+        if is_installed():
+            return {"ok": True, "ready": True, "version": version()}
+        if _dl["active"]:
+            return {"ok": True, "active": True}
+        _dl.update({"active": True, "ready": False, "error": "", "done": 0, "total": 0})
+    threading.Thread(target=_download_worker, daemon=True).start()
+    return {"ok": True, "active": True}
+
+
+def download_status():
+    with _LOCK:
+        return dict(_dl)
+
+
+atexit.register(_kill_proc)

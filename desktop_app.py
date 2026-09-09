@@ -39,6 +39,8 @@ import binance_cli
 import plugin_host
 import room
 import updater
+import proxy_pool
+import proxy_kernel
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 INDEX = os.path.join(APP_DIR, "src", "index.html")
@@ -83,6 +85,9 @@ else:
 
 # 启动定时调度守护线程
 scheduler.start()
+
+# v1.3.7：加载代理池并把已启用代理注入环境变量（须在任何对外请求前完成）
+proxy_pool.bootstrap()
 
 # 后台预热钱包状态缓存（baw 冷启动慢，先算好，前端打开钱包页即秒回）
 threading.Thread(target=wallet_client.warm_wallet_cache, daemon=True).start()
@@ -785,6 +790,103 @@ async def post_settings(req: Request):
     if "BINANCE_API_SECRET" in body:
         state.set_setting("BINANCE_API_SECRET", body["BINANCE_API_SECRET"])
     return {"ok": True}
+
+
+# ---------------- 代理池 / 内核（v1.3.7） ----------------
+
+@app.get("/api/proxies")
+def proxies_list():
+    return proxy_pool.list_pool()
+
+
+@app.post("/api/proxies/import")
+async def proxies_import(req: Request):
+    b = await req.json()
+    url = (b.get("url") or "").strip()
+    text = b.get("text") or ""
+    group = (b.get("group") or "").strip()
+    try:
+        if url:
+            return {"ok": True, **proxy_pool.import_subscription(url)}
+        added, updated, parsed = proxy_pool.import_text(text, group=group)
+        return {"ok": True, "added": added, "updated": updated, "parsed": len(parsed)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+@app.post("/api/proxies/refresh")
+def proxies_refresh():
+    return {"ok": True, "results": proxy_pool.refresh_subscriptions()}
+
+
+@app.post("/api/proxies/test")
+async def proxies_test(req: Request):
+    b = await req.json()
+    pid = b.get("id")
+    try:
+        if pid:
+            e = next((x for x in proxy_pool.list_pool()["entries"] if x["id"] == pid), None)
+            if not e:
+                return {"ok": False, "error": "节点不存在。"}
+            proxy_pool.test_entry(e)
+            with proxy_pool._LOCK:
+                for x in proxy_pool._state["entries"]:
+                    if x["id"] == pid:
+                        x.update({"latency_ms": e["latency_ms"], "status": e["status"],
+                                  "fails": e["fails"], "error": e["error"],
+                                  "last_tested": e["last_tested"]})
+                proxy_pool._save()
+            return {"ok": True, "results": [{"id": pid, "status": e["status"],
+                                            "latency_ms": e["latency_ms"], "error": e["error"]}]}
+        return {"ok": True, "results": proxy_pool.test_all()}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+@app.post("/api/proxies/active")
+async def proxies_active(req: Request):
+    b = await req.json()
+    try:
+        aid = proxy_pool.set_active(b.get("id") or "")
+        return {"ok": True, "active_id": aid, "active_url": proxy_pool.active_url()}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+@app.post("/api/proxies/{pid}/edit")
+async def proxies_edit(pid: str, req: Request):
+    b = await req.json()
+    try:
+        proxy_pool.update_entry(pid, name=b.get("name"), group=b.get("group"))
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+@app.delete("/api/proxies/{pid}")
+def proxies_delete(pid: str):
+    proxy_pool.delete(pid)
+    return {"ok": True}
+
+
+@app.get("/api/proxies/kernel")
+def proxies_kernel_status():
+    return proxy_kernel.status()
+
+
+@app.post("/api/proxies/kernel/download")
+def proxies_kernel_download():
+    return proxy_kernel.start_download()
+
+
+@app.post("/api/proxies/kernel/start")
+def proxies_kernel_start():
+    return proxy_kernel.start()
+
+
+@app.post("/api/proxies/kernel/stop")
+def proxies_kernel_stop():
+    return proxy_kernel.stop()
 
 
 # ---------------- LLM 连通性 / 模型目录 ----------------
