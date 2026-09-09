@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { I } from "../components/icons";
 import { useT } from "../i18n/i18n";
@@ -40,7 +40,7 @@ export function ExchangeView({ initialSymbol, initialTab, initialSide, halted, o
         const sm: any = await api.cexSummary();
         setCexSummary(sm);
       } else { setCexSummary(null); }
-    } catch { /* 静默 */ }
+    } catch (e: any) { setCexErr(e?.message || String(e)); }  // v1.3.6：加载失败不再静默，展示在账户卡错误位
   }, []);
   useEffect(() => { loadCex(); }, [loadCex]);
   const connectCex = async () => {

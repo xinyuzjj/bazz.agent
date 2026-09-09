@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, authHeaders } from "../api";
 import { I } from "../components/icons";
 import { CronPanel, McpPanel, ChannelPanel } from "./AdminPanels";
 import { useI18n } from "../i18n/i18n";
@@ -50,7 +50,7 @@ export function SettingsView({ settings, onSaved, onNav }: { settings: any; onSa
   const loadGateways = async () => {
     setGwBusy(true);
     try {
-      const r: any = await fetch("/api/gateways").then((x) => x.json());
+      const r: any = await fetch("/api/gateways", { headers: authHeaders() }).then((x) => x.json());
       setGwList(Array.isArray(r?.gateways) ? r.gateways : []);
       setMcpToolCount(r?.mcp_tools ?? 0);
     } catch {}

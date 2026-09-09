@@ -1,7 +1,8 @@
+# 运行依赖（dev）。打包钉死版见 requirements-build.txt（以它为准）。
+# 注：pywebview 已随 v1.2.11 Electron 化移除（legacy src/index.html 兜底页仅静态托管，无需 GUI 依赖）。
 requests>=2.31
 python-dotenv>=1.0
 rich>=13.0
 fastapi>=0.100
 uvicorn>=0.23
-pywebview>=6.0
 qrcode>=7.4

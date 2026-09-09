@@ -20,8 +20,9 @@ import time
 APP_DIR = os.environ.get("BAZZ_APP_DIR") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def _app_root_frozen() -> str:
-    """冻结态兜底：从 APP_DIR 向上找应用安装根（含 BAZZ.AGENT.exe 或 resources/ 的目录）。
+def app_root() -> str:
+    """从 APP_DIR 向上找应用安装根（含 BAZZ.AGENT.exe 或 resources/ 的目录）；dev 返回 APP_DIR。
+    v1.3.6：全仓库唯一实现（原 _app_root_frozen/_app_root 与 updater.app_root 三份重复，已合并）。
     Electron 未注入 BAZZ_WORKSPACE 时（如直接双击 ScoutBackend.exe），工作区仍落在安装目录。"""
     cand = APP_DIR
     for _ in range(6):
@@ -40,7 +41,7 @@ def _app_root_frozen() -> str:
 if os.environ.get("BAZZ_WORKSPACE"):
     WORKSPACE = os.environ["BAZZ_WORKSPACE"]
 elif getattr(sys, "frozen", False):
-    WORKSPACE = os.path.join(_app_root_frozen(), "workspace")
+    WORKSPACE = os.path.join(app_root(), "workspace")
 else:
     WORKSPACE = os.path.join(APP_DIR, "workspace")
 os.makedirs(WORKSPACE, exist_ok=True)
@@ -63,7 +64,7 @@ def _dir_writable(d: str) -> bool:
 # 用户要求：workspace 里不再出现 update-cache / .migrated_* 这类系统文件。
 #   更新缓存 → <安装根>/update-cache（安装目录只读时兜底回工作区）
 #   迁移标记 → <安装根>/.system/（只读时兜底 <工作区>/.system/）
-_SYS_BASE = _app_root_frozen() if getattr(sys, "frozen", False) else APP_DIR
+_SYS_BASE = app_root() if getattr(sys, "frozen", False) else APP_DIR
 _uc_app = os.path.join(_SYS_BASE, "update-cache")
 UPDATE_CACHE_DIR = _uc_app if _dir_writable(_uc_app) else os.path.join(WORKSPACE, "update-cache")
 os.makedirs(UPDATE_CACHE_DIR, exist_ok=True)
@@ -87,19 +88,7 @@ GENERATED      = os.path.join(WORKSPACE, "generated")
 #   dev 态：APP_DIR = 项目根，RUNTIME_DIR 指向 `../../runtime`（不存在）；runtime_available() 自然 False，调用方走 PATH 回退
 # v1.2.14 兜底：早期 launcher.py 的 _EXE_DIR = dirname(__file__)，在 PyInstaller onedir 下 __file__ 解析为 _MEIPASS
 #   （= ScoutBackend/_internal），导致 APP_DIR 错位为 _internal，RUNTIME_DIR 自然指向不存在的 scout-bundle/runtime。
-#   现在加 app_root 兜底（向上找含 BAZZ.AGENT.exe 或 resources/ 的目录，再下 resources/runtime）—— 即使 launcher
-#   偶尔再错，也能从 BAZZ.AGENT-win32-x64/resources/runtime 拿到正确的内置 runtime。
-def _app_root() -> str:
-    cand = APP_DIR
-    for _ in range(6):
-        if os.path.isfile(os.path.join(cand, "BAZZ.AGENT.exe")) or os.path.isdir(os.path.join(cand, "resources")):
-            return cand
-        parent = os.path.dirname(cand)
-        if parent == cand:
-            break
-        cand = parent
-    return APP_DIR
-
+#   现在加 app_root 兜底（见上方唯一实现）—— 即使 launcher 偶尔再错，也能从安装根/resources/runtime 拿到正确内置 runtime。
 _NODE_REL = ("node", "node.exe" if os.name == "nt" else "bin/node")
 
 
@@ -107,7 +96,7 @@ def _pick_runtime_dir() -> str:
     primary = os.environ.get("BAZZ_RUNTIME_DIR") or os.path.normpath(os.path.join(APP_DIR, "..", "..", "runtime"))
     if os.path.isfile(os.path.join(primary, *_NODE_REL)):
         return primary
-    fallback = os.path.join(_app_root(), "resources", "runtime")
+    fallback = os.path.join(app_root(), "resources", "runtime")
     if os.path.isfile(os.path.join(fallback, *_NODE_REL)):
         return fallback
     return primary  # 都不在时返回 primary 让上层按 False 处理

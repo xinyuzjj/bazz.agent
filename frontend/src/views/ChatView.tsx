@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { api, streamChat } from "../api";
+import { api, streamChat, authHeaders } from "../api";
 import { I } from "../components/icons";
 import { AgentSigninCard, ChainWalletPanel, Spin } from "../components/WalletBits";
 import { AgentAvatar, Blobatar } from "../components/Blobatar";
@@ -461,7 +461,7 @@ export function ChatView({
     setGrouping(true);
     try {
       const res = await fetch("/api/bots/reply", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ conversation_id: convId, message: content, to: mentions.map((m) => m.name) }),
       });
       const reader = res.body!.getReader();

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, authHeaders } from "../api";
 import { I } from "../components/icons";
 import { useT, useI18n } from "../i18n/i18n";
 
@@ -224,10 +224,10 @@ export function ChannelPanel({ onNav }: { onNav?: (n: string) => void }) {
     setLoading(true);
     try {
       const [agent, web3, cex, sq] = await Promise.allSettled([
-        fetch("/api/wallet/status").then((x) => x.json()),
-        fetch("/api/wallet/web3/status").then((x) => x.json()),
-        fetch("/api/wallet/cex/status").then((x) => x.json()),
-        fetch("/api/square/key").then((x) => x.json()),
+        fetch("/api/wallet/status", { headers: authHeaders() }).then((x) => x.json()),
+        fetch("/api/wallet/web3/status", { headers: authHeaders() }).then((x) => x.json()),
+        fetch("/api/wallet/cex/status", { headers: authHeaders() }).then((x) => x.json()),
+        fetch("/api/square/key", { headers: authHeaders() }).then((x) => x.json()),
       ]);
       setCh({
         agent: agent.status === "fulfilled" ? agent.value : { connected: false, error: true },

@@ -3,8 +3,17 @@ import { getLocale } from "./i18n/i18n";
 
 const BASE = "/api";
 
+// v1.3.6：打包态 Electron 经 preload 注入本次启动的随机本机 token；
+// 后端（BAZZ_AUTH_TOKEN 已设置时）对 /api/* 校验 X-BAZZ-Token。无 token 时不带头，
+// 后端未启用鉴权（dev 直跑）照常放行。
+const AUTH_TOKEN: string = String((window as any)?.bazzAuth?.token || "");
+
+export function authHeaders(): Record<string, string> {
+  return AUTH_TOKEN ? { "X-BAZZ-Token": AUTH_TOKEN } : {};
+}
+
 async function jget(path: string) {
-  const r = await fetch(BASE + path);
+  const r = await fetch(BASE + path, { headers: authHeaders() });
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
@@ -12,7 +21,7 @@ async function jget(path: string) {
 async function jpost(path: string, body: any) {
   const r = await fetch(BASE + path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body || {}),
   });
   if (!r.ok) throw new Error(await r.text());
@@ -20,7 +29,7 @@ async function jpost(path: string, body: any) {
 }
 
 async function jdel(path: string) {
-  const r = await fetch(BASE + path, { method: "DELETE" });
+  const r = await fetch(BASE + path, { method: "DELETE", headers: authHeaders() });
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
@@ -76,7 +85,7 @@ export const api = {
   addMemory: (key: string, value: string) => jpost("/memory", { key, value }),
   deleteMemory: (key: string) => jdel("/memory/" + encodeURIComponent(key)),
   exportMemory: async () => {
-    const r = await fetch(BASE + "/memory/export");
+    const r = await fetch(BASE + "/memory/export", { headers: authHeaders() });
     if (!r.ok) throw new Error(await r.text());
     return r.text();
   },
@@ -109,7 +118,7 @@ export const api = {
   walletSignout: () => jpost("/wallet/signout", {}),
   walletCampaign: () => jget("/wallet/campaign"),
   walletQr: async (text: string) => {
-    const r = await fetch(BASE + "/wallet/qr?text=" + encodeURIComponent(text));
+    const r = await fetch(BASE + "/wallet/qr?text=" + encodeURIComponent(text), { headers: authHeaders() });
     if (!r.ok) throw new Error(await r.text());
     return r.json();
   },
@@ -141,7 +150,7 @@ export const api = {
   deleteBot: (id: string) => jdel("/bots/" + encodeURIComponent(id)),
   importBot: (md: string) => jpost("/bots/import", { md }),
   exportBot: async (id: string) => {
-    const r = await fetch(BASE + "/bots/" + encodeURIComponent(id) + "/export");
+    const r = await fetch(BASE + "/bots/" + encodeURIComponent(id) + "/export", { headers: authHeaders() });
     if (!r.ok) throw new Error(await r.text());
     return r.text();
   },
@@ -155,17 +164,17 @@ export const api = {
   squareConnect: (api_key: string) => jpost("/square/connect", { api_key }),
   squareDisconnect: () => jpost("/square/disconnect", {}),
   getAutoExec: async () => {
-    const r = await fetch(BASE + "/settings/auto-exec");
+    const r = await fetch(BASE + "/settings/auto-exec", { headers: authHeaders() });
     return r.ok ? (await r.json()).auto_exec : true;
   },
   setAutoExec: (on: boolean) => jpost("/settings/auto-exec", { auto_exec: on }),
   getDeepThinking: async () => {
-    const r = await fetch(BASE + "/settings/deep-thinking");
+    const r = await fetch(BASE + "/settings/deep-thinking", { headers: authHeaders() });
     return r.ok ? (await r.json()).deep_thinking : true;
   },
   setDeepThinking: (on: boolean) => jpost("/settings/deep-thinking", { deep_thinking: on }),
   getSettings: async () => {
-    const r = await fetch(BASE + "/settings");
+    const r = await fetch(BASE + "/settings", { headers: authHeaders() });
     return r.ok ? await r.json() : {};
   },
   // 自动更新（检查 / 后台下载 / 应用）：v1.2.13 恢复应用内自动更新链路
@@ -191,7 +200,7 @@ export const api = {
 export async function streamChat(body: any, signal?: AbortSignal): Promise<Response> {
   return fetch(BASE + "/chat/stream", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ ...body, locale: getLocale() }),
     signal,
   });

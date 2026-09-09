@@ -1,5 +1,12 @@
-// BAZZ.AGENT 桌面壳的 preload —— 仅暴露窗口控制 IPC
+// BAZZ.AGENT 桌面壳的 preload —— 仅暴露窗口控制 IPC + 本机鉴权 token
 const { contextBridge, ipcRenderer } = require("electron");
+
+// v1.3.6：主进程经 additionalArguments 注入本次启动的随机 token（打包态后端 /api/* 必带）。
+// 优先取 argv，兜底读环境变量；都没有（异常形态）则空串 → 请求不带头，由后端自行决定是否放行。
+const _authArg = (process.argv || []).find((a) => typeof a === "string" && a.startsWith("--bazz-auth="));
+const AUTH_TOKEN = _authArg ? _authArg.slice("--bazz-auth=".length) : (process.env.BAZZ_AUTH_TOKEN || "");
+
+contextBridge.exposeInMainWorld("bazzAuth", { token: AUTH_TOKEN });
 
 contextBridge.exposeInMainWorld("bazzWindow", {
   minimize: () => ipcRenderer.send("bazz:win-min"),

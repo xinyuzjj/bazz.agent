@@ -23,9 +23,9 @@
 
 **🌐 English | [中文文档](./README.zh-CN.md)**
 
-[![Release](https://img.shields.io/badge/Release-v1.2.18-f0b90b?logo=github&logoColor=white)](https://github.com/xinyuzjj/bazz.agent/releases/latest)
-[![Portable](https://img.shields.io/badge/Download-portable.zip-2ea44f?logo=windows&logoColor=white)](https://github.com/xinyuzjj/bazz.agent/releases/latest/download/BAZZ.AGENT-v1.2.18-win32-x64-portable.zip)
-[![Setup](https://img.shields.io/badge/Download-setup.exe-4a9eff?logo=windows&logoColor=white)](https://github.com/xinyuzjj/bazz.agent/releases/latest/download/BAZZ.AGENT-v1.2.18-setup.exe)
+[![Release](https://img.shields.io/github/v/release/xinyuzjj/bazz.agent?logo=github&logoColor=white&label=Release&color=f0b90b)](https://github.com/xinyuzjj/bazz.agent/releases/latest)
+[![Portable](https://img.shields.io/badge/Download-portable.zip-2ea44f?logo=windows&logoColor=white)](https://github.com/xinyuzjj/bazz.agent/releases/latest)
+[![Setup](https://img.shields.io/badge/Download-setup.exe-4a9eff?logo=windows&logoColor=white)](https://github.com/xinyuzjj/bazz.agent/releases/latest)
 [![Pages](https://img.shields.io/badge/Live-Pages-181717?logo=githubpages&logoColor=white)](https://xinyuzjj.github.io/bazz.agent/)
 [![中文](https://img.shields.io/badge/README-中文-f0b90b)](./README.zh-CN.md)
 
@@ -142,12 +142,12 @@ The top bar toggles **dark/light theme** and **Chinese/English** in one click �
 
 | Artifact | How to run |
 |------|--------|
-| 🎒 [portable.zip](https://github.com/xinyuzjj/bazz.agent/releases/latest/download/BAZZ.AGENT-v1.2.18-win32-x64-portable.zip) | Unzip anywhere → double-click `BAZZ.AGENT.exe` |
-| 📦 [setup.exe](https://github.com/xinyuzjj/bazz.agent/releases/latest/download/BAZZ.AGENT-v1.2.18-setup.exe) | Installs to `%LOCALAPPDATA%` with Start Menu / desktop shortcuts / uninstaller |
+| 🎒 [portable.zip](https://github.com/xinyuzjj/bazz.agent/releases/latest) | Unzip anywhere → double-click `BAZZ.AGENT.exe` |
+| 📦 [setup.exe](https://github.com/xinyuzjj/bazz.agent/releases/latest) | Installs to `%LOCALAPPDATA%` with Start Menu / desktop shortcuts / uninstaller |
 
 - **No Python, no Node, no install** — Electron + PyInstaller fused into one app.
 - First launch warms the backend for ~3–5 s, then the hatch opens.
-- Data lives outside the app at `%APPDATA%\BAZZ.AGENT\workspace` — move the whole portable folder and your data comes with it.
+- Data lives in `<install dir>\workspace` (auto-falls back to `%APPDATA%\BAZZ.AGENT\workspace` if the install drive is read-only) — move the whole portable folder and your data comes with it.
 - Frameless window: drag by the top bar; `─ / □ / ✕` on the top-right.
 
 > For Windows 10/11 x64. macOS / Linux: run from source.

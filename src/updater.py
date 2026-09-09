@@ -56,7 +56,12 @@ DL_ATTEMPTS = 3                           # 下载重试次数（网络抖动/�
 # —— 下载进度（模块级共享，前端轮询） —— #
 _dl_lock = threading.Lock()
 _dl_state = {"active": False, "total": 0, "done": 0, "path": "", "error": "", "ready": False,
-             "started_at": 0, "stage": "idle"}
+             "started_at": 0, "stage": "idle", "ver": ""}  # ver=ready 包所属版本（跨版本复位用）
+
+
+def _tag_from_url(url: str) -> str:
+    m = re.search(r"v\d+\.\d+\.\d+", url or "")
+    return m.group(0) if m else ""
 
 
 class _DiffFallback(Exception):
@@ -106,17 +111,9 @@ def _local_version() -> str:
 
 
 def app_root() -> str:
-    """便携版应用目录（含 BAZZ.AGENT.exe 与 resources/ 的目录，即替换目标）。dev 返回 APP_DIR。"""
-    cand = workspace.APP_DIR
-    for _ in range(5):
-        if (os.path.isfile(os.path.join(cand, EXE_NAME))
-                or os.path.isdir(os.path.join(cand, "resources"))):
-            return cand
-        parent = os.path.dirname(cand)
-        if parent == cand:
-            break
-        cand = parent
-    return workspace.APP_DIR
+    """便携版应用目录（含 BAZZ.AGENT.exe 与 resources/ 的目录，即替换目标）。dev 返回 APP_DIR。
+    v1.3.6：实现合并进 workspace.app_root()（此前三处重复，防改漏），这里只做语义别名。"""
+    return workspace.app_root()
 
 
 def is_packaged() -> bool:
@@ -238,6 +235,30 @@ def _pick_delta_asset(rel: dict) -> str:
     return ""
 
 
+# —— 防 drive-by：更新资产只信任本仓库的 GitHub 官方发布链 ——
+# 之前 /api/update/download 收任意 url、/api/update/apply 收任意 zip 路径，
+# 配合宽松 CORS，恶意网页可诱导下载攻击者的 zip 并整目录替换重启（RCE 链）。
+_TRUSTED_CDN_HOSTS = (
+    "https://objects.githubusercontent.com/",
+    "https://release-assets.githubusercontent.com/",
+)
+
+
+def is_trusted_asset_url(url: str) -> bool:
+    """仅放行：本仓库的 github.com/releases/download 直链、本仓库 api.github.com 链接、
+    GitHub release 资产 CDN（签名跳转域）。其余一律拒绝。"""
+    u = (url or "").strip()
+    if not u.startswith("https://"):
+        return False
+    u = u.lower()
+    repo = GITHUB_REPO.lower()
+    if u.startswith("https://github.com/"):
+        return f"/{repo}/releases/download/" in u
+    if u.startswith("https://api.github.com/repos/"):
+        return f"/repos/{repo}/" in u
+    return any(u.startswith(h) for h in _TRUSTED_CDN_HOSTS)
+
+
 def _download_entry(dest: str, url: str):
     """入口线程：先尝试增量差分；无清单/无差分/校验不符则回退整包下载。"""
     rel = {}
@@ -349,7 +370,8 @@ def _diff_worker(rel: dict, dest: str, url: str):
         pass
     with _dl_lock:
         _dl_state.update({"ready": True, "active": False, "error": "",
-                          "done": _dl_state.get("total") or 0, "path": dest, "stage": "ready"})
+                          "done": _dl_state.get("total") or 0, "path": dest, "stage": "ready",
+                          "ver": _tag_from_url(url)})
     _PATCH_BUILT.add(dest)
     print(f"[updater] 增量差分完成（清单 {len(files)} 项）：{dest}")
 
@@ -372,6 +394,12 @@ def check(timeout: float = 12.0) -> dict:
                 with _dl_lock:
                     ready = _dl_state.get("ready")
                     active = _dl_state.get("active")
+                    # v1.3.6：ready 的包属于旧版本时复位 —— 否则应用内停留跨过两个版本时，
+                    # 新版预下载永不触发，「立即更新」拿到的还是旧包。
+                    if ready and _dl_state.get("ver") != tag:
+                        _dl_state.update({"ready": False, "active": False, "path": "",
+                                          "done": 0, "total": 0, "ver": ""})
+                        ready = False
                 target = os.path.join(update_cache_dir(),
                                       os.path.basename(asset["browser_download_url"]).split("?", 1)[0])
                 if not ready and not active and not os.path.isfile(target):
@@ -552,6 +580,7 @@ def _download_worker(url: str, dest: str):
                 _dl_state["ready"] = True
                 _dl_state["active"] = False
                 _dl_state["error"] = ""
+                _dl_state["ver"] = _tag_from_url(url)
             return
         except Exception as e:
             last_err = str(e)
@@ -575,12 +604,15 @@ def start_download(url: str) -> dict:
     name = url.rsplit("/", 1)[-1].split("?", 1)[0] or "bazz-agent.zip"
     dest = os.path.join(update_cache_dir(), name)
     with _dl_lock:
-        if _dl_state["ready"]:
+        # v1.3.6：ready 的包若属于别的版本（旧 tag），不复用 —— 视同未就绪重新下载，
+        # 防止「立即更新」安装到跨版本前遗留的旧包。
+        if _dl_state["ready"] and _dl_state.get("ver") == _tag_from_url(url):
             return {"started": True, "ready": True, "path": _dl_state["path"] or dest}
         if _dl_state["active"]:
             return {"started": True, "path": _dl_state["path"] or dest}
         _dl_state.update({"active": True, "ready": False, "error": "", "done": 0,
-                          "total": 0, "path": dest, "started_at": time.time(), "stage": "delta"})
+                          "total": 0, "path": dest, "started_at": time.time(), "stage": "delta",
+                          "ver": _tag_from_url(url)})
     threading.Thread(target=_download_entry, args=(dest, url), daemon=True).start()
     return {"started": True, "path": dest}
 
@@ -612,8 +644,9 @@ def _write_updater_script(zip_path: str, wait_pid: int, backend_pid: int) -> str
     new_root = os.path.join(parent, FOLDER_NAME)   # 新应用目录（zip 顶层目录名，契约固定）
     new_exe = os.path.join(new_root, EXE_NAME)
     ws = workspace.WORKSPACE
-    # workspace 是否仍在应用目录内（旧设计）。自 v1.2.17 起 Electron 已把 workspace 外置到
-    # %APPDATA%\BAZZ.AGENT —— 更新变成「纯程序替换」，绝不挪动用户数据，故不再需要备份/还原。
+    # workspace 是否在应用目录内。v1.3.3 起工作区默认就在安装根下（<root>/workspace），
+    # 即 ws_inside_root 是常态 —— 更新走「备份 WORKSPACE → 整目录替换 → 还原」，用户数据绝不随旧目录被删。
+    # 若用户自定义外置（%APPDATA% 等），则纯程序替换，备份/还原自然跳过。
     ws_inside_root = _path_inside(ws, root)
     if ws_inside_root:
         ws_bak = os.path.join(parent, ".bazz-ws-backup")
@@ -722,9 +755,9 @@ if ($wsMoved -and (Test-Path -LiteralPath $wsBak)) {{
     L ('workspace restored -> ' + $newWs)
   }} catch {{ L ('ERR ws-restore (backup kept at ' + $wsBak + '): ' + $_.Exception.Message) }}
 }}
-# 7) 清理更新包（zip 随 workspace 备份/还原换过位置：按新位置递归清，原路径兜底再删一次）
+# 7) 清理更新包（v1.3.6：update-cache 在安装根 $newRoot 下而非 workspace 内；zip 已在 $zipBak）
 try {{
-  $uc = Join-Path $newWs 'update-cache'
+  $uc = Join-Path $newRoot 'update-cache'
   if (Test-Path -LiteralPath $uc) {{
     Get-ChildItem -Path $uc -Filter *.zip -Recurse -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
   }}
@@ -763,6 +796,11 @@ def apply(zip_path: str, wait_pid: int = 0) -> dict:
     if not is_packaged():
         return {"ok": False,
                 "error": "自动更新仅适用于桌面便携版（打包态）。开发模式请手动拉取最新代码/重新发布。",
+                "log": _log_path()}
+    # v1.3.6 防线：zip 只能来自本机 update-cache（此前 apply 收任意路径，配合宽松 CORS
+    # 可被诱导替换任意目录 —— 路由层已加校验，这里双保险）
+    if not _path_inside(os.path.abspath(zip_path), update_cache_dir()):
+        return {"ok": False, "error": "更新包路径不受信任（仅允许 update-cache 内的包）。",
                 "log": _log_path()}
     if not zip_path or not os.path.exists(zip_path):
         return {"ok": False, "error": "更新包不存在，请先完成下载。", "log": _log_path()}

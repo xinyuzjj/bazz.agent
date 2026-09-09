@@ -46,14 +46,40 @@ DIST = os.path.join(APP_DIR, "frontend", "dist", "index.html")
 
 app = FastAPI(title="BAZZ Agent")
 
-# 允许 Electron / Vite dev / 本地跨域访问
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# v1.3.6：本机鉴权 —— Electron 拉起后端时注入 BAZZ_AUTH_TOKEN（每次启动随机生成），
+# 打包态下所有 /api/* 必须携带 X-BAZZ-Token 头，否则 401。
+# 页面与静态资源不校验（无敏感数据，Electron loadURL 也带不了自定义头）。
+# dev 直接跑 desktop_app.py（无该环境变量）→ 不启用，行为与旧版完全一致。
+AUTH_TOKEN = os.environ.get("BAZZ_AUTH_TOKEN", "").strip()
+
+if AUTH_TOKEN:
+    @app.middleware("http")
+    async def _local_auth(request: Request, call_next):
+        # OPTIONS 放行：CORS 预检请求不带自定义头，交给下层 CORSMiddleware 应答
+        if request.method != "OPTIONS" and request.url.path.startswith("/api/"):
+            if request.headers.get("X-BAZZ-Token", "") != AUTH_TOKEN:
+                return JSONResponse({"error": "unauthorized"}, status_code=401)
+        return await call_next(request)
+
+# CORS：打包态（启用 token）只放行本机来源 —— 恶意网页即使拿到 401 也读不到响应体；
+# dev 态维持全放行（Vite 5173 代理 + 本地调试）。
+if AUTH_TOKEN:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"^https?://(127\.0\.0\.1|localhost)(:\d+)?$",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    # 允许 Electron / Vite dev / 本地跨域访问
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 # 启动定时调度守护线程
 scheduler.start()
@@ -91,8 +117,9 @@ def api_market():
         # 全市场口径：信号扫成交额前 150；全量快照给前端浏览/搜索/排序
         sigs = scan_universe(min_change_pct=0.5, universe_size=150, max_signals=16)
         movers = market_movers(top=5)
+        # v1.3.6：快照只拉一次（此前同一接口内连拉两次，30s 轮询下 Binance 请求量/延迟翻倍）
         all_rows = get_snapshot(quote="USDT", limit=400)
-        total = len(get_snapshot(quote="USDT"))
+        total = len(all_rows)
     except Exception as e:
         return {"signals": [], "movers": {"gainers": [], "losers": []},
                 "all": [], "total": 0, "quote": "USDT", "error": str(e)}
@@ -135,10 +162,13 @@ def api_market_futures():
     """
     from scanner import futures_snapshot, equity_board
     try:
-        return {"futures": futures_snapshot(),
-                "equity": equity_board(),
-                "total_futures": len(futures_snapshot()),
-                "total_equity": len(equity_board()),
+        # v1.3.6：各拉一次复用（此前 futures/equity 各连调两次，响应时间翻倍）
+        fut = futures_snapshot()
+        eq = equity_board()
+        return {"futures": fut,
+                "equity": eq,
+                "total_futures": len(fut),
+                "total_equity": len(eq),
                 "quote": "USDT", "market": "perpetual",
                 "updated_at": int(time.time())}
     except Exception as e:
@@ -198,8 +228,15 @@ async def chat_stream(req: Request):
         room_conv = state.get_conversation(conv_id)
         if room_conv and room_conv.get("kind") == "room":
             def room_gen():
-                for ev in room.run_room(conv_id, message):
-                    yield json.dumps(ev, ensure_ascii=False) + "\n"
+                # v1.3.6：房间引擎异常不再让流静默断死，推 error 事件给前端
+                try:
+                    for ev in room.run_room(conv_id, message):
+                        yield json.dumps(ev, ensure_ascii=False) + "\n"
+                except GeneratorExit:
+                    raise
+                except Exception as e:
+                    yield json.dumps({"type": "error", "detail": str(e)[:300]},
+                                     ensure_ascii=False) + "\n"
             return StreamingResponse(room_gen(), media_type="application/x-ndjson")
 
     llm_cfg = None
@@ -250,6 +287,7 @@ async def chat_stream(req: Request):
     def gen():
         final = {}
         reasoning_acc = []
+        text_acc = []  # v1.3.6：累积正文增量 —— 流中断时仍能落库已生成的部分回复
         model_used = ""
         first_meta_injected = False
         # 记住上下文：取本会话此前消息（排除刚落库的当前 user 消息），传给 agent 注入历史
@@ -267,35 +305,64 @@ async def chat_stream(req: Request):
                     history = hist
             except Exception:
                 history = None
-        for ev in agent_core.run_stream(message, confirm=confirm, signal=signal, approval=approval,
-                                        persona=persona, llm_cfg=llm_cfg, images=images,
-                                        auto_exec=auto_exec, history=history, locale=locale):
-            # 把 conversation_id 注入首事件与 done 事件，前端能持续复用同一会话
-            if (not first_meta_injected) or ev.get("type") == "done":
-                ev = {**ev, "conversation_id": conv_id}
-                first_meta_injected = True
-            yield json.dumps(ev, ensure_ascii=False) + "\n"
-            if ev.get("model"):
-                model_used = ev["model"]
-            if ev["type"] == "reasoning":
-                reasoning_acc.append(ev.get("text") or "")
-            if ev["type"] == "done":
-                final = ev
-        reply = final.get("reply", "")
-        tools = final.get("tools", [])
-        # 落库：正文 + 思考链(reasoning) + 实际命中的 model
-        state.add_message(conv_id, "assistant", reply, tools=tools,
-                          reasoning="\n".join(reasoning_acc)[:6000],
-                          model=model_used or final.get("model") or "",
-                          data={"intent": final.get("intent"),
-                                "needs_approval": final.get("needs_approval", False)})
-        if not state.get_conversation(conv_id)["title"] or state.get_conversation(conv_id)["title"] == "新对话":
-            state.touch_conversation(conv_id, title=message[:28])
-        # 自动生成记忆：对话结束后沉淀用户偏好/习惯（静默，失败不影响主流程）
+
+        def _persist():
+            """落库：正文 + 思考链 + 实际命中的 model（只在有内容时写，避免空泡）。"""
+            reply = final.get("reply") or "".join(text_acc)
+            if not str(reply).strip():
+                return
+            try:
+                state.add_message(conv_id, "assistant", reply, tools=final.get("tools", []),
+                                  reasoning="\n".join(reasoning_acc)[:6000],
+                                  model=model_used or final.get("model") or "",
+                                  data={"intent": final.get("intent"),
+                                        "needs_approval": final.get("needs_approval", False)})
+            except Exception:
+                pass
+            # 会话标题兜底（只查一次；会话可能已被用户在流中删除）
+            try:
+                conv_now = state.get_conversation(conv_id) or {}
+                t = conv_now.get("title") or ""
+                if not t or t == "新对话":
+                    state.touch_conversation(conv_id, title=message[:28])
+            except Exception:
+                pass
+            # 自动生成记忆：对话结束后沉淀用户偏好/习惯（静默，失败不影响主流程）
+            try:
+                agent_core.auto_memorize(message, reply, llm_cfg=llm_cfg)
+            except Exception:
+                pass
+
         try:
-            agent_core.auto_memorize(message, reply, llm_cfg=llm_cfg)
-        except Exception:
-            pass
+            for ev in agent_core.run_stream(message, confirm=confirm, signal=signal, approval=approval,
+                                            persona=persona, llm_cfg=llm_cfg, images=images,
+                                            auto_exec=auto_exec, history=history, locale=locale):
+                # 把 conversation_id 注入首事件与 done 事件，前端能持续复用同一会话
+                if (not first_meta_injected) or ev.get("type") == "done":
+                    ev = {**ev, "conversation_id": conv_id}
+                    first_meta_injected = True
+                yield json.dumps(ev, ensure_ascii=False) + "\n"
+                if ev.get("model"):
+                    model_used = ev["model"]
+                if ev.get("type") in ("text", "delta"):
+                    text_acc.append(ev.get("delta") or "")
+                if ev.get("type") == "reasoning":
+                    reasoning_acc.append(ev.get("text") or "")
+                if ev.get("type") == "done":
+                    final = ev
+        except GeneratorExit:
+            # 客户端中途断开（关窗/切会话）：不可再 yield，把已生成内容落库后原样上抛
+            _persist()
+            raise
+        except Exception as e:
+            # v1.3.6：流中异常不再静默断死 —— 推 error 事件（前端 ChatView 已有对应渲染）
+            detail = (str(e) or e.__class__.__name__)[:300]
+            try:
+                yield json.dumps({"type": "error", "detail": detail, "conversation_id": conv_id},
+                                 ensure_ascii=False) + "\n"
+            except GeneratorExit:
+                pass
+            _persist()
 
     return StreamingResponse(gen(), media_type="application/x-ndjson")
 
@@ -766,7 +833,8 @@ def memory_stats():
         cats[head] = cats.get(head, 0) + 1
     top = sorted(rows, key=lambda r: r.get("updated_at", 0), reverse=True)[:10]
     last = rows[0].get("updated_at") if rows else 0
-    # 真实数据库路径（src/state.py: DB_PATH = <project>/.scout.db 的 os.path.abspath）
+    # 真实数据库路径（v1.3.3+ 统一在 workspace：src/state.py 的 DB_PATH = workspace/state.db；
+    # state.py 启用 WAL 后同目录还有 state.db-wal/-shm 辅助文件，不计入大小展示）
     db_path = ""
     db_size = 0
     try:
@@ -775,14 +843,6 @@ def memory_stats():
         if os.path.isfile(cand):
             db_path = cand
             db_size = os.path.getsize(cand)
-        else:
-            # 兜底：项目根目录下找 .scout.db
-            proj = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            for p in [os.path.join(proj, ".scout.db"), os.path.join(os.path.dirname(proj), ".scout.db")]:
-                if os.path.isfile(p):
-                    db_path = p
-                    db_size = os.path.getsize(p)
-                    break
     except Exception:
         pass
     return {
@@ -1261,6 +1321,10 @@ async def update_download(req: Request):
         url = (rel.get("asset") or {}).get("url", "")
         if not url:
             return {"ok": False, "error": rel.get("error") or "未找到可下载的发布资产。"}
+    # v1.3.6：URL 白名单真正启用（此前 is_trusted_asset_url 定义了但从未被调用）——
+    # 仅允许本仓库 GitHub Releases 直链 / 官方 API / 签名 CDN，防恶意网页诱导下载任意 zip。
+    if not updater.is_trusted_asset_url(url):
+        return {"ok": False, "error": "不受信任的更新源，已拒绝下载。"}
     return updater.start_download(url)
 
 
@@ -1278,6 +1342,9 @@ async def update_apply(req: Request):
     zip_path = b.get("zip") or st.get("path") or ""
     if not zip_path or not os.path.exists(zip_path):
         return {"ok": False, "error": "更新包不存在，请先完成下载。"}
+    # v1.3.6：zip 必须位于本机 update-cache 目录内（apply 收任意路径 = 替换任意目录的隐患）
+    if not updater._path_inside(os.path.abspath(zip_path), updater.update_cache_dir()):
+        return {"ok": False, "error": "更新包路径不受信任（仅允许 update-cache 内的包），已中止。"}
     return updater.apply(zip_path, wait_pid)
 
 

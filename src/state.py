@@ -10,21 +10,42 @@ Hermes 风格：
 import os
 import json
 import sqlite3
+import threading
 import uuid
 import time
 
 from workspace import DB_PATH  # 统一落盘到 workspace（见 src/workspace.py）
+
+# v1.3.6 并发保护：FastAPI 线程池 + scheduler + 钱包预热线程共用这一条连接，
+# 不串行化时多线程写入会交错（execute…execute…commit 互相穿插）导致事务混乱。
+_db_lock = threading.RLock()  # 可重入：同线程嵌套调用（ensure_group_member_session → new_conversation）安全
 
 _conn = None
 
 
 def _conn_get():
     global _conn
-    if _conn is None:
-        _conn = sqlite3.connect(os.path.abspath(DB_PATH), check_same_thread=False)
-        _conn.row_factory = sqlite3.Row
-        _init()
-    return _conn
+    with _db_lock:
+        if _conn is None:
+            c = sqlite3.connect(os.path.abspath(DB_PATH), check_same_thread=False)
+            c.row_factory = sqlite3.Row
+            # WAL：读写互不阻塞；busy_timeout：遇锁等待 5s 而非立即报 database is locked
+            c.execute("PRAGMA journal_mode=WAL")
+            c.execute("PRAGMA busy_timeout=5000")
+            c.execute("PRAGMA synchronous=NORMAL")
+            _conn = c
+            _init()
+        return _conn
+
+
+def _serialized(fn):
+    """装饰器：写函数全程持锁，防止并发写交错。（仅内存锁，WAL 兜底跨进程场景）"""
+    def wrapper(*args, **kwargs):
+        with _db_lock:
+            return fn(*args, **kwargs)
+    wrapper.__name__ = fn.__name__
+    wrapper.__doc__ = fn.__doc__
+    return wrapper
 
 
 def _init():
@@ -111,6 +132,7 @@ def _uid():
 
 # ---------------- 会话 ----------------
 
+@_serialized
 def new_conversation(title="新对话", persona="", provider_snapshot=None, kind="dm", members=None):
     cid = _uid()
     now = time.time()
@@ -194,6 +216,7 @@ def room_exists(name):
     return r["id"] if r else None
 
 
+@_serialized
 def update_room_members(rid, members):
     _conn_get().execute("UPDATE conversations SET members_json=? WHERE id=?",
                         (json.dumps(members, ensure_ascii=False), rid))
@@ -227,6 +250,7 @@ def last_persona_conv(persona: str, kind=None):
     return r["id"] if r else None
 
 
+@_serialized
 def set_conversation_provider_snapshot(cid, snap):
     """只在未固定快照时写入一次（首次消息即固定 provider/model，防漂移）。"""
     if not snap:
@@ -237,6 +261,7 @@ def set_conversation_provider_snapshot(cid, snap):
     _conn_get().commit()
 
 
+@_serialized
 def set_conversation_persona(cid, persona):
     if not persona:
         return
@@ -245,6 +270,7 @@ def set_conversation_persona(cid, persona):
     _conn_get().commit()
 
 
+@_serialized
 def touch_conversation(cid, title=None):
     now = time.time()
     if title:
@@ -254,6 +280,7 @@ def touch_conversation(cid, title=None):
     _conn_get().commit()
 
 
+@_serialized
 def delete_conversation(cid):
     c = _conn_get()
     c.execute("DELETE FROM messages WHERE conv_id=?", (cid,))
@@ -261,12 +288,14 @@ def delete_conversation(cid):
     c.commit()
 
 
+@_serialized
 def set_conversation_archived(cid, archived: bool):
     c = _conn_get()
     c.execute("UPDATE conversations SET archived=? WHERE id=?", (1 if archived else 0, cid))
     c.commit()
 
 
+@_serialized
 def add_message(conv_id, role, content, tools=None, data=None, reasoning="", model=""):
     mid = _uid()
     _conn_get().execute(
@@ -296,6 +325,7 @@ def get_messages(cid):
 
 # ---------------- Regenerate / Edit（回滚一段，供前端“重新生成/编辑重发”） ----------------
 
+@_serialized
 def rollback_last_turn(cid, new_user_text=None, upto_user_index=None):
     """回滚会话到某条用户消息为止（含）：删除其后全部消息，可选改写该条用户消息文本
     （编辑重发）。upto_user_index 为空 = 回滚到最后一条 user 及其尾随 assistant。
@@ -330,6 +360,7 @@ def rollback_last_turn(cid, new_user_text=None, upto_user_index=None):
 
 # ---------------- 设置（本地持久化，仅本机） ----------------
 
+@_serialized
 def set_setting(key, value):
     _conn_get().execute(
         "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -414,6 +445,7 @@ def last_persona_conv(persona: str):
 # ---------------- 长期记忆（跨会话） ----------------
 
 
+@_serialized
 def set_memory(key, value):
     _conn_get().execute(
         "INSERT INTO memory(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
@@ -431,6 +463,7 @@ def list_memory():
     return [{"key": r["key"], "value": r["value"], "updated_at": r["updated_at"]} for r in rows]
 
 
+@_serialized
 def delete_memory(key):
     _conn_get().execute("DELETE FROM memory WHERE key=?", (key,))
     _conn_get().commit()

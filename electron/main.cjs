@@ -1,11 +1,14 @@
 // Electron 桌面壳（Hermes 同款）——BAZZ.AGENT
 // 两种运行形态：
 //   开发/仓库内  : electron .  → 拉起 .venv python desktop_app.py，加载后端托管页面
-//   打包分发 exe : app.isPackaged → 拉起内嵌 ScoutBackend.exe（resources/scout-bundle），加载 http://127.0.0.1:8080
+//   打包分发 exe : app.isPackaged → 拉起内嵌 ScoutBackend.exe（resources/scout-bundle），
+//                  加载后端托管页面（默认 8080，被占自动换端口）；/api/* 走本机随机 token 鉴权
 const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
+const net = require("net");
+const crypto = require("crypto");
 const { spawn } = require("child_process");
 
 const PACKAGED = app.isPackaged;
@@ -13,9 +16,16 @@ const ROOT = path.join(__dirname, "..");            // dev=项目根；packaged=
 const FRONTEND = path.join(ROOT, "frontend");
 const DIST = path.join(FRONTEND, "dist", "index.html");
 const APP_TITLE = "BAZZ.AGENT";
-const PORT = process.env.BAZZ_PORT || 8080;
-const PROD_URL = `http://127.0.0.1:${PORT}`;
 const DEV_URL = "http://127.0.0.1:5173";
+
+// v1.3.6：每次启动生成随机本机 token。注入后端环境（BAZZ_AUTH_TOKEN）与渲染层（preload），
+// 打包态下后端 /api/* 只接受带此 token 的请求 —— 浏览器里的任意网页无法再盲打本机接口。
+const AUTH_TOKEN = crypto.randomBytes(24).toString("hex");
+
+// v1.3.6：端口动态化。后端就绪前不确定（8080 被其它程序占用时向后探测），
+// 统一从这里取「当前后端端口」构造 URL。
+let BACKEND_PORT = parseInt(process.env.BAZZ_PORT || "8080", 10) || 8080;
+const prodUrl = () => `http://127.0.0.1:${BACKEND_PORT}`;
 
 // 图标：开发态用仓库 assets/；打包态用 extraResource 落盘的 resources/assets/（真实文件，不经过 asar）
 const DEV_ICON_ICO = path.join(ROOT, "assets", "icon.ico");
@@ -34,6 +44,48 @@ const SPLASH_SWAP_MS = 280;           // 动画窗淡出时长
 let splashStartAt = 0;
 const SPLASH_MIN_MS = 5200;           // 至少播完 splash 主时序（约 4.8s）+ 短暂留白
 const SPLASH_FAILSAFE_MS = 60 * 1000; // 兜底：后端异常迟迟不就绪时也不让动画窗永远挂着
+
+// —— v1.3.6 后端守护 —— //
+// 1) 后端 stdout/stderr 落 logs/backend-electron.log（此前 stdio:"ignore" 全丢，出问题无从排查）；
+// 2) 异常退出自动重启（2s 退避），连续 5 次放弃，防崩溃循环；稳定运行 60s 后计数清零。
+let backendRestarts = 0;
+let backendLastStartAt = 0;
+let quitting = false;
+app.on("before-quit", () => { quitting = true; });
+process.on("exit", () => { if (backendProc) try { backendProc.kill(); } catch {} });
+
+function openBackendLog(appRootDir) {
+  try {
+    const dir = path.join(appRootDir, "logs");
+    fs.mkdirSync(dir, { recursive: true });
+    const logPath = path.join(dir, "backend-electron.log");
+    try {
+      const st = fs.statSync(logPath);
+      if (st.size > 5 * 1024 * 1024) fs.truncateSync(logPath, 0);  // 超 5MB 直接重置（够用）
+    } catch {}
+    return fs.openSync(logPath, "a");
+  } catch { return "ignore"; }
+}
+
+function spawnBackend(cmd, args, cwd, env, logFd) {
+  backendLastStartAt = Date.now();
+  backendProc = spawn(cmd, args, { cwd, env, stdio: ["ignore", logFd, logFd], windowsHide: true });
+  backendProc.on("error", (e) => console.error("[backend] 启动失败:", e.message));
+  backendProc.on("exit", (code) => {
+    backendProc = null;
+    if (quitting) return;                                             // 正常退出/更新关闭，不重启
+    if (Date.now() - backendLastStartAt > 60000) backendRestarts = 0; // 跑稳过则重置计数
+    if (backendRestarts >= 5) { console.error("[backend] 连续崩溃 5 次，放弃自动重启"); return; }
+    backendRestarts++;
+    console.warn(`[backend] 异常退出(code=${code})，2s 后自动重启 (${backendRestarts}/5)`);
+    setTimeout(() => {
+      if (!quitting) {
+        try { spawnBackend(cmd, args, cwd, env, logFd); }
+        catch (e) { console.error("[backend] 重启失败:", e.message); }
+      }
+    }, 2000);
+  });
+}
 
 // 来自 renderer preload 的窗口控制 IPC（frameless 模式下需要）
 ipcMain.on("bazz:win-min", () => { if (mainWin && !mainWin.isDestroyed()) mainWin.minimize(); });
@@ -55,17 +107,44 @@ ipcMain.on("bazz:open-url", (_e, url) => {
 // 仍可能被探针/旧逻辑调用，保留以免主进程抛 ipcMain.handle('invoke') 找不到
 ipcMain.handle("bazz:app-pid", () => process.pid);
 
-// 若 8080 已被占用（同会话重复双击启动、或用户手滑开了两个），直接复用，不拉第二个后端。
-function portBusy() {
+// 8080（或探测端口）上是否已有「本应用」后端在跑：/api/status 返回 200 且含 persona 字段才认。
+// v1.3.6 修复：此前只要端口有任何响应就复用 —— 其它程序占着 8080 时不拉后端、
+// 窗口还去加载别人家页面/白屏。现在：是 BAZZ → 复用；被其它程序占 → 向后探测空闲端口。
+function bazzOnPort(port) {
   return new Promise((resolve) => {
-    const req = http.get(PROD_URL, (r) => { r.resume(); resolve(true); });
+    const req = http.get(`http://127.0.0.1:${port}/api/status`, (r) => {
+      let body = "";
+      r.on("data", (c) => { if (body.length < 4096) body += c; });
+      r.on("end", () => resolve(r.statusCode === 200 && body.includes("persona")));
+    });
     req.on("error", () => resolve(false));
     req.setTimeout(800, () => { req.destroy(); resolve(false); });
   });
 }
 
+function portFree(p) {
+  return new Promise((resolve) => {
+    const s = net.createServer();
+    s.once("error", () => { try { s.close(); } catch {} resolve(false); });
+    s.listen(p, "127.0.0.1", () => { s.close(() => resolve(true)); });
+  });
+}
+
+async function findFreePort(start) {
+  for (let p = start; p < start + 16; p++) {
+    if (await portFree(p)) return p;
+  }
+  return start; // 全被占则原样返回，后端 run_serve 自己报错退出
+}
+
 async function startBackend() {
-  if (await portBusy()) return;                     // 已有后端在跑
+  let port = parseInt(process.env.BAZZ_PORT || "8080", 10) || 8080;
+  if (await bazzOnPort(port)) {                     // 已有 BAZZ 后端在跑（双开复用）
+    BACKEND_PORT = port;
+    return port;
+  }
+  if (!(await portFree(port))) port = await findFreePort(port + 1);
+  BACKEND_PORT = port;
   let cmd, args, cwd, env;
   if (PACKAGED) {
     const exeDir = path.join(process.resourcesPath, "scout-bundle", "ScoutBackend");
@@ -87,7 +166,8 @@ async function startBackend() {
       wsDir = path.join(app.getPath("appData"), "BAZZ.AGENT", "workspace");
       try { fs.mkdirSync(wsDir, { recursive: true }); } catch {}
     }
-    env = { ...process.env, BAZZ_APP_DIR: exeDir, BAZZ_WORKSPACE: wsDir };
+    env = { ...process.env, BAZZ_APP_DIR: exeDir, BAZZ_WORKSPACE: wsDir,
+            BAZZ_PORT: String(port), BAZZ_AUTH_TOKEN: AUTH_TOKEN };
   } else {
     const venv = process.platform === "win32"
       ? path.join(ROOT, ".venv", "Scripts", "python.exe")
@@ -95,19 +175,20 @@ async function startBackend() {
     cmd = fs.existsSync(venv) ? venv : "python3";
     args = [path.join(ROOT, "desktop_app.py")];
     cwd = ROOT;
-    env = { ...process.env };                       // dev 态 workspace 留在仓库内
+    env = { ...process.env, BAZZ_PORT: String(port), BAZZ_AUTH_TOKEN: AUTH_TOKEN };
+    // dev 态 workspace 留在仓库内
   }
+  const logFd = openBackendLog(PACKAGED ? path.dirname(process.resourcesPath) : ROOT);
   try {
-    backendProc = spawn(cmd, args, { cwd, env, stdio: "ignore", windowsHide: true });
-    backendProc.on("error", (e) => console.error("[backend] 启动失败:", e.message));
+    spawnBackend(cmd, args, cwd, env, logFd);
   } catch (e) {
     console.error("[backend] spawn 异常:", e.message);
   }
-  process.on("exit", () => { if (backendProc) try { backendProc.kill(); } catch {} });
+  return port;
 }
 
-function waitServer(cb, tries = 100) {
-  http.get(PROD_URL, (r) => { r.resume(); cb(); })
+function waitServer(cb, tries = 120) {
+  http.get(prodUrl(), (r) => { r.resume(); cb(); })
     .on("error", () => { if (tries > 0) setTimeout(() => waitServer(cb, tries - 1), 500); });
 }
 
@@ -173,8 +254,9 @@ function createWindow() {
     autoHideMenuBar: true, icon,
     webPreferences: {
       contextIsolation: true, nodeIntegration: false, spellcheck: false,
-      // 暴露窗口控制 IPC（最小特权）
+      // 暴露窗口控制 IPC + 本机鉴权 token（最小特权）
       preload: path.join(__dirname, "preload.cjs"),
+      additionalArguments: ["--bazz-auth=" + AUTH_TOKEN],
     },
   });
   mainWin.setMenuBarVisibility(false);
@@ -188,17 +270,17 @@ function createWindow() {
   waitServer(() => {
     // 生产：后端托管构建产物（同域）；开发：dist 存在则走后端同域，否则走 Vite dev server
     if (PACKAGED) {
-      mainWin.loadURL(PROD_URL);
+      mainWin.loadURL(prodUrl());
     } else {
-      mainWin.loadURL(fs.existsSync(DIST) ? PROD_URL : DEV_URL);
+      mainWin.loadURL(fs.existsSync(DIST) ? prodUrl() : DEV_URL);
     }
   });
   return mainWin;
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   createSplash();                       // 先上启动动画，盖住后端拉起期间的黑屏
-  startBackend();
+  await startBackend();                 // v1.3.6：先定端口再开窗（8080 被其它程序占时自动换端口）
   createWindow();
   // 兜底：后端/页面异常迟迟不就绪时，动画窗不永久悬挂
   setTimeout(() => {
