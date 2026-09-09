@@ -89,7 +89,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $headers = @{ "User-Agent" = "BAZZ.AGENT" }
+          # 带 GITHUB_TOKEN 认证：匿名 API 限额 60/h，runner 出口 IP 共享极易耗尽（v1.4.0 构建曾因此失败）
+          $headers = @{ "User-Agent" = "BAZZ.AGENT"; "Authorization" = "Bearer $env:GITHUB_TOKEN" }
           $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest" -Headers $headers
           $asset = $rel.assets | Where-Object { $_.name -match "^mihomo-windows-amd64-v[\d.]+\.zip$" } | Select-Object -First 1
           if (-not $asset) { throw "mihomo 最新 Release 未找到 windows-amd64 资产" }
