@@ -646,22 +646,27 @@ TOOLS: List[Dict[str, Any]] = [
         "function": {
             "name": "schedule_task",
             "description": ("管理后台定时任务（cron / interval）。任务会被桌面后端守护线程到点自动执行——**不需要 Agent 开着**。"
-                            "action：list 列出全部任务；create 新建（必填 name + time，task 默认 daily_scan_report，可选 meme_scan_report）；"
+                            "action：list 列出全部任务；create 新建（必填 name + time）；update 修改已有任务（job_id + 要改的字段 name/time/task/prompt）；"
                             "delete / toggle / run 用 job_id（toggle 可传 enabled）。\n"
+                            "task 三种：daily_scan_report=全市场 Top 行情扫描；meme_scan_report=妖币雷达；"
+                            "**custom_prompt=自定义任务（必填 prompt=到点要执行的完整指令，Agent 会带着全部工具无头真实执行）**。\n"
                             "time 支持：`09:00` / `9 点` / `0 9 * * *`（5 字段 cron）/ `interval:30m` 或 `interval:1h`。\n"
-                            "用户说『帮我做一个定时任务』『每天早上 9 点分析妖币』『每隔 30 分钟扫一次』『加个日报』『每天 9 点检查 BTC』"
-                            "『加个定时提醒』时必须调本工具——不要给一句手动话术，也不要用 mcp_call 写系统级 cron。"
-                            "任务被触发后报告会自动写入『BAZZ Agent 日报』会话（不需要用户在场）。"),
+                            "用户说『帮我做一个定时任务』『每天早上 9 点分析妖币』『每隔 30 分钟扫一次』『加个日报』"
+                            "或给出任何**自定义的周期性指令**（如『每天 9 点总结 BTC 行情并给出关键位』『每小时检查一次资金费率异常』"
+                            "『每天早上告诉我昨天发生了什么』）时必须调本工具——自定义要求一律 task=custom_prompt 并把用户的完整要求写进 prompt，"
+                            "不要给一句手动话术，也不要用 mcp_call 写系统级 cron。\n"
+                            "任务被触发后：内置类型报告写入『BAZZ Agent 日报』会话；custom_prompt 结果写入专属会话「定时任务 · <name>」（不需要用户在场）。"),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["list", "create", "delete", "toggle", "run"],
-                               "description": "list=列任务；create=新建（必填 name+time）；delete/toggle/run 用 job_id"},
-                    "name": {"type": "string", "description": "任务名（create 时必填）"},
-                    "time": {"type": "string", "description": "时间规格（create 时必填），如 09:00 / 0 9 * * * / interval:30m"},
-                    "task": {"type": "string", "enum": ["daily_scan_report", "meme_scan_report"],
-                             "description": "任务类型：daily_scan_report=全市场 Top 行情扫描；meme_scan_report=妖币雷达（Monster Radar 同源 ignition+takeoff）"},
-                    "job_id": {"type": "string", "description": "已有任务 ID（delete/toggle/run 必填）"},
+                    "action": {"type": "string", "enum": ["list", "create", "update", "delete", "toggle", "run"],
+                               "description": "list=列任务；create=新建（必填 name+time）；update=修改（job_id+字段）；delete/toggle/run 用 job_id"},
+                    "name": {"type": "string", "description": "任务名（create 时必填；update 可选）"},
+                    "time": {"type": "string", "description": "时间规格（create 必填；update 可选），如 09:00 / 0 9 * * * / interval:30m"},
+                    "task": {"type": "string", "enum": ["daily_scan_report", "meme_scan_report", "custom_prompt"],
+                             "description": "daily_scan_report=全市场扫描；meme_scan_report=妖币雷达；custom_prompt=自定义指令任务（配 prompt 使用）"},
+                    "prompt": {"type": "string", "description": "task=custom_prompt 时必填：到点执行的完整指令，写清要做什么、关注什么、输出什么格式"},
+                    "job_id": {"type": "string", "description": "已有任务 ID（update/delete/toggle/run 必填）"},
                     "enabled": {"type": "boolean", "description": "toggle 时是否启用"},
                 },
                 "required": ["action"],
@@ -688,6 +693,40 @@ TOOLS: List[Dict[str, Any]] = [
                     "args": {"type": "string", "description": "传给技能的参数串，如 search '{\"keyword\":\"BNB\"}' 或 meme-rush '{\"chainId\":\"CT_501\"}'"},
                 },
                 "required": ["skill_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "clarify",
+            "description": ("结构化追问：当用户的需求存在**关键分叉**（目标币种/周期/方向/预算/风险偏好不明，"
+                            "不同选择会导向完全不同的操作），而靠猜大概率做错时，把它拆成 1-3 个选择题让用户点选。"
+                            "questions 为数组，每项 {question, choices[], recommended?}：question 一句话；"
+                            "choices 每题最多 4 个选项（字符串或 {label, description}）；recommended=推荐选项的原文。\n"
+                            "**只用于关键决策**——能用合理默认值继续的就不要问（频繁追问很烦）；"
+                            "问题会以选项卡片呈现，用户点选后答案作为下一条消息回流；120 秒未选按 recommended/最佳判断继续。\n"
+                            "反例：用户说『帮我看看 BTC』→ 不要 clarify，直接看；"
+                            "正例：用户说『帮我定个策略』但没说周期和风险承受 → clarify 一次问清。"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "questions": {
+                        "type": "array",
+                        "description": "1-3 个问题，每项 {question, choices[], recommended?}",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "question": {"type": "string", "description": "一句话问题"},
+                                "choices": {"type": "array", "items": {},
+                                            "description": "最多 4 个选项；字符串或 {label, description}"},
+                                "recommended": {"type": "string", "description": "推荐选项（须与某 choice 原文一致）"},
+                            },
+                            "required": ["question"],
+                        },
+                    },
+                },
+                "required": ["questions"],
             },
         },
     },

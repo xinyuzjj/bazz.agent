@@ -12,6 +12,7 @@ type ChatMsg = {
   model?: string;     // 该条回复实际命中的模型（snapshot/model 落库回读）
   tools?: { name: string; args?: any; ok?: boolean; detail?: string }[];
   approval?: { id: string; title: string; label: string; action: string; signal?: any };
+  clarify?: { questions: { q: string; choices: string[]; recommended?: string }[] };  // v1.4.5 结构化追问选择卡
   persona?: string;   // 群聊里该条回复来自哪个 Agent
   pending?: boolean; note?: string; ts: number;
   images?: string[];  // 用户附图 dataURL（仅本地会话气泡展示）
@@ -50,6 +51,10 @@ export function ChatView({
   const [streaming, setStreaming] = useState(false);
   const abortRef = useRef<AbortController | null>(null); // Stop 中断当前生成
   const approvalRef = useRef<any>(null); // 待确认动作（确认后随下一条消息发回后端执行）
+  // v1.4.5 结构化追问（clarify）：120s 超时定时器 + 已答标记（key = `${asstId}:${qIdx}`）
+  const clarifyTimerRef = useRef<number | null>(null);
+  const clarifyAnsweredRef = useRef<Set<string>>(new Set());
+  const [clarifyAnswered, setClarifyAnswered] = useState<Record<string, boolean>>({});
   // 流式文本/思考累积缓冲：text delta 同帧多发会被 React 批处理吞掉，先累积到 ref，requestAnimationFrame 内 setMessages commit，每帧最多 1 次
   const textBufRef = useRef<Map<string, string>>(new Map());
   const reasonBufRef = useRef<Map<string, string>>(new Map());
@@ -688,6 +693,7 @@ export function ChatView({
     let content = isRegen ? (opts?.editText ?? "") : (text ?? input).trim();
     if (streaming || uploading) return;
     if (!isRegen && !content && attachments.length === 0) return;
+    cancelClarifyTimer(); // 用户主动发消息 = 已越过追问（v1.4.5 clarify 超时取消）
     const clearAttachments = () => setAttachments([]);
     const imgUrls: string[] = []; // 用户附图 dataURL → 直接随消息体送给后端（视觉直读/OCR）
     // 真上传附件：文本/二进制逐个 POST /api/upload 取摘录拼进消息；图片不入此流程
@@ -862,6 +868,7 @@ export function ChatView({
         pushLog(`TOOL > ${tool.name}${tool.ok ? " OK" : " …"}`);
       }
       else if (ev.type === "approval") { a.approval = ev.approval; pushLog(`APPROVAL_REQ > ${ev.approval?.title ?? ev.approval?.label ?? "—"}`); }
+      else if (ev.type === "clarify") { a.clarify = ev.clarify; pushLog(`CLARIFY > ${ev.clarify?.questions?.length ?? 0} q`); armClarifyTimer(asstId); }
       else if (ev.type === "done") {
         a.pending = false;
         if (ev.model) a.model = ev.model;
@@ -882,6 +889,11 @@ export function ChatView({
           a.approval = ev.approval;
           pushLog(`APPROVAL_REQ > ${ev.approval?.title ?? ev.approval?.label ?? "—"}`);
         }
+        // v1.4.5 clarify 选择卡：done 附带时兜底挂上并启动超时
+        if (ev.needs_clarify && ev.clarify && !a.clarify) {
+          a.clarify = ev.clarify;
+          armClarifyTimer(asstId);
+        }
         pushLog("DONE > asst closed");
       }
       else if (ev.type === "error") { a.text = (a.text ?? "") + "\n[error] " + (ev.detail ?? ""); a.pending = false; pushLog(`ERROR > ${ev.detail ?? ""}`); }
@@ -889,6 +901,29 @@ export function ChatView({
     });
   }
   function pushLog(line: string) { const ts = new Date().toLocaleTimeString(); setLog((l) => [...l.slice(-120), { ts, line }]); }
+  // v1.4.5 clarify：120s 未点选 → 以「最佳判断继续」自动回流（Hermes TIMEOUT_RESPONSE 语义）
+  const cancelClarifyTimer = () => {
+    if (clarifyTimerRef.current) { window.clearTimeout(clarifyTimerRef.current); clarifyTimerRef.current = null; }
+  };
+  const armClarifyTimer = (asstId: string) => {
+    cancelClarifyTimer();
+    clarifyTimerRef.current = window.setTimeout(() => {
+      clarifyTimerRef.current = null;
+      if (clarifyAnsweredRef.current.size > 0) return; // 已点选过任一选项
+      clarifyAnsweredRef.current.add("__timeout__");
+      pushLog("CLARIFY_TIMEOUT > best judgment");
+      send(t("chat.clarifyTimeoutMsg"));
+    }, 120000);
+  };
+  const answerClarify = (asstId: string, qIdx: number, q: string, label: string) => {
+    const key = `${asstId}:${qIdx}`;
+    if (clarifyAnsweredRef.current.has(key)) return;
+    clarifyAnsweredRef.current.add(key);
+    setClarifyAnswered((s) => ({ ...s, [key]: true }));
+    cancelClarifyTimer(); // 用户已开始作答，取消超时（其余问题仍可点选或直接打字补充）
+    pushLog(`CLARIFY_ANSWER > ${label}`);
+    send(t("chat.clarifyAnswerMsg", { q, a: label }));
+  };
   const approve = async (ap: any, opts?: { whitelist?: boolean }) => {
     if (!ap) return;
     const wl = !!opts?.whitelist;
@@ -1586,6 +1621,32 @@ export function ChatView({
                         {m.approval.action === "local_exec" && (
                           <div className="mt-1.5 font-mono text-[10px] text-ink-dim">{t("chat.trustExplained")}</div>
                         )}
+                      </div>
+                    )}
+                    {m.clarify && (
+                      <div className="mt-3 rounded-md border border-line bg-elevated/40 p-3">
+                        <div className="flex items-center gap-2 mb-1">
+                          <I.Alert size={14} className="text-gold shrink-0" />
+                          <span className="font-mono text-[11px] text-gold">{t("chat.clarifyTitle")}</span>
+                        </div>
+                        {m.clarify.questions.map((qa, qi) => {
+                          const answered = !!clarifyAnswered[`${m.id}:${qi}`];
+                          return (
+                            <div key={qi} className="mt-2">
+                              <div className="text-[12px] text-ink mb-1.5">{qa.q}</div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {qa.choices.map((ch, ci) => (
+                                  <button key={ci} disabled={answered} onClick={() => answerClarify(m.id, qi, qa.q, ch)}
+                                    className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11.5px] border transition-colors ${answered ? "border-line/40 text-ink-mute opacity-50 cursor-default" : "border-gold/50 text-gold hover:bg-gold/15"}`}>
+                                    {ch}
+                                    {qa.recommended === ch && <span className="font-mono text-[9px] text-gold/80">·{t("chat.clarifyRecommended")}</span>}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                        <div className="mt-2 font-mono text-[10px] text-ink-dim">{t("chat.clarifyHint")}</div>
                       </div>
                     )}
                   </div>

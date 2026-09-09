@@ -4,6 +4,8 @@
   - "interval:3600"   每 3600 秒
   - "m h * * *"       每日 m 分 h 时（支持字段式，目前取前两个字段=分/时）
 内置任务：daily_scan_report —— 扫描 Top 行情 + 生成报告，存入固定会话「BAZZ Agent 日报」。
+自定义任务：task="custom_prompt" + prompt=用户指令 → 到点无头跑一次真 Agent 循环（带工具），
+结果写入专属会话「定时任务 · <name>」；失败时按 failure_deliver 决定是否也投递（Hermes failure_deliver）。
 任务配置存 settings("cron_jobs") = JSON 列表。
 """
 import os
@@ -36,14 +38,42 @@ def save_jobs(jobs):
     set_setting("cron_jobs", json.dumps(jobs, ensure_ascii=False))
 
 
-def add_job(name, schedule, task="daily_scan_report", enabled=True, persona=""):
+def add_job(name, schedule, task="daily_scan_report", enabled=True, persona="",
+            prompt="", failure_deliver=True):
     jobs = get_jobs()
     jid = os.urandom(4).hex()
     jobs.append({"id": jid, "name": name, "schedule": schedule, "task": task,
                  "enabled": enabled, "last_run": 0, "next_run": _next(schedule, time.time()),
-                 "persona": persona})
+                 "persona": persona, "prompt": prompt, "failure_deliver": bool(failure_deliver)})
     save_jobs(jobs)
     return jid
+
+
+def update_job(jid, name=None, schedule=None, task=None, prompt=None, enabled=None):
+    """按字段更新任务（Hermes cronjob update）；schedule 变更会重算 next_run。"""
+    jobs = get_jobs()
+    hit = False
+    for j in jobs:
+        if j["id"] != jid:
+            continue
+        hit = True
+        if name is not None and str(name).strip():
+            j["name"] = str(name).strip()
+        if schedule is not None and str(schedule).strip():
+            spec = parse_time_to_spec(schedule)
+            if spec:
+                j["schedule"] = spec
+                j["next_run"] = _next(spec, time.time())
+        if task is not None and str(task).strip():
+            j["task"] = str(task).strip()
+        if prompt is not None:
+            j["prompt"] = str(prompt)
+        if enabled is not None:
+            j["enabled"] = bool(enabled)
+            j["next_run"] = _next(j["schedule"], time.time()) if j["enabled"] else 0
+    if hit:
+        save_jobs(jobs)
+    return hit
 
 
 def remove_job(jid):
@@ -198,16 +228,52 @@ TASK_HANDLERS = {
 }
 
 
+def _run_custom_prompt(job):
+    """自定义 prompt 任务：无头跑一次真 Agent 循环（带工具，Hermes cronjob 语义）。
+    审批/追问在无人值守场景没有应答方 → 记录说明后终止，不阻塞调度线程。"""
+    prompt = (job.get("prompt") or "").strip() or job.get("name") or "定时任务执行"
+    reply = ""
+    try:
+        from agent_core import _run_llm_agent
+        for ev in _run_llm_agent(prompt, auto_exec=False, history=None, locale="zh", cid=""):
+            t = ev.get("type")
+            if t == "text":
+                reply += ev.get("delta") or ""
+            elif t == "done":
+                if ev.get("reply"):
+                    reply = ev["reply"]
+                if ev.get("needs_approval"):
+                    reply += "\n\n（含需要用户确认的操作，定时任务不会自动审批——请到会话中手动执行。）"
+                    break
+                if ev.get("needs_clarify"):
+                    reply += "\n\n（Agent 发起了追问，但定时任务无人应答，已跳过后续步骤。）"
+                    break
+    except Exception as e:
+        raise RuntimeError(f"Agent 无头执行失败：{type(e).__name__}: {e}") from e
+    return reply or "（Agent 无输出）"
+
+
 def run_job(job):
-    """执行一个任务，返回摘要文本。若绑定 persona，则报告写入该 Agent 的专属会话（Hermes Routines）。"""
+    """执行一个任务，返回摘要文本。若绑定 persona，则报告写入该 Agent 的专属会话（Hermes Routines）。
+    自定义任务写入专属会话「定时任务 · <name>」；失败时按 failure_deliver 决定是否投递。"""
     task = job.get("task") or "daily_scan_report"
-    handler = TASK_HANDLERS.get(task)
+    if task == "custom_prompt":
+        handler = lambda: _run_custom_prompt(job)  # noqa: E731
+    else:
+        handler = TASK_HANDLERS.get(task)
     if not handler:
         return f"未知任务类型: {task}"
     try:
         report = handler()
+        ok = True
     except Exception as e:
         report = f"任务 {task} 执行失败：{type(e).__name__}: {e}"
+        ok = False
+        if not job.get("failure_deliver", True):
+            job["last_error"] = report[:500]
+            return report
+    if not ok:
+        job.pop("last_error", None)
     persona = job.get("persona") or ""
     if persona:
         # Hermes Routines：结果投递到该 Agent 的专属会话
@@ -222,11 +288,18 @@ def run_job(job):
                     data={"persona": persona, "intent": "routine"})
         touch_conversation(cid)
         return report
-    convs = [c for c in list_conversations() if c["title"] == REPORT_CONV_TITLE]
-    cid = convs[0]["id"] if convs else new_conversation(REPORT_CONV_TITLE)
+    if task == "custom_prompt":
+        # 自定义任务 → 专属会话「定时任务 · <name>」（与内置日报分开，互不干扰）
+        title = f"定时任务 · {job.get('name') or task}"
+        icon, label, status = ("🤖", "定时任务 · Agent", "success" if ok else "error")
+    else:
+        title = REPORT_CONV_TITLE
+        icon, label, status = ("📅", "定时扫描", "success")
+    convs = [c for c in list_conversations() if c["title"] == title]
+    cid = convs[0]["id"] if convs else new_conversation(title)
     add_message(cid, "assistant",
-                f"## 📅 定时日报 · {time.strftime('%Y-%m-%d %H:%M')}\n\n" + report,
-                tools=[{"icon": "📅", "name": "定时扫描", "status": "success",
+                f"## 📅 定时任务 · {time.strftime('%Y-%m-%d %H:%M')}\n\n" + report,
+                tools=[{"icon": icon, "name": label, "status": status,
                         "detail": f"{task} · 周期 {job.get('schedule','?')}"}])
     return report
 

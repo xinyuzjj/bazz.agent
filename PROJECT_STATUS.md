@@ -9,13 +9,14 @@
 
 - **形态**：Windows 桌面端（Electron 壳）+ FastAPI Python 后端 + TS/Vite 前端
 - **定位**：币安 AI 交易终端 —— Agent 对话、行情（现货/合约/股票化代币）、交易方案卡、CEX 连接、Agentic Wallet、广场发文、Skills Hub
-- **当前版本**：v1.4.4（已发布 Latest，4 资产齐全）
+- **当前版本**：v1.4.5（tag 已推，CI 构建中/已发布）
 - **工作区**：安装目录 `<安装根>/workspace`（state.db / proxies.json / .skill_update.json / 附件 / 日志）
 
 ## 二、近期发布版本
 
 | 版本 | 核心内容 |
 |---|---|
+| **v1.4.5** | 自定义定时盯盘 + 结构化追问 + 工具输出落盘（学习 Hermes）：① schedule_task 升级——`custom_prompt` 自定义任务（prompt=完整指令，到点经 `_run_custom_prompt` 无头跑真 Agent 循环带全部工具，结果写专属会话「定时任务 · <name>」）、`update` 动作（scheduler.update_job 改名/时间/类型/指令并重算 next_run）、failure_deliver 语义（失败也投递，failure_deliver=False 只记 last_error）、无人值守遇审批/追问如实记录说明；② clarify 工具——`_run_clarify` 归一化（≤3 问×4 选项、dict choice 按 label>description>text>title 展平、recommended/recommended_index），流内 `{"type":"clarify"}` 事件 + done `needs_clarify` 收口，ChatView 选择卡（I.Alert、推荐徽标、点选回传 `（追问回答）q → a`），120s 前端超时自动按「最佳判断继续」回流（send 启动即取消定时器）；③ 工具输出落盘——`TOOL_SPILL_THRESHOLD=20KB`，`_tool_msg_from_res` 统一出口（强制路径+常规路径），超限写 `workspace/spill/<ts>_<tool>.txt` 回传截断文本+句柄（read_file 可读，spill 不在 READ_BLACKLIST）。隔离库单测全过（scheduler CRUD/失败投递/专属会话 + clarify 归一化 + spill/截断/降级） |
 | **v1.4.4** | Agent 任务清单 + 记忆报告 + 通知加固：① todo_tool（Hermes）——state `todos` 表（去重/按文本勾选/清已完成），agent 工具 `todo_write`（add/toggle/remove/list/clear_done，llm.py TOOLS + dispatch + 通用集），`todo_context()` 每轮把未完成任务注入 system prompt（防烂尾防装完成）；② `/api/memory/export?format=md`——按 kind 分组 Markdown 报告（含来源/命中/日期），JSON 导出并存，MemoryOverlay 加 MD 按钮（I.Memory）；③ 前端空 catch 补 pushToast 错误提示（SettingsView 4 处 + ChatView 新建/删除/归档/重命名会话 + CodeCard 复制），新增 common.opFailed/copyFail 双语 key。23 项隔离库单测全过 |
 | **v1.4.3** | 会话搜索 + 标题自动生成（学习 Hermes）：① `state.search_conversations`（LIKE 标题+消息正文，命中片段+条数，room 排除）→ `GET /api/conversations/search`（注册在 {cid} 路由之前）→ ChatView 会话列表防抖搜索框（结果按当前 Agent 作用域过滤，🔍 命中数徽标）；② `agent_core.auto_title`——chat 流 `_persist` 末尾起后台线程，标题仍为默认截断（首条 user 消息[:28]/新对话/@档案前缀）时用 summarize 槽位生成 4-16 字标题，写库前二次校验防改名竞态，前端 send 后 5s 二刷列表；③ Agent 新工具 `search_history`（llm.py TOOLS + dispatch + _TOOL_UNIVERSAL）；④ **重要修复：流自然完成此前从不落库**（_persist 只挂 GeneratorExit/Exception，正常播完回复/记忆/标题全丢）——补 `else: _persist()`。21 项隔离库单测全过 |
 | **v1.4.2** | 上下文压缩 + 循环健壮性（学习 Hermes）：① conversations 加 `ctx_summary` 列 + 游标 `ctxcur:{cid}`（settings 表）——被裁旧历史不再蒸发，增量并入持久化滚动摘要，重复请求不重烧 summarize 模型（`_history_blocks` 重写，`run_stream`/`_run_llm_agent` 加 cid 透传，desktop_app 传 conv_id）；② repetition guard——同工具+同参数执行 ≥2 次拦截并提示模型直接作答（审批类交易工具豁免）；③ 空回复重试预算限 1 次；④ 轮次将尽（MAX-2）注入「立即汇总作答」预警。7 项单测全过 |
@@ -49,7 +50,7 @@
 
 **记忆系统已升级（v1.4.1）+ Markdown 报告导出（v1.4.4）**：kind/source/hits 分类、注入预算+清洗、合并去重、敏感过滤、memory_write 动作工具、MD 报告导出 —— 勿重复改造。
 
-**Hermes 学习清单进度**：✅ 记忆系统（v1.4.1）、✅ 上下文持久化压缩 + 循环健壮性（v1.4.2）、✅ 会话搜索 + 会话标题自动生成（v1.4.3）、✅ Agent 任务清单 todo_tool（v1.4.4）；候选剩余（按价值）：用户自定义 cron 盯盘（cronjob_tools）、旁问模式（side_question）。低价值勿做：MCP/OAuth、浏览器自动化全家桶、语音 TTS。
+**Hermes 学习清单进度**：✅ 记忆系统（v1.4.1）、✅ 上下文持久化压缩 + 循环健壮性（v1.4.2）、✅ 会话搜索 + 会话标题自动生成（v1.4.3）、✅ Agent 任务清单 todo_tool（v1.4.4）、✅ 自定义 cron 盯盘 + clarify 结构化追问 + 工具输出落盘（v1.4.5）；**待做（用户拍板）**：v1.4.6 = delegate 子代理（goal 单任务 + tasks[] 批量并行，父只见摘要，禁递归工具集，max_depth/timeout/steer，输出 schema 校验）。候选剩余：side_question 旁问（/btw fork+禁工具+transcript 降级）、fetch_url 增强（web_result_cache 缓存/url_safety/truncate）、turn_usage token 用量展示、verification_stop 收尾验证门。低价值勿做：MCP/OAuth、浏览器自动化全家桶、语音 TTS、kanban/discord/飞书/HA、image/video 生成、tirith 安全全家桶。
 
 **P2 进度**：✅ 空 catch 补错误提示（v1.4.3+4）、✅ 记忆导出 Markdown（v1.4.4）；剩余：启动加速、广场发文草稿箱/定时发布。
 

@@ -76,6 +76,47 @@ def _norm_tool(t: dict) -> dict:
 def _norm_tools(items):
     return [_norm_tool(t) for t in (items or [])]
 
+
+# ---------- 工具输出落盘（Hermes tool_output_limits 语义） ----------
+# 超过阈值（20KB）的工具输出不硬塞给模型：完整内容落盘 workspace/spill/，回传截断文本+句柄路径，
+# 模型需要完整内容时可用 read_file 读句柄（spill/ 在工作区内，read_file 可达）。
+TOOL_SPILL_THRESHOLD = 20000
+
+
+def _spill_tool_output(tool_name: str, content: str):
+    """把超长工具输出写入 <WORKSPACE>/spill/<ts>_<tool>.txt，返回句柄路径；失败返回 None。"""
+    try:
+        from workspace import WORKSPACE
+        d = os.path.join(WORKSPACE, "spill")
+        os.makedirs(d, exist_ok=True)
+        safe = re.sub(r"[^A-Za-z0-9_\-]", "_", str(tool_name))[:40] or "tool"
+        path = os.path.join(d, f"{time.strftime('%Y%m%d_%H%M%S')}_{safe}.txt")
+        with open(path, "w", encoding="utf-8", errors="replace") as f:
+            f.write(content)
+        return path
+    except Exception:
+        return None
+
+
+def _tool_msg_from_res(name: str, res: dict) -> str:
+    """把工具结果组装成回传给 LLM 的消息：优先原始 data JSON，超限落盘截断（v1.4.5）。"""
+    raw_data = res.get("data")
+    if raw_data not in (None, {}):
+        try:
+            full = f"[{name} 返回的原始数据]\n" + json.dumps(raw_data, ensure_ascii=False)
+        except Exception:
+            full = res.get("reply") or ""
+    else:
+        full = res.get("reply") or ""
+    if len(full) > TOOL_SPILL_THRESHOLD:
+        spilled = _spill_tool_output(name, full)
+        head = full[:2200]
+        if spilled:
+            return (f"{head}\n\n…（输出过长，共 {len(full)} 字符，已截断。"
+                    f"完整输出已存盘：{spilled}，可用 read_file 读取）")
+        return head
+    return full[:2200]
+
 from scanner import scan_universe, scan_symbols, market_movers, SECTORS, get_snapshot, get_funding_rates, get_top_liquid_symbols
 from risk_guard import check_risks, format_risk_report
 from executor import confirm_and_place
@@ -242,7 +283,8 @@ def _system_prompt(locale: str = "zh") -> str:
             "   **发币安广场 / Square 发文 / 发推 / 发图文 / 『把这篇分析发出去』→ 必须用 run_skill(\n"
             "       skill_name='square-post', args='<text|article|image|video 子命令 + JSON 参数>'\n"
             "     ),不要走 mcp_call —— MCP binance 网关只有公开行情/账户/交易端点，没有发广场的能力，OAuth 授权也帮不上**。\n"
-            "   **『帮我做个定时任务 / 每天 9 点分析妖币 / 每天早上定时扫描 / 每隔 30 分钟扫一次 / 加个日报 / 加个定时提醒 / cron / 自动定时』→ 立即用 schedule_task(action='create', name=…, time=…, task=…) 在后台真实注册 cron / interval 任务（不是给一句手动话术，也不要走 mcp_call 写系统级 cron）**。time 支持 `09:00`/`9 点`/`0 9 * * *`/`interval:30m`；task 默认 daily_scan_report，做妖币雷达就传 meme_scan_report。任务到点自动跑，结果写入『BAZZ Agent 日报』会话（不需要用户在场）。**\n"
+            "   **『帮我做个定时任务 / 每天 9 点分析妖币 / 每天早上定时扫描 / 每隔 30 分钟扫一次 / 加个日报 / 加个定时提醒 / cron / 自动定时』→ 立即用 schedule_task(action='create', name=…, time=…, task=…) 在后台真实注册 cron / interval 任务（不是给一句手动话术，也不要走 mcp_call 写系统级 cron）**。time 支持 `09:00`/`9 点`/`0 9 * * *`/`interval:30m`；task 默认 daily_scan_report，做妖币雷达传 meme_scan_report；**用户给出自定义周期指令（如『每天 9 点总结 BTC 行情并给关键位』）→ task='custom_prompt' 且把完整指令写进 prompt 参数（Agent 到点带全部工具无头真实执行）**。内置任务结果写『BAZZ Agent 日报』会话，custom_prompt 写专属会话「定时任务 · <name>」（都不需要用户在场）。**\n"
+            "   **需求存在关键分叉（币种/周期/方向/预算不明且猜错代价高）→ 用 clarify 工具发结构化选择题让用户点选；能用合理默认值继续就不要问**。\n"
             "2) **绝不要先用文字叙述『我先调用 xxx』或『正在调用 xxx』！**\n"
             "   直接在 reply 之外、以 tool_calls 形式调用；用户必须看到真实数据。\n"
             "   调完拿到数据后再用中文总结结论；不要在 text 里编造数字。\n"
@@ -601,12 +643,74 @@ def _run_payment():
     return {"reply": "\n".join(lines), "tools": tools, "data": flow}
 
 
+# ---------- clarify 结构化追问（Hermes clarify_tool 语义） ----------
+CLARIFY_MAX_QUESTIONS = 3
+CLARIFY_MAX_CHOICES = 4
+CLARIFY_CHOICE_KEYS = ("label", "description", "text", "title")  # dict 型 choice 的展平优先级
+
+
+def _clarify_choice_label(c) -> str:
+    """choice 可能是字符串或 dict（Hermes 兼容）：dict 按 label>description>text>title 展平。"""
+    if isinstance(c, dict):
+        for k in CLARIFY_CHOICE_KEYS:
+            v = c.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        return str(c)[:80]
+    return str(c).strip()
+
+
+def _run_clarify(args: dict) -> Dict[str, Any]:
+    """把模糊需求转成结构化选择题，流出 clarify 事件给前端渲染，暂停等用户点选；
+    超时（前端 120s）用户未选 → 以『最佳判断继续』作为答案回流。"""
+    raw = args.get("questions") or args.get("q") or []
+    if isinstance(raw, dict):
+        raw = [raw]
+    if isinstance(raw, str):
+        raw = [{"question": raw, "choices": []}]
+    questions = []
+    for item in raw[:CLARIFY_MAX_QUESTIONS]:
+        if isinstance(item, str):
+            item = {"question": item, "choices": []}
+        if not isinstance(item, dict):
+            continue
+        q = str(item.get("question") or item.get("q") or item.get("text") or "").strip()
+        if not q:
+            continue
+        choices_raw = item.get("choices") or item.get("options") or []
+        if isinstance(choices_raw, str):
+            choices_raw = [choices_raw]
+        choices = [_clarify_choice_label(c) for c in choices_raw if _clarify_choice_label(c)]
+        rec = str(item.get("recommended") or "")
+        if not rec and isinstance(item.get("recommended_index"), int):
+            ri = item["recommended_index"]
+            if 0 <= ri < len(choices):
+                rec = choices[ri]
+        questions.append({"q": q, "choices": choices[:CLARIFY_MAX_CHOICES],
+                          "recommended": _clarify_choice_label(rec) if rec else ""})
+    if not questions:
+        return {"reply": "clarify 需要至少一个 question（可带 choices 选项）。若只是想确认细节，直接在回复里向用户提问即可。",
+                "tools": [{"icon": "❓", "name": "结构化追问", "status": "error", "detail": "缺 question"}]}
+    lines = ["**需要你确认几个问题**（点选选项即可；不选我会在 120 秒后按最佳判断继续）："]
+    for i, qa in enumerate(questions, 1):
+        lines.append(f"\n**{i}. {qa['q']}**")
+        for j, ch in enumerate(qa["choices"], 1):
+            rec = "（推荐）" if qa.get("recommended") and ch == qa["recommended"] else ""
+            lines.append(f"  {j}) {ch}{rec}")
+    return {"reply": "\n".join(lines),
+            "tools": [{"icon": "❓", "name": "结构化追问", "status": "info",
+                       "detail": f"{len(questions)} 个问题"}],
+            "needs_clarify": True,
+            "clarify": {"questions": questions}}
+
+
 def _run_schedule_tool(action: str = "list", name: str = "", time_spec: str = "", task: str = "daily_scan_report",
-                      job_id: str = "", enabled: bool = True):
-    """调度任务工具：list/create/delete/toggle/run。后端守护线程到点自动执行，报告写入『BAZZ Agent 日报』会话。"""
+                      job_id: str = "", enabled: bool = True, prompt: str = ""):
+    """调度任务工具：list/create/update/delete/toggle/run。后端守护线程到点自动执行。
+    内置类型报告写入『BAZZ Agent 日报』会话；custom_prompt 自定义任务写入专属会话「定时任务 · <name>」。"""
     try:
         from scheduler import (add_job, remove_job, set_job_enabled, get_job, run_job,
-                              parse_time_to_spec, get_jobs)
+                              parse_time_to_spec, get_jobs, update_job)
     except Exception as e:
         return {"reply": f"调度器不可用：{e}", "tools": [{"icon": "📅", "name": "定时任务", "status": "error",
                                                           "detail": str(e)}]}
@@ -618,12 +722,16 @@ def _run_schedule_tool(action: str = "list", name: str = "", time_spec: str = ""
             st = "🟢" if j.get("enabled") else "⚪"
             nxt = j.get("next_run") or 0
             nxt_s = time.strftime("%Y-%m-%d %H:%M", time.localtime(nxt)) if nxt else "—"
+            pline = ""
+            if j.get("task") == "custom_prompt":
+                pline = f" · prompt「{(j.get('prompt') or '')[:60]}」"
             lines.append(f"- {st} `{j.get('id','?')}` **{j.get('name','?')}** · "
-                         f"`{j.get('schedule','?')}` · {j.get('task','?')} · next={nxt_s}")
+                         f"`{j.get('schedule','?')}` · {j.get('task','?')}{pline} · next={nxt_s}")
         return {"reply": "\n".join(lines), "tools": [{"icon": "📅", "name": "定时任务", "status": "info",
                                                        "detail": f"{len(jobs)} 个任务"}], "intent": "cron",
                 "data": {"jobs": jobs}}
     if action == "create":
+        task = (task or "daily_scan_report").strip()
         if not name or not time_spec:
             return {"reply": "缺少 name 或 time 参数。", "tools": [{"icon": "📅", "name": "定时任务", "status": "error",
                                                                    "detail": "name+time 必填"}]}
@@ -631,20 +739,45 @@ def _run_schedule_tool(action: str = "list", name: str = "", time_spec: str = ""
         if not spec:
             return {"reply": f"无法解析时间规格：`{time_spec}`（支持 `09:00` / `0 9 * * *` / `interval:30m`）",
                     "tools": [{"icon": "📅", "name": "定时任务", "status": "error", "detail": "time 格式无效"}]}
+        if task == "custom_prompt" and not (prompt or "").strip():
+            return {"reply": "task=custom_prompt 时必须传 prompt（到点要执行的完整指令）。", "tools": [
+                {"icon": "📅", "name": "定时任务", "status": "error", "detail": "prompt 必填"}]}
         try:
             jid = add_job(name=name, schedule=spec,
-                          task=task if task in ("daily_scan_report", "meme_scan_report") else "daily_scan_report",
-                          enabled=bool(enabled), persona="")
+                          task=task if task in ("daily_scan_report", "meme_scan_report", "custom_prompt") else "daily_scan_report",
+                          enabled=bool(enabled), persona="",
+                          prompt=(prompt or "").strip(), failure_deliver=True)
         except Exception as e:
             return {"reply": f"创建失败：{e}", "tools": [{"icon": "📅", "name": "定时任务", "status": "error",
                                                           "detail": str(e)}]}
         nxt = (get_job(jid) or {}).get("next_run") or 0
         nxt_s = time.strftime("%Y-%m-%d %H:%M", time.localtime(nxt)) if nxt else "—"
+        dest = "「定时任务 · " + name + "」会话" if task == "custom_prompt" else "『BAZZ Agent 日报』会话"
         return {"reply": (f"已创建定时任务：**{name}**\n"
-                          f"规格：`{spec}` · 任务类型：`{task}`\n"
-                          f"下次执行：{nxt_s}（到点会自动跑，结果写入『BAZZ Agent 日报』会话，不需要你在线）"),
+                          f"规格：`{spec}` · 任务类型：`{task}`"
+                          + (f" · 执行指令：「{(prompt or '').strip()[:80]}」" if task == "custom_prompt" else "") + "\n"
+                          f"下次执行：{nxt_s}（到点自动跑，结果写入{dest}，不需要你在线）"),
                 "tools": [{"icon": "📅", "name": "定时任务", "status": "success", "detail": f"{spec} · {task}"}],
-                "intent": "cron", "data": {"job_id": jid, "schedule": spec, "task": task}}
+                "intent": "cron", "data": {"job_id": jid, "schedule": spec, "task": task, "prompt": prompt}}
+    if action == "update":
+        if not job_id:
+            return {"reply": "缺少 job_id。", "tools": [{"icon": "📅", "name": "定时任务", "status": "error", "detail": "job_id 必填"}]}
+        if not get_job(job_id):
+            return {"reply": f"找不到任务 `{job_id}`。", "tools": [{"icon": "📅", "name": "定时任务", "status": "error", "detail": "not found"}]}
+        ok = update_job(job_id, name=name or None, schedule=time_spec or None,
+                        task=task if task in ("daily_scan_report", "meme_scan_report", "custom_prompt") else None,
+                        prompt=(prompt.strip() if isinstance(prompt, str) and prompt.strip() else None),
+                        enabled=None)
+        if not ok:
+            return {"reply": "没有可更新的字段（需提供 name / time / task / prompt 之一）。", "tools": [
+                {"icon": "📅", "name": "定时任务", "status": "warn", "detail": "no fields"}]}
+        j = get_job(job_id) or {}
+        nxt = j.get("next_run") or 0
+        nxt_s = time.strftime("%Y-%m-%d %H:%M", time.localtime(nxt)) if nxt else "—"
+        return {"reply": (f"已更新定时任务 `{job_id}`：**{j.get('name')}** · `{j.get('schedule')}` · "
+                          f"{j.get('task')} · 下次 {nxt_s}"),
+                "tools": [{"icon": "📅", "name": "定时任务", "status": "success", "detail": job_id}],
+                "intent": "cron", "data": {"job": j}}
     if action == "delete":
         if not job_id:
             return {"reply": "缺少 job_id。", "tools": [{"icon": "📅", "name": "定时任务", "status": "error", "detail": "job_id 必填"}]}
@@ -1321,14 +1454,17 @@ def _dispatch_tool(name: str, args: dict, confirmed: bool = False) -> Dict[str, 
         return _run_onchain()
     if name == "meme_watch":
         return _run_meme_watch(mode=(args.get("mode") or "both"))
+    if name == "clarify":
+        return _run_clarify(args)
     if name == "schedule_task":
         return _run_schedule_tool(
             action=args.get("action") or "list",
             name=args.get("name") or "",
             time_spec=args.get("time") or "",
-            task=args.get("task") or "daily_scan_report",
+            task=args.get("task") or "",  # 透传原始值：create 缺省 daily_scan_report，update 缺省=不改动
             job_id=args.get("job_id") or "",
             enabled=args.get("enabled", True),
+            prompt=args.get("prompt") or "",
         )
     if name == "memory_write":
         return _run_memory_write(action=args.get("action", "add"), key=args.get("key", ""),
@@ -2128,11 +2264,7 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
                     return
                 raw_data = res.get("data")
                 if raw_data not in (None, {}):
-                    try:
-                        jd = json.dumps(raw_data, ensure_ascii=False)
-                        tmsg = f"[{forced} 返回的原始数据]\n{jd[:2200]}"
-                    except Exception:
-                        tmsg = (res.get("reply") or "")[:1600]
+                    tmsg = _tool_msg_from_res(forced, res)
                 else:
                     tmsg = (res.get("reply") or "")[:1600]
                 fail = _tool_fail_desc(res)
@@ -2217,18 +2349,17 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
                        "tools": accumulated_tools, "model": model_used,
                        "needs_approval": True, "approval": res.get("approval")}
                 return
+            # 结构化追问（v1.4.5 clarify）：流出选择题卡，暂停等用户点选；
+            # 超时回退由前端负责（120s 未选自动以『最佳判断继续』作为下一条消息）。
+            if res.get("needs_clarify"):
+                yield {"type": "clarify", "clarify": res.get("clarify")}
+                yield {"type": "done", "intent": "llm", "reply": res.get("reply", ""),
+                       "tools": accumulated_tools, "model": model_used,
+                       "needs_clarify": True, "clarify": res.get("clarify")}
+                return
             # 工具结果回传给 LLM：优先给原始 data JSON（LLM 自己组织语言，避免照抄 reply 的成品模板）；
-            # 无 data 或异常时才退回 reply 文本。
-            summary = res.get("reply", "")
-            raw_data = res.get("data")
-            if raw_data not in (None, {}):
-                try:
-                    jd = json.dumps(raw_data, ensure_ascii=False)
-                    tool_msg = f"[{tc['name']} 返回的原始数据]\n{jd[:2200]}"
-                except Exception:
-                    tool_msg = summary[:1600]
-            else:
-                tool_msg = summary[:1600]
+            # 无 data 或异常时才退回 reply 文本。超长输出落盘截断（_tool_msg_from_res）。
+            tool_msg = _tool_msg_from_res(tc["name"], res)
             fail = _tool_fail_desc(res)
             if fail:
                 ever_failed = True
