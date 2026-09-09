@@ -269,11 +269,16 @@ function createWindow() {
   });
   waitServer(() => {
     // 生产：后端托管构建产物（同域）；开发：dist 存在则走后端同域，否则走 Vite dev server
-    if (PACKAGED) {
-      mainWin.loadURL(prodUrl());
-    } else {
-      mainWin.loadURL(fs.existsSync(DIST) ? prodUrl() : DEV_URL);
-    }
+    // v1.3.7.2：启动先清 HTTP 缓存 —— Chromium 把旧 index.html 缓存在 userData，
+    // 桌面版升级后仍显示旧页面（如代理池卡片缺失），清掉后强制加载新版
+    (async () => {
+      try { await mainWin.webContents.session.clearCache(); } catch {}
+      if (PACKAGED) {
+        mainWin.loadURL(prodUrl());
+      } else {
+        mainWin.loadURL(fs.existsSync(DIST) ? prodUrl() : DEV_URL);
+      }
+    })();
   });
   return mainWin;
 }

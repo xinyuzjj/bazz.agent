@@ -98,7 +98,12 @@ threading.Thread(target=wallet_client.warm_wallet_cache, daemon=True).start()
 @app.get("/")
 def index():
     # 生产构建产物优先（Electron 单源加载），否则回退 pywebview 版
-    return FileResponse(DIST if os.path.exists(DIST) else INDEX)
+    # v1.3.7.2：显式禁缓存 —— Chromium 会把旧 index.html 缓存在 userData，
+    # 桌面版升级后仍加载旧页面（代理池卡片不显示），这里强制每次回源校验
+    return FileResponse(
+        DIST if os.path.exists(DIST) else INDEX,
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 @app.get("/api/status")

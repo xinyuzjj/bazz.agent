@@ -1,3 +1,17 @@
+# BAZZ.AGENT v1.3.7.2
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.3.7.2 更新要点（修复：桌面版升级后看不到新界面）
+
+- **问题**：部分用户从旧版升级后，桌面版仍显示旧界面（如设置里没有代理池卡片），而网页版一切正常
+- **原因**：Chromium 把旧版页面缓存在了应用数据目录，桌面版升级后加载的仍是缓存里的旧页面
+- **修复**：
+  - Electron 启动时自动清理 HTTP 缓存，强制加载最新界面
+  - 后端对入口页面响应禁用缓存，此后每次升级立即生效，无需手动清理
+
+---
+
 # BAZZ.AGENT v1.3.7
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
