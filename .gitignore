@@ -38,6 +38,8 @@ dist_desktop/
 # ---- Local app data ----
 data/
 workspace/
+update-cache/
+.system/
 
 # ---- WorkBuddy tooling ----
 .workbuddy/

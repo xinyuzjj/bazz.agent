@@ -126,7 +126,9 @@ def is_packaged() -> bool:
 
 
 def update_cache_dir() -> str:
-    d = os.path.join(workspace.WORKSPACE, "update-cache")
+    """更新包缓存目录：优先 <安装根>/update-cache（workspace.UPDATE_CACHE_DIR），
+    安装目录只读时 workspace 层已兜底回工作区。这里只消费，不再自定位置。"""
+    d = workspace.UPDATE_CACHE_DIR
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -616,13 +618,19 @@ def _write_updater_script(zip_path: str, wait_pid: int, backend_pid: int) -> str
     if ws_inside_root:
         ws_bak = os.path.join(parent, ".bazz-ws-backup")
         new_ws = os.path.join(new_root, os.path.relpath(ws, root)) if _path_inside(ws, root) else ws
-        zip_bak = os.path.join(ws_bak, os.path.relpath(zip_path, ws)) if _path_inside(zip_path, ws) else zip_path
         ps_ws = ws                       # 让 PS 走「备份 WORKSPACE → 替换 → 还原」逻辑
     else:
         ws_bak = ""
         new_ws = ws                      # 外置 workspace 在删除应用目录时不受影响，保持不变
-        zip_bak = zip_path               # workspace 不被挪走，zip 也不会随其迁移
         ps_ws = ""                       # 外置时 PS 的 workspace 备份/还原块为空 → 自然跳过
+    # zip 落点保护：apply 前 zip 在 update-cache（现位于安装根 = 旧应用目录内），
+    # 删旧目录前必须先挪出去，否则解压时 zip 已被删 → 更新必挂。
+    if ws_inside_root and _path_inside(zip_path, ws):
+        zip_bak = os.path.join(ws_bak, os.path.relpath(zip_path, ws))   # 随 workspace 备份一起挪走
+    elif _path_inside(zip_path, root):
+        zip_bak = os.path.join(parent, ".bazz-zip-bak" + os.path.splitext(zip_path)[1])  # 单独挪到父目录
+    else:
+        zip_bak = zip_path               # zip 在旧应用目录外，不受替换影响
     # zip 备份后位置：workspace 若在应用目录内，会被整目录挪到 ws_bak —— 解压前需切到新路径
     log = _log_path()
 
@@ -670,6 +678,14 @@ if ($ws -and (Test-Path -LiteralPath $ws)) {{
 }}
 # 备份把 zip 一起挪走了 → 解压/清理切到备份后的真实路径
 if (-not (Test-Path -LiteralPath $zip) -and (Test-Path -LiteralPath $zipBak)) {{ $zip = $zipBak; L 'zip relocated with workspace backup' }}
+# 4.5) zip 在旧应用目录内但不在 workspace 里（update-cache 在安装根）→ 删目录前单独挪到父目录
+if ((Test-Path -LiteralPath $zip) -and ($zipBak -ne $zip)) {{
+  try {{
+    Move-Item -LiteralPath $zip -Destination $zipBak -ErrorAction Stop
+    $zip = $zipBak
+    L 'zip relocated out of old root'
+  }} catch {{ L ('ERR zip-relocate: ' + $_.Exception.Message) }}
+}}
 # 5) 整目录替换（旧目录可能名 != BAZZ.AGENT-win32-x64，先清同名残留再删旧）
 function Restore-Ws {{
   if ($wsMoved -and (Test-Path -LiteralPath $wsBak) -and -not (Test-Path -LiteralPath $ws)) {{

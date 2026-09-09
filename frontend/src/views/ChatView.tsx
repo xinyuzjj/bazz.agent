@@ -919,6 +919,30 @@ export function ChatView({
     }
   };
   const closeFileModal = () => setFileModal(null);
+  // 删除文件/目录（文件浏览器每行右侧的删除按钮）：state.db 二次确认（存着全部会话与记忆）
+  const deleteFile = async (name: string) => {
+    const full = fileCwd ? `${fileCwd}/${name}` : name;
+    if (!window.confirm(t(name === "state.db" ? "chat.fileDeleteConfirmDb" : "chat.fileDeleteConfirm", { name }))) return;
+    try {
+      await api.workspaceDelete(full);
+      pushLog(`DEL > ${full}`);
+      if (fileModal?.path === full) setFileModal(null);
+      refreshFiles();
+    } catch (e: any) {
+      pushLog(`DEL_ERR > ${full}: ${String(e?.message ?? e).slice(0, 140)}`);
+    }
+  };
+  // 已知文件/目录的用途说明（列表里显示为文件名下的小字，方便分辨哪些能删）
+  const fileDescKey = (name: string) =>
+    name === "state.db" ? "chat.desc.stateDb"
+    : name === "attachments" ? "chat.desc.attachments"
+    : name === "generated" ? "chat.desc.generated"
+    : name === "logs" ? "chat.desc.logs"
+    : name === "backups" ? "chat.desc.backups"
+    : name === "square_posts.json" ? "chat.desc.squarePosts"
+    : name === "update-cache" ? "chat.desc.updateCache"
+    : name === "workspace" ? "chat.desc.workspaceDir"
+    : "";
   useEffect(() => { scrollRef.current?.scrollTo({ top: 999999, behavior: "smooth" }); }, [messages.length, messages[messages.length - 1]?.text]);
 
   const isEmpty = messages.length === 0;
@@ -1206,22 +1230,32 @@ export function ChatView({
               </div>
               {files.length === 0 ? (
                 <div className="shimmer h-10" />
-              ) : files.map((f, i) => (
-                <button key={i}
+              ) : files.map((f, i) => {
+                const descKey = fileDescKey(f.name);
+                return (
+                <div key={i}
                   onClick={() => f.type === "dir" ? enterDir(f.name) : openFile(f.name)}
-                  className={`group w-full flex items-center gap-2 rounded-md border px-3 py-2 text-left ${f.type === "dir" ? "border-line bg-card/40 hover:border-gold/40 hover:bg-elevated/60" : "border-line bg-card/30 hover:bg-elevated/60"}`}>
+                  className={`group w-full flex items-center gap-2 rounded-md border pl-3 pr-1.5 py-1.5 text-left cursor-pointer ${f.type === "dir" ? "border-line bg-card/40 hover:border-gold/40 hover:bg-elevated/60" : "border-line bg-card/30 hover:bg-elevated/60"}`}>
                   {f.type === "dir"
                     ? <I.Cex size={12} className="text-gold shrink-0" />
                     : <I.Download size={11} className="text-ink-dim shrink-0" />}
-                  <span className="font-mono text-[12px] text-ink truncate flex-1">{f.name}</span>
+                  <span className="flex-1 min-w-0">
+                    <span className="font-mono text-[12px] text-ink truncate block">{f.name}</span>
+                    {!!descKey && (
+                      <span className="font-mono text-[9.5px] text-ink-mute truncate block">{t(descKey)}</span>
+                    )}
+                  </span>
                   <span className="font-mono text-[10px] text-ink-mute shrink-0">
                     {f.type === "dir" ? "dir" : fmtSize(f.size)}
                   </span>
-                  {f.type === "dir" && (
-                    <I.Arrow size={10} className="text-ink-mute shrink-0 opacity-0 group-hover:opacity-100" />
-                  )}
-                </button>
-              ))}
+                  <button onClick={(ev) => { ev.stopPropagation(); deleteFile(f.name); }}
+                    title={t("chat.fileDelete")}
+                    className="shrink-0 rounded p-1 text-ink-mute hover:text-red hover:bg-red/15 transition-colors">
+                    <I.Trash size={11} />
+                  </button>
+                </div>
+                );
+              })}
               <div className="text-[10px] text-ink-mute px-1 pt-1 font-mono">{t("chat.filesHint")}</div>
             </div>
           )}
@@ -1902,10 +1936,16 @@ export function ChatView({
             </div>
             <div className="px-5 py-2.5 border-t border-line flex items-center justify-between">
               <span className="font-mono text-[10px] text-ink-mute">{t("chat.escHint")}</span>
-              <button onClick={() => copyText(fileModal.content)}
-                className="btn-ghost text-[11px]" disabled={!fileModal.is_text || fileModal.loading}>
-                <I.Copy size={11} /> {t("chat.copyAll")}
-              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={() => { if (fileModal) deleteFile(fileModal.name); }}
+                  className="btn-ghost text-[11px] text-red/80 hover:text-red" disabled={fileModal.loading}>
+                  <I.Trash size={11} /> {t("chat.fileDelete")}
+                </button>
+                <button onClick={() => copyText(fileModal.content)}
+                  className="btn-ghost text-[11px]" disabled={!fileModal.is_text || fileModal.loading}>
+                  <I.Copy size={11} /> {t("chat.copyAll")}
+                </button>
+              </div>
             </div>
           </div>
         </div>

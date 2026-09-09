@@ -45,6 +45,32 @@ else:
     WORKSPACE = os.path.join(APP_DIR, "workspace")
 os.makedirs(WORKSPACE, exist_ok=True)
 
+
+def _dir_writable(d: str) -> bool:
+    """目录可写探测（写探针文件），失败返回 False。"""
+    try:
+        os.makedirs(d, exist_ok=True)
+        probe = os.path.join(d, ".write-probe")
+        with open(probe, "w", encoding="utf-8") as f:
+            f.write("1")
+        os.remove(probe)
+        return True
+    except OSError:
+        return False
+
+
+# —— 系统目录 / 更新缓存：优先放「应用安装位置」，工作区根只留用户数据 ——
+# 用户要求：workspace 里不再出现 update-cache / .migrated_* 这类系统文件。
+#   更新缓存 → <安装根>/update-cache（安装目录只读时兜底回工作区）
+#   迁移标记 → <安装根>/.system/（只读时兜底 <工作区>/.system/）
+_SYS_BASE = _app_root_frozen() if getattr(sys, "frozen", False) else APP_DIR
+_uc_app = os.path.join(_SYS_BASE, "update-cache")
+UPDATE_CACHE_DIR = _uc_app if _dir_writable(_uc_app) else os.path.join(WORKSPACE, "update-cache")
+os.makedirs(UPDATE_CACHE_DIR, exist_ok=True)
+_sys_app = os.path.join(_SYS_BASE, ".system")
+SYSTEM_DIR = _sys_app if _dir_writable(_sys_app) else os.path.join(WORKSPACE, ".system")
+os.makedirs(SYSTEM_DIR, exist_ok=True)
+
 # —— 运行时统一路径 —— #
 DB_PATH        = os.path.join(WORKSPACE, "state.db")
 WALLET_PROFILE = os.path.join(WORKSPACE, ".wallet_profile.json")
@@ -131,8 +157,37 @@ def _move(old: str, new: str, label: str) -> None:
         print(f"[workspace] 迁移 {label} 失败 {old}: {e}")
 
 
+# —— 一次性收编：旧 <工作区>/update-cache → 安装位置；旧 <工作区>/.migrated_* → 系统目录 ——
+# （必须在 _move 定义之后执行；本块让老版本升级后工作区根只剩用户数据）
+_old_uc = os.path.join(WORKSPACE, "update-cache")
+if os.path.isdir(_old_uc) and os.path.normcase(_old_uc) != os.path.normcase(UPDATE_CACHE_DIR):
+    for _n in os.listdir(_old_uc):
+        _move(os.path.join(_old_uc, _n), os.path.join(UPDATE_CACHE_DIR, _n), f"更新缓存外迁 → {_n}")
+    try:
+        if not os.listdir(_old_uc):
+            os.rmdir(_old_uc)
+            print(f"[workspace] 清理旧更新缓存目录 {_old_uc}")
+    except OSError:
+        pass
+for _f in (".migrated_v1", ".migrated_v2", ".migrated_v3", ".migrated_v4"):
+    _old_flag = os.path.join(WORKSPACE, _f)
+    if os.path.isfile(_old_flag):
+        _new_flag = os.path.join(SYSTEM_DIR, _f.lstrip("."))
+        try:
+            if os.path.exists(_new_flag):
+                os.remove(_old_flag)
+            else:
+                try:
+                    os.replace(_old_flag, _new_flag)
+                except OSError:
+                    shutil.copy2(_old_flag, _new_flag)
+                    os.remove(_old_flag)
+        except OSError as e:
+            print(f"[workspace] 迁移标记收编失败（忽略）: {e}")
+
+
 # —— 一次性迁移：旧位置 → WORKSPACE —— #
-_MIGRATE_FLAG = os.path.join(WORKSPACE, ".migrated_v1")
+_MIGRATE_FLAG = os.path.join(SYSTEM_DIR, "migrated_v1")
 if not os.path.exists(_MIGRATE_FLAG):
     _move(os.path.join(APP_DIR, ".scout.db"),          DB_PATH,        "状态数据库")
     _move(os.path.join(APP_DIR, ".wallet_profile.json"), WALLET_PROFILE, "钱包 profile")
@@ -160,7 +215,7 @@ if not os.path.exists(_MIGRATE_FLAG):
 #   <exe_dir>/_internal/workspace/ 而不是约定的 <exe_dir>/workspace/。本次修 launcher，
 #   新启动 APP_DIR 会变成真正的 exe_dir；这里把旧位置数据整体搬到 WORKSPACE，
 #   并写 .migrated_v2 标记（哪怕两边都空也写，免得下次再扫一次）。
-_MIGRATE_V2_FLAG = os.path.join(WORKSPACE, ".migrated_v2")
+_MIGRATE_V2_FLAG = os.path.join(SYSTEM_DIR, "migrated_v2")
 if not os.path.exists(_MIGRATE_V2_FLAG):
     legacy_ws = os.path.join(APP_DIR, "_internal", "workspace")
     target_has_data = (
@@ -189,15 +244,15 @@ if not os.path.exists(_MIGRATE_V2_FLAG):
 #   使自更新=纯程序替换、用户数据永不触碰。老用户升级前数据在 <APP_DIR>/workspace
 #   （旧整目录替换会把旧 workspace 还原到新应用目录），这里在首次启动外置时整体搬入新位置，
 #   写 .migrated_v3 标记防重。仅在「真的外置 + 目标空 + 老内部目录有内容」时执行。
-_MIGRATE_V3_FLAG = os.path.join(WORKSPACE, ".migrated_v3")
+_MIGRATE_V3_FLAG = os.path.join(SYSTEM_DIR, "migrated_v3")
 if not os.path.exists(_MIGRATE_V3_FLAG):
     internal_ws = os.path.join(APP_DIR, "workspace")
     target_has_data = (
         os.path.isfile(DB_PATH) or os.path.isfile(WALLET_PROFILE) or os.path.isfile(SQUARE_POSTS)
         or (os.path.isdir(ATTACHMENTS) and os.listdir(ATTACHMENTS))
         or (os.path.isdir(LOGS) and os.listdir(LOGS))
-        or os.path.isfile(os.path.join(WORKSPACE, ".migrated_v1"))
-        or os.path.isfile(os.path.join(WORKSPACE, ".migrated_v2"))
+        or os.path.isfile(os.path.join(SYSTEM_DIR, "migrated_v1"))
+        or os.path.isfile(os.path.join(SYSTEM_DIR, "migrated_v2"))
     )
     workspace_is_external = (
         os.path.normcase(os.path.normpath(WORKSPACE))
@@ -227,7 +282,7 @@ if not os.path.exists(_MIGRATE_V3_FLAG):
 #       因 .migrated_v1 标记已在外置区而被跳过），目标无 state.db 时兜底搬入；
 #     · <APP_DIR>/_internal/workspace —— v2 同理补扫一次。
 #   安装目录只读时 Electron 兜底注入 APPDATA：source==target → 自然跳过，不会自搬自。
-_MIGRATE_V4_FLAG = os.path.join(WORKSPACE, ".migrated_v4")
+_MIGRATE_V4_FLAG = os.path.join(SYSTEM_DIR, "migrated_v4")
 if not os.path.exists(_MIGRATE_V4_FLAG):
     appdata_ws = os.path.join(os.environ.get("APPDATA") or "", "BAZZ.AGENT", "workspace")
     same_as_appdata = (

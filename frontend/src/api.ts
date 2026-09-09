@@ -51,6 +51,8 @@ export const api = {
     jget("/workspace/files?path=" + encodeURIComponent(path)),
   workspaceRead: (path: string) =>
     jget("/workspace/read?path=" + encodeURIComponent(path)),
+  workspaceDelete: (path: string) =>
+    jdel("/workspace/file?path=" + encodeURIComponent(path)),
   approvalWhitelist: () => jget("/approvals/whitelist"),
   approvalWhitelistAdd: (rule: string) => jpost("/approvals/whitelist", { rule }),
   approvalWhitelistRemove: (rule: string) => jdel("/approvals/whitelist?rule=" + encodeURIComponent(rule)),

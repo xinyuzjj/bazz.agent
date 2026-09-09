@@ -600,6 +600,15 @@ def workspace_read(path: str = ""):
             raw = f.read()
     except Exception as e:
         return JSONResponse({"error": f"读取失败: {e}"}, status_code=500)
+    # 二进制（SQLite 库/图片等）不做文本解码：含 NUL 字节即按二进制处理，
+    # 避免强行 GBK replace 解出一屏乱码（state.db 之前就是这个观感）。
+    if b"\x00" in raw[:4096]:
+        return {
+            "ok": True, "name": os.path.basename(target), "path": rel,
+            "size": len(raw), "is_text": False, "binary": True,
+            "content": "",
+            "abs": os.path.abspath(target).replace("\\", "/"),
+        }
     is_text = False
     txt = ""
     try:
@@ -617,6 +626,36 @@ def workspace_read(path: str = ""):
         "content": txt if is_text else "",
         "abs": os.path.abspath(target).replace("\\", "/"),
     }
+
+
+@app.delete("/api/workspace/file")
+def workspace_delete(path: str = ""):
+    """删除工作区内文件/目录（文件浏览器「删除」按钮后端）。
+
+    安全约束：仅限 workspace 内（_resolve_workspace_subpath 拒绝越界）；工作区根本身不可删。
+    被进程占用的文件（如运行中的 state.db）会返回明确错误，不做静默半删。
+    """
+    import shutil
+    rel = path.strip().replace("\\", "/").lstrip("/")
+    if not rel:
+        return JSONResponse({"error": "不能删除工作区根目录"}, status_code=400)
+    try:
+        target = _resolve_workspace_subpath(path)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    from workspace import WORKSPACE
+    if target == os.path.realpath(WORKSPACE):
+        return JSONResponse({"error": "不能删除工作区根目录"}, status_code=400)
+    if not (os.path.isfile(target) or os.path.isdir(target)):
+        return JSONResponse({"error": "文件不存在", "path": rel}, status_code=404)
+    try:
+        if os.path.isdir(target):
+            shutil.rmtree(target)
+        else:
+            os.remove(target)
+    except OSError as e:
+        return JSONResponse({"error": f"删除失败（文件可能被占用）: {e}"}, status_code=500)
+    return {"ok": True, "path": rel}
 
 
 @app.get("/api/conversations/{cid}")
