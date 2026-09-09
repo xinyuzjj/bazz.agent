@@ -536,20 +536,28 @@ def _run_meme_watch(mode: str = "both"):
       - "takeoff"  → 仅起飞中·追涨（用户说"起飞中/追涨/已爆发/拉升中/暴涨中/加速"）
       - "both"     → 两组都给（默认）
     """
-    from scanner import get_ignition_coins, get_monster_coins
+    from scanner import get_radar_v2
 
-    # 启动前·埋伏（主推）
+    # v1.5.0：直接取雷达 v2 全量（四层模型），一次调用拆 ignition/takeoff；
+    # 异常回退旧接口（内部仍走 v2，v2 不可用时 v1 日K 兜底）。
     try:
-        ig_full = get_ignition_coins(force=False, top_n=120, min_qv=2e6) or {}
+        v2 = get_radar_v2(force=False, top_n=120) or {}
+        ig_full = {"coins": v2.get("ignition", []), "env": v2.get("env"),
+                   "updated_at": v2.get("updated_at"), "stage_counts": v2.get("stage_counts", {})}
+        tk_full = {"coins": v2.get("takeoff", []), "env": v2.get("env"),
+                   "updated_at": v2.get("updated_at"), "engine": v2.get("engine")}
     except Exception as e:
-        return {"reply": (f"⚠️ 拉取 Monster Radar「启动前」数据失败：{e}\n\n"
-                          "请确认后端服务正常，或直接打开「行情」页看 Monster Radar。"),
-                "tools": [{"icon": "🪙", "name": "妖币雷达", "status": "error", "detail": str(e)[:140]}]}
-    # 起飞中·追涨
-    try:
-        tk_full = get_monster_coins(force=False, top_n=120, min_qv=2e6) or {}
-    except Exception as e:
-        tk_full = {"coins": [], "env": "n/a"}
+        from scanner import get_ignition_coins, get_monster_coins
+        try:
+            ig_full = get_ignition_coins(force=False, top_n=120, min_qv=2e6) or {}
+        except Exception as e2:
+            return {"reply": (f"⚠️ 拉取 Monster Radar「启动前」数据失败：{e2}\n\n"
+                              "请确认后端服务正常，或直接打开「行情」页看 Monster Radar。"),
+                    "tools": [{"icon": "🪙", "name": "妖币雷达", "status": "error", "detail": str(e2)[:140]}]}
+        try:
+            tk_full = get_monster_coins(force=False, top_n=120, min_qv=2e6) or {}
+        except Exception:
+            tk_full = {"coins": [], "env": "n/a"}
 
     env = ig_full.get("env") or tk_full.get("env") or "n/a"
     updated = ig_full.get("updated_at") or tk_full.get("updated_at") or 0
@@ -594,20 +602,48 @@ def _run_meme_watch(mode: str = "both"):
             note = c.get("note", "")
             qv_m = qv / 1e6
             price_str = f"`{price}`" if price is not None else "n/a"
+            # v1.5.0：阶段标签 + 确认因子上下文
+            stage = c.get("stage_label") or ""
+            f = c.get("factors") or {}
+            fbits = []
+            if f.get("flow") is not None:
+                fbits.append(f"flow {f['flow']}")
+            if (f.get("rvol15") or 0) >= 1.2:
+                fbits.append(f"RVOL {f['rvol15']:.1f}x")
+            if f.get("funding") is not None and abs(f["funding"]) >= 0.0015:
+                fbits.append(f"费率 {f['funding'] * 100:+.3f}%")
+            if abs(f.get("oi_chg24") or 0) >= 5:
+                fbits.append(f"OI 24h {f['oi_chg24']:+.1f}%")
+            if f.get("top_ratio") is not None:
+                fbits.append(f"大户比 {f['top_ratio']:.2f}")
+            if (f.get("taker_ratio") or 0) >= 1.5:
+                fbits.append(f"taker {f['taker_ratio']:.2f}")
+            if (f.get("liq_5m") or 0) >= 3e5:
+                fbits.append(f"5m爆仓 ${f['liq_5m'] / 1e6:.1f}M")
+            reasons = "、".join(c.get("reasons") or []) or note
+            stage_str = f" · 阶段「{stage}」" if stage else ""
+            factor_str = f" · 因子: {', '.join(fbits)}" if fbits else ""
             out.append(
                 f"- **{sym}** · 现价 {price_str} · 7d {d7:+.2f}% · 30d {d30:+.2f}% · "
                 f"回撤 {dd:+.2f}% · 距低位 {fl:+.2f}% · 24h 量 {qv_m:.2f}M · "
-                f"量比 {vr:.2f} · 评分 **{score:.1f}** · {tag} ({side}) — {note}"
+                f"量比 {vr:.2f} · 妖币度 **{score:.1f}**{stage_str} · {tag} ({side}){factor_str} — {reasons}"
             )
         return out
+
+    stage_counts = ig_full.get("stage_counts") or {}
+    stage_line = ""
+    if stage_counts:
+        stage_line = f"· 阶段分布：{' · '.join(f'{k}×{v}' for k, v in stage_counts.items() if v)}"
 
     lines = [
         f"**妖币雷达 · Monster Radar**（与「行情→妖币雷达」页面同源数据 · mode=`{m}`）",
         "",
         f"· 扫描池：成交额前 120 个 USDT 现货 · 大盘币按当前 24h 成交额**动态**识别（非固定）",
         f"· 大盘状态：`{env}` · 缓存更新时间戳：{updated}",
-        "",
     ]
+    if stage_line:
+        lines.append(stage_line)
+    lines.append("")
     if head_ig is not None:
         lines.append("## 1) 启动前·埋伏（主推 / 点火前）")
         lines += _lines_for(ig_coins, head_ig)

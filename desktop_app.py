@@ -202,6 +202,44 @@ def api_market_ignition(force: int = 0):
         return {"coins": [], "scanned": 0, "candidates": 0, "error": str(e)}
 
 
+# ---------------- v1.5.0 行情大更新：妖币雷达 v2 / 多空比 / 爆仓流 ----------------
+
+@app.get("/api/market/radar")
+def api_market_radar(force: int = 0):
+    """妖币雷达 v2 全量扫描（四层模型：触发/确认/语义/过滤）。
+    coins 含 stage/stage_label/score/factors/reasons，附 takeoff/ignition 分组与阶段计数。"""
+    from scanner import get_radar_v2
+    try:
+        return get_radar_v2(force=bool(force))
+    except Exception as e:
+        return {"coins": [], "takeoff": [], "ignition": [], "stage_counts": {},
+                "scanned": 0, "candidates": 0, "error": str(e)}
+
+
+@app.get("/api/market/longshort")
+def api_market_longshort():
+    """多空比/大户持仓面板：大户持仓比 × 散户账户比双比值 + 背离标记（60s TTL）。"""
+    from scanner import get_longshort_board
+    try:
+        return get_longshort_board()
+    except Exception as e:
+        return {"rows": [], "error": str(e)}
+
+
+@app.get("/api/market/liquidations")
+def api_market_liquidations(limit: int = 60, window: int = 300):
+    """爆仓流面板：最近强平单（新→旧）+ 窗口统计（默认 5 分钟多/空爆金额与笔数）。
+    数据源为 !forceOrder@arr WS 缓冲；受限地区无推送时返回空列表（前端显示重连中）。"""
+    try:
+        import market_ws
+        return {"recent": market_ws.liq_recent(min(max(limit, 1), 200)),
+                "stats": market_ws.liq_stats(window),
+                "ws": market_ws.info().get("liq", {}), "ts": int(time.time())}
+    except Exception as e:
+        return {"recent": [], "stats": {}, "error": str(e)}
+
+
+
 # ---------------- v1.4.0 行情实时流（币安 WS → 后端缓存 → 前端推送） ----------------
 
 @app.get("/api/market/tickers")

@@ -61,6 +61,32 @@ export default function Toasts() {
         const sym = baseName(String(e.symbol ?? ""));
         const px = e.price != null ? fmtPrice(Number(e.price)) : "—";
         const kind = String(e.kind ?? "");
+        // v1.5.0：爆仓潮 / funding 极值与翻转提醒
+        if (kind === "liq_burst") {
+          const isLong = String(e.side ?? "") === "long";
+          const top: any[] = Array.isArray(e.top) ? e.top : [];
+          const title = t(isLong ? "alert.liqBurstLong" : "alert.liqBurstShort");
+          const body = `$${(Number(e.quote ?? 0) / 1e6).toFixed(2)}M · ${t("alert.liqCount", { n: Number(e.count ?? 0) })}`
+            + (top.length ? ` · ${top.map((x) => `${baseName(String(x.symbol))} $${(Number(x.quote) / 1e3).toFixed(0)}K`).join(" / ")}` : "");
+          pushToast(title, body, isLong ? "bad" : "ok");
+          systemNotify(title, body);
+          return;
+        }
+        if (kind === "funding_extreme") {
+          const isLong = String(e.side ?? "") === "long";
+          const title = t("alert.fundExtreme");
+          const body = `${sym} · ${t(isLong ? "alert.fundLongSide" : "alert.fundShortSide")} ${((Number(e.rate ?? 0)) * 100).toFixed(3)}%`;
+          pushToast(title, body, isLong ? "bad" : "ok");
+          systemNotify(title, body);
+          return;
+        }
+        if (kind === "funding_flip") {
+          const title = t("alert.fundFlip");
+          const body = `${sym} · ${Number(e.prev ?? 0) > 0 ? "+" : ""}${(Number(e.prev ?? 0) * 100).toFixed(3)}% → ${Number(e.last ?? 0) > 0 ? "+" : ""}${(Number(e.last ?? 0) * 100).toFixed(3)}%`;
+          pushToast(title, body, "warn");
+          systemNotify(title, body);
+          return;
+        }
         const isHit = kind.endsWith("_hit");
         const isSl = kind.startsWith("sl");
         const title = t(isSl ? (isHit ? "alert.slHit" : "alert.slNear") : (isHit ? "alert.tpHit" : "alert.tpNear"));

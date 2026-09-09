@@ -5,7 +5,7 @@ import { useT } from "../i18n/i18n";
 import { subscribeTicks, useWsStatus } from "../lib/live";
 import {
   type Ticker, type Signal, type FutureRow, type EquityRow, type RadarRow, type OrderMode,
-  SIDE_META, RADAR_COLS, fmtPrice, fmtVol, fmtRate, baseName, UpdatedAgo,
+  SIDE_META, RADAR_COLS, STAGE_META, fmtPrice, fmtVol, fmtRate, baseName, UpdatedAgo,
   SpotRow, FutRow, EquityCard, RadarLine, SignalRow,
 } from "../components/MarketRows";
 
@@ -47,11 +47,11 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
   const [loading, setLoading] = useState(true);
 
   // —— 行情综述：市场宽度 / 资金费率拥挤 / 24h 成交额热度 ——
-  type FundingItem = { symbol: string; price: number; change_pct: number; funding_rate: number; direction: string; crowded: boolean };
+  type FundingItem = { symbol: string; price: number; change_pct: number; funding_rate: number; direction: string; crowded: boolean; extreme?: boolean };
   type VolItem = { symbol: string; price: number; change_pct: number; quote_volume: number };
   type OverviewData = {
     breadth?: { advancers: number; decliners: number; unchanged: number; up_ratio: number; avg_abs_chg: number; extreme_count: number; total: number };
-    funding?: { long_crowded: FundingItem[]; short_crowded: FundingItem[] };
+    funding?: { long_crowded: FundingItem[]; short_crowded: FundingItem[]; extremes?: FundingItem[]; flips?: { symbol: string; prev: number; last: number; to: string }[] };
     volume_top?: VolItem[];
     error?: string;
   };
@@ -75,10 +75,12 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
     catch (e: any) { setFErr(e?.message ?? String(e)); }
   };
 
-  // —— 妖币雷达：启动前(ignition) / 起飞中(takeoff) 双模式 ——
+  // —— 妖币雷达 v2：四层模型全量扫描（一次 /api/market/radar，前端拆 takeoff/ignition） ——
   const [mode, setMode] = useState<"ignition" | "takeoff">("ignition");
   const [ign, setIgn] = useState<RadarRow[]>([]);
   const [tk, setTk] = useState<RadarRow[]>([]);
+  const [stageCounts, setStageCounts] = useState<Record<string, number>>({});
+  const [engine, setEngine] = useState("");
   const [env, setEnv] = useState("");
   const [mLoading, setMLoading] = useState(false);
   const [mErr, setMErr] = useState("");
@@ -88,25 +90,46 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
   const load = async () => {
     try { const d = await api.market(); setData(d); } finally { setLoading(false); }
   };
-  const fetchRadar = async (md: "ignition" | "takeoff", force = false) => {
+  const fetchRadar = async (force = false) => {
     setMLoading(true); setMErr("");
     try {
-      const d: any = md === "ignition" ? await api.marketIgnition(force) : await api.marketMonsters(force);
-      const rows: RadarRow[] = d?.coins ?? [];
-      if (md === "ignition") setIgn(rows); else setTk(rows);
+      const d: any = await api.marketRadar(force);
+      setIgn(d?.ignition ?? []);
+      setTk(d?.takeoff ?? []);
+      setStageCounts(d?.stage_counts ?? {});
+      setEngine(String(d?.engine ?? ""));
       if (d?.env?.regime) setEnv(d.env.regime);
       if (d?.error) setMErr(d.error);
     } catch (e: any) { setMErr(e?.message ?? String(e)); }
     finally { setMLoading(false); }
   };
+
+  // —— v1.5.0 爆仓流面板 + 多空比面板 ——
+  type LiqRec = { ts: number; symbol: string; side: "SELL" | "BUY"; kind: "long" | "short"; price: number; qty: number; quote: number };
+  type LiqData = { recent?: LiqRec[]; stats?: { long_count?: number; short_count?: number; long_quote?: number; short_quote?: number; total_quote?: number; window?: number }; ws?: { connected?: boolean }; error?: string };
+  const [liq, setLiq] = useState<LiqData | null>(null);
+  const loadLiq = async () => {
+    try { setLiq(await api.marketLiquidations(60, 300)); } catch { /* 网络失败保持旧数据 */ }
+  };
+  type LsRow = { symbol: string; price: number; change_pct: number; quote_volume: number; top_ratio: number | null; top_prev: number | null; global_ratio: number | null; divergence: boolean };
+  const [ls, setLs] = useState<LsRow[]>([]);
+  const loadLs = async () => {
+    try { const d: any = await api.marketLongshort(); if (!d?.error) setLs(d?.rows ?? []); } catch { /* 网络失败保持旧数据 */ }
+  };
+  useEffect(() => {
+    loadLiq(); loadLs();
+    const t = setInterval(() => { loadLiq(); loadLs(); }, 30_000);
+    return () => clearInterval(t);
+  }, []);
+
   useEffect(() => {
     load(); loadOverview(); loadFutures();
     const t = setInterval(() => { load(); loadOverview(); loadFutures(); }, 30_000);
     return () => clearInterval(t);
   }, []);
   useEffect(() => {
-    fetchRadar("ignition"); fetchRadar("takeoff");
-    const t = setInterval(() => { fetchRadar("ignition"); fetchRadar("takeoff"); }, 180_000);
+    fetchRadar();
+    const t = setInterval(() => fetchRadar(), 180_000);
     return () => clearInterval(t);
   }, []);
   const radarRows = mode === "ignition" ? ign : tk;
@@ -359,10 +382,23 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
             {env && <span className="pill pill-gold text-[10px]" title={t("markets.envTitle")}>{t("markets.env", { env })}</span>}
             <div className="ml-auto flex items-center gap-2">
               <span className="pill pill-dim text-[10px]">{t("markets.radarCounts", { ign: ign.length, tk: tk.length })}</span>
-              <button onClick={() => fetchRadar(mode, true)} disabled={mLoading} className="btn-ghost py-1 px-2.5 text-[11px]">
+              <button onClick={() => fetchRadar(true)} disabled={mLoading} className="btn-ghost py-1 px-2.5 text-[11px]">
                 <I.Refresh size={11} className={mLoading ? "animate-spin" : ""} /> {mLoading ? t("markets.scanning") : t("markets.forceRescan")}
               </button>
             </div>
+          </div>
+          {/* 语义层阶段计数 + 引擎标识 */}
+          <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+            {(["ACCUMULATION", "IGNITION", "VERTICAL", "DISTRIBUTION", "CRASH", "DORMANT", "ACTIVE"] as const).map((st) => {
+              const n = stageCounts[st] ?? 0;
+              if (!n) return null;
+              return (
+                <span key={st} className={`pill ${STAGE_META[st]?.cls ?? "pill-dim"} text-[9.5px]`}>
+                  {t(`markets.stage.${st}`)} ×{n}
+                </span>
+              );
+            })}
+            {engine && <span className="pill pill-dim text-[9px]">engine v{engine.replace(/^v/, "")}</span>}
           </div>
           {/* 模式切换 */}
           <div className="flex items-center gap-1.5 mt-2">
@@ -532,6 +568,108 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
           </div>
         </div>
       )}
+
+      {/* v1.5.0 三面板：爆仓流 / 多空比·大户 / funding 极值榜 */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* 爆仓流面板 */}
+        <div className="glass p-4" style={{ borderRadius: 12 }}>
+          <div className="flex items-center gap-2 mb-3">
+            <I.Zap size={14} className="text-gold" />
+            <span className="font-mono text-[12px] tracking-wider text-ink">{t("markets.liqTitle")}</span>
+            <span className={`pill ml-auto text-[9.5px] ${liq?.ws?.connected ? "pill-green" : "pill-dim"}`}>
+              {liq?.ws?.connected ? t("markets.liqOn") : t("markets.liqWait")}
+            </span>
+          </div>
+          {liq?.stats && (
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              <div className="rounded-md border border-red/40 bg-red/5 px-2 py-1.5 text-center">
+                <div className="font-mono tabular text-[13px] text-red font-semibold">${((liq.stats.long_quote ?? 0) / 1e6).toFixed(2)}M</div>
+                <div className="font-mono text-[9px] text-ink-mute">{t("markets.liqLong5m", { n: liq.stats.long_count ?? 0 })}</div>
+              </div>
+              <div className="rounded-md border border-green/40 bg-green/5 px-2 py-1.5 text-center">
+                <div className="font-mono tabular text-[13px] text-green font-semibold">${((liq.stats.short_quote ?? 0) / 1e6).toFixed(2)}M</div>
+                <div className="font-mono text-[9px] text-ink-mute">{t("markets.liqShort5m", { n: liq.stats.short_count ?? 0 })}</div>
+              </div>
+            </div>
+          )}
+          <div className="space-y-1 max-h-56 overflow-y-auto">
+            {(liq?.recent ?? []).slice(0, 12).map((r, i) => (
+              <button key={i} onClick={() => onTrade?.(r.symbol)}
+                className="w-full flex items-center gap-2 font-mono text-[10.5px] hover:bg-elevated/40 rounded px-1 py-0.5 transition-colors">
+                <span className={`w-9 text-center rounded ${r.kind === "long" ? "text-red bg-red/10" : "text-green bg-green/10"}`}>
+                  {r.kind === "long" ? t("markets.liqLong") : t("markets.liqShort")}
+                </span>
+                <span className="text-ink flex-1 text-left truncate">{baseName(r.symbol)}</span>
+                <span className="text-ink-dim tabular">{fmtPrice(r.price)}</span>
+                <span className="text-gold tabular">${r.quote >= 1e6 ? `${(r.quote / 1e6).toFixed(2)}M` : r.quote >= 1e3 ? `${(r.quote / 1e3).toFixed(0)}K` : r.quote.toFixed(0)}</span>
+              </button>
+            ))}
+            {(liq?.recent ?? []).length === 0 && (
+              <div className="text-[10.5px] text-ink-mute font-mono py-2">{t("markets.liqNone")}</div>
+            )}
+          </div>
+        </div>
+
+        {/* 多空比 / 大户持仓面板 */}
+        <div className="glass p-4" style={{ borderRadius: 12 }}>
+          <div className="flex items-center gap-2 mb-3">
+            <I.Bolt size={14} className="text-gold" />
+            <span className="font-mono text-[12px] tracking-wider text-ink">{t("markets.lsTitle")}</span>
+            <span className="pill pill-dim ml-auto text-[9.5px]">1h</span>
+          </div>
+          <div className="space-y-1.5 max-h-64 overflow-y-auto">
+            {ls.slice(0, 10).map((r) => (
+              <button key={r.symbol} onClick={() => onTrade?.(r.symbol)}
+                className="w-full flex items-center gap-2 font-mono text-[10.5px] hover:bg-elevated/40 rounded px-1 py-0.5 transition-colors">
+                <span className="text-ink flex-1 text-left truncate">{baseName(r.symbol)}</span>
+                {r.divergence && <span className="pill pill-gold text-[8.5px]">{t("markets.lsDiverge")}</span>}
+                <span className="text-ink-dim tabular" title={t("markets.lsTop")}>
+                  {t("markets.lsTopShort")} {r.top_ratio != null ? r.top_ratio.toFixed(2) : "—"}
+                </span>
+                <span className="text-ink-mute tabular" title={t("markets.lsGlobal")}>
+                  {t("markets.lsGlobalShort")} {r.global_ratio != null ? r.global_ratio.toFixed(2) : "—"}
+                </span>
+              </button>
+            ))}
+            {ls.length === 0 && <div className="text-[10.5px] text-ink-mute font-mono py-2">{t("markets.noData")}</div>}
+          </div>
+        </div>
+
+        {/* funding 极值榜 */}
+        <div className="glass p-4" style={{ borderRadius: 12 }}>
+          <div className="flex items-center gap-2 mb-3">
+            <I.Arrow size={14} className="text-gold" />
+            <span className="font-mono text-[12px] tracking-wider text-ink">{t("markets.fundExtTitle")}</span>
+            <span className="pill pill-dim ml-auto text-[9.5px]">|r|≥0.30%</span>
+          </div>
+          {(ov?.funding?.flips ?? []).length > 0 && (
+            <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+              {ov!.funding!.flips!.slice(0, 4).map((fl) => (
+                <span key={fl.symbol} className="pill pill-gold text-[9px]" title={`${fmtRate(fl.prev)} → ${fmtRate(fl.last)}`}>
+                  {baseName(fl.symbol)} {t("markets.fundFlipTo", { to: fl.to })}
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="space-y-1 max-h-56 overflow-y-auto">
+            {(ov?.funding?.extremes ?? []).slice(0, 10).map((f, i) => (
+              <button key={i} onClick={() => onTrade?.(f.symbol)}
+                className="w-full flex items-center gap-2 font-mono text-[10.5px] hover:bg-elevated/40 rounded px-1 py-0.5 transition-colors">
+                <span className="text-ink flex-1 text-left truncate">{baseName(f.symbol)}</span>
+                <span className={`tabular ${f.funding_rate > 0 ? "text-red" : "text-green"}`}>
+                  {f.funding_rate > 0 ? "+" : ""}{(f.funding_rate * 100).toFixed(3)}%
+                </span>
+                <span className={`text-[9.5px] ${f.funding_rate > 0 ? "text-red" : "text-green"}`}>
+                  {t(f.funding_rate > 0 ? "markets.fundLongSide" : "markets.fundShortSide")}
+                </span>
+              </button>
+            ))}
+            {(ov?.funding?.extremes ?? []).length === 0 && (
+              <div className="text-[10.5px] text-ink-mute font-mono py-2">{t("markets.noData")}</div>
+            )}
+          </div>
+        </div>
+      </div>
 
       {/* 智能异动信号（全市场扫描） */}
       {data && data.signals && data.signals.length > 0 && (

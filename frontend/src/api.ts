@@ -42,6 +42,10 @@ export const api = {
   marketIgnition: (force = false) => jget("/market/ignition" + (force ? "?force=1" : "")),
   marketOverview: () => jget("/market/overview"),
   marketFutures: () => jget("/market/futures"),
+  marketRadar: (force = false) => jget("/market/radar" + (force ? "?force=1" : "")),
+  marketLongshort: () => jget("/market/longshort"),
+  marketLiquidations: (limit = 60, window = 300) =>
+    jget(`/market/liquidations?limit=${limit}&window=${window}`),
   conversations: (includeArchived = false) =>
     jget("/conversations" + (includeArchived ? "?include_archived=1" : "")),
   rooms: () => jget("/rooms"),

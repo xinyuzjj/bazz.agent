@@ -21,8 +21,32 @@ export type RadarRow = {
   tag: string; side: "LONG" | "WATCH_SHORT" | "WATCH"; note: string; score: number;
   change7d_pct?: number; change30d_pct?: number; drawdown_pct?: number;
   change3d_pct?: number; position_pct?: number; floor_rising?: boolean;
+  // v1.5.0 雷达 v2：语义层阶段 + 确认层因子
+  stage?: string; stage_label?: string;
+  change1h_pct?: number; change24_pct?: number; rvol15?: number; amp24?: number;
+  cooldown?: boolean; listed_days?: number | null;
+  factors?: {
+    flow?: number; jump?: number; speed5m?: number; rvol15?: number; amp24?: number;
+    funding?: number; funding_peak?: number | null;
+    oi_chg24?: number; oi_pulse15?: number;
+    top_ratio?: number | null; global_ratio?: number | null; taker_ratio?: number | null;
+    liq_5m?: number; liq_side?: string;
+    btc_beta?: number | null; btc_residual?: number | null;
+  };
+  reasons?: string[];
 };
 export type OrderMode = "spot-long" | "futures-long" | "futures-short";
+
+// v1.5.0 语义层六阶段 → pill 样式（吸筹/点火=绿，垂直拉升=金，派发顶/崩跌=红，沉寂/异动=灰）
+export const STAGE_META: Record<string, { cls: string }> = {
+  ACCUMULATION: { cls: "pill-green" },
+  IGNITION:     { cls: "pill-green" },
+  VERTICAL:     { cls: "pill-gold" },
+  DISTRIBUTION: { cls: "pill-red" },
+  CRASH:        { cls: "pill-red" },
+  DORMANT:      { cls: "pill-dim" },
+  ACTIVE:       { cls: "pill-dim" },
+};
 
 export const SIDE_META: Record<RadarRow["side"], { label: string; cls: string }> = {
   LONG: { label: "markets.sideLong", cls: "pill-green" },
@@ -187,18 +211,36 @@ export const RadarLine = memo(function RadarLine({ m, mode, onTrade, onOrder, on
   const t = useT();
   const side = SIDE_META[m.side];
   const isIgn = mode === "ignition";
+  // v1.5.0 确认因子摘要（悬浮 title / 次行展示）
+  const f = m.factors ?? {};
+  const bits: string[] = [];
+  if (f.flow != null) bits.push(`flow ${f.flow}`);
+  if (f.jump != null && f.jump > 0) bits.push(`J${f.jump.toFixed(1)}`);
+  if (f.speed5m != null && Math.abs(f.speed5m) >= 0.3) bits.push(`5m ${f.speed5m > 0 ? "+" : ""}${f.speed5m.toFixed(1)}%`);
+  if (f.rvol15 != null && f.rvol15 >= 1.2) bits.push(`RVOL ${f.rvol15.toFixed(1)}x`);
+  if (f.funding != null && Math.abs(f.funding) >= 0.0015) bits.push(`费率${f.funding > 0 ? "+" : ""}${(f.funding * 100).toFixed(3)}%`);
+  if (f.oi_chg24 != null && Math.abs(f.oi_chg24) >= 5) bits.push(`OI ${f.oi_chg24 > 0 ? "+" : ""}${f.oi_chg24.toFixed(0)}%`);
+  if (f.top_ratio != null) bits.push(`大户 ${f.top_ratio.toFixed(2)}`);
+  if (f.taker_ratio != null && f.taker_ratio >= 1.5) bits.push(`taker ${f.taker_ratio.toFixed(2)}`);
+  if (f.liq_5m != null && f.liq_5m >= 3e5) bits.push(`爆 $${(f.liq_5m / 1e6).toFixed(1)}M${f.liq_side === "long" ? "多" : f.liq_side === "short" ? "空" : ""}`);
+  const stageCls = m.stage ? STAGE_META[m.stage]?.cls ?? "pill-dim" : "pill-dim";
   return (
     <div onClick={() => onTrade?.(m.symbol)}
       className="grid items-center px-4 py-2.5 border-b border-line/60 last:border-0 hover:bg-elevated/40 transition-colors cursor-pointer group"
       style={{ gridTemplateColumns: RADAR_COLS[mode].tpl }}>
       <div className="min-w-0">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="font-mono font-semibold text-ink group-hover:text-gold">{baseName(m.symbol)}</span>
           <span className="font-mono text-[9px] text-ink-mute">/USDT</span>
-          <span className={`pill ${m.side === "LONG" ? "pill-green" : m.side === "WATCH_SHORT" ? "pill-red" : "pill-dim"} text-[9px]`} title={m.tag}>{m.tag}</span>
+          {m.stage_label && <span className={`pill ${stageCls} text-[9px]`} title={m.tag}>{m.stage_label}</span>}
+          {!m.stage_label && <span className={`pill ${m.side === "LONG" ? "pill-green" : m.side === "WATCH_SHORT" ? "pill-red" : "pill-dim"} text-[9px]`} title={m.tag}>{m.tag}</span>}
+          <span className="pill pill-dim text-[9px]" title={t("markets.scoreTitle")}>{t("markets.scorePrefix")}{m.score}</span>
+          {m.cooldown && <span className="pill pill-dim text-[9px]" title={t("markets.cooldownTitle")}>{t("markets.cooldown")}</span>}
           {isIgn && m.floor_rising && <span className="pill pill-dim text-[9px]" title={t("markets.floorRisingTitle")}>{t("markets.floorRising")}</span>}
         </div>
-        <div className="font-mono text-[9.5px] text-ink-mute truncate mt-0.5" title={m.note}>{m.note}</div>
+        <div className="font-mono text-[9.5px] text-ink-mute truncate mt-0.5" title={bits.length ? bits.join(" · ") : m.note}>
+          {bits.length ? bits.join(" · ") : m.note}
+        </div>
       </div>
       <div className="font-mono tabular text-ink text-[12px]">{fmtPrice(m.price)}</div>
 
