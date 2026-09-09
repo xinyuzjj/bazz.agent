@@ -216,7 +216,7 @@ jobs:
           # 显式 exit 0，保证「无上一版清单 → 跳过差分包」这类预期场景永远视为成功。
           exit 0
 
-      - name: 发布 / 更新 GitHub Release（介绍 = 仓库 RELEASE_NOTES.md）
+      - name: 发布 / 更新 GitHub Release（介绍 = 当前版本小节）
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -228,9 +228,33 @@ jobs:
           $assets = @($zip, $setup, $sums, "$env:BAZZ_STAGE/dist_desktop/MANIFEST.json")
           $delta = "$env:BAZZ_STAGE/dist_desktop/delta-$env:BAZZ_VERSION.zip"
           if (Test-Path $delta) { $assets += $delta }
-          # 优先用仓库内人工维护的产品介绍（更有可读性）；缺失时退回 GitHub 自动生成的 commit 摘要
-          $notesFile = Join-Path $env:GITHUB_WORKSPACE "RELEASE_NOTES.md"
-          if (-not (Test-Path $notesFile)) { $notesFile = $null }
+          # 介绍只放「当前版本」的更新内容：从 RELEASE_NOTES.md 截取 ## 标题含 v<版本> 的小节
+          # （到下一个 ## 二级标题为止）；找不到时回退整份文件。历史版本介绍不再堆进 Release。
+          $notesFile = $null
+          $src = Join-Path $env:GITHUB_WORKSPACE "RELEASE_NOTES.md"
+          if (Test-Path $src) {
+            $lines = Get-Content $src
+            $start = -1
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+              if ($lines[$i] -match ('^##\s.*v' + [regex]::Escape($env:BAZZ_VERSION) + '(?![.\d])')) { $start = $i; break }
+            }
+            if ($start -ge 0) {
+              $end = $lines.Count
+              for ($i = $start + 1; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -match '^##\s') { $end = $i; break }
+              }
+              $out = Join-Path $env:BAZZ_STAGE "notes-v$env:BAZZ_VERSION.md"
+              $lines[$start..($end - 1)] | Set-Content $out -Encoding UTF8
+              $notesFile = $out
+              Write-Host "介绍截取当前版本小节：RELEASE_NOTES.md 行 $start..$($end - 1) → $out"
+            }
+          }
+          if ($notesFile) {
+            Write-Host "使用当前版本小节作为 Release 介绍"
+          } else {
+            $notesFile = if (Test-Path $src) { $src } else { $null }
+            Write-Host "未找到 v$env:BAZZ_VERSION 小节，回退整份 RELEASE_NOTES.md"
+          }
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
             Write-Host "Release $tag 已存在 → 覆盖上传资产 + 同步介绍"
@@ -240,7 +264,7 @@ jobs:
               gh release edit $tag --repo $env:GITHUB_REPOSITORY --notes-file $notesFile
             }
           } else {
-            Write-Host "创建 Release $tag（介绍 = RELEASE_NOTES.md）"
+            Write-Host "创建 Release $tag（介绍 = 当前版本更新内容）"
             if ($notesFile) {
               gh release create $tag $assets --repo $env:GITHUB_REPOSITORY `
                 --title "BAZZ.AGENT $tag" --notes-file $notesFile

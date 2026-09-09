@@ -274,3 +274,28 @@ if not os.path.exists(_MIGRATE_V4_FLAG):
             f.write(time.strftime("%Y-%m-%d %H:%M:%S"))
     except OSError:
         pass
+
+
+# —— v5 整理：清掉历史嵌套的 <工作区>/workspace（无冲突时上提内容）——
+# v1.3.3 早期 run_command 与 write_file 对 workspace/ 前缀映射不一致，
+# 用户让 Agent 建文件夹时会在工作区里再套一层 workspace/（如 workspace/workspace/妖币/…）。
+# 幂等：目录不存在 / 有命名冲突时不动任何东西。
+def _tidy_nested_workspace() -> None:
+    nested = os.path.join(WORKSPACE, "workspace")
+    if not os.path.isdir(nested):
+        return
+    try:
+        conflicts = [n for n in os.listdir(nested) if os.path.lexists(os.path.join(WORKSPACE, n))]
+        if conflicts:
+            print(f"[workspace] 发现嵌套 workspace/ 且有同名冲突，跳过自动整理: {conflicts}")
+            return
+        for name in os.listdir(nested):
+            _move(os.path.join(nested, name), os.path.join(WORKSPACE, name), f"v5 上提 → {name}")
+        if not os.listdir(nested):
+            os.rmdir(nested)
+            print(f"[workspace] v5 清理嵌套目录 {nested}")
+    except OSError as e:
+        print(f"[workspace] v5 整理失败（忽略，不影响启动）: {e}")
+
+
+_tidy_nested_workspace()

@@ -216,6 +216,32 @@ def resolve_write(path: str) -> str:
     return p
 
 
+def _resolve_sh_path(path: str, write: bool = True) -> str:
+    """run_command wrapper（mkdir/mv/cp/rm…）的路径解析 —— shell 语义。
+
+    与 write_file 的 workspace/ 前缀映射**同规则**：`workspace/妖币` 与 `妖币`
+    都解析到 <工作区>/妖币。v1.3.3 早期两者不一致（wrapper 把 workspace/ 当成
+    字面子目录），导致用户要建「妖币」文件夹时在工作区里又套了一层 workspace/。
+    落点仍必须落在可写根（write=True）或可读根内，越界即拒。
+    """
+    raw = (path or "").strip().strip('"')
+    if not raw:
+        raise SandboxError("path 为空")
+    if os.path.isabs(raw):
+        p = _norm(raw)
+    else:
+        try:
+            p = _resolve_model_path(raw)  # workspace/ · .workbuddy/generated/ 前缀同规则映射
+        except SandboxError:
+            p = os.path.normpath(os.path.join(SANDBOX_ROOT, raw.replace("\\", "/").lstrip("/")))
+    roots = WRITE_ROOTS if write else (PROJECT_ROOT, SANDBOX_ROOT)
+    if not any(_under(root, p) for root in roots):
+        raise SandboxError(f"{'只允许在工作区内操作，越界' if write else '只能读取项目目录或工作区内文件，越界'}: {path}")
+    if _is_blacklisted(p):
+        raise SandboxError(f"路径命中黑名单目录: {path}")
+    return p
+
+
 def read_text(path: str, max_bytes: int = 6000, max_lines: int = 260) -> dict:
     """读取文本内容（截断防爆）。返回 {content, path, bytes, truncated}。"""
     p = resolve_read(path)
@@ -335,18 +361,25 @@ def _fmt_size(n: int) -> str:
 
 
 def _cwd_path(arg: str) -> str:
-    """解析 wrapper 命令里的相对路径 → 绝对路径（锚定工作区根；工作区无此路径而代码根有时回退代码根）。"""
+    """解析 wrapper 命令里的路径 → 绝对路径（与 write_file 同规则映射 workspace/
+    .workbuddy/generated/ 前缀；其余相对路径锚工作区根，工作区无此路径而代码根有时回退代码根）。"""
     p = (arg or ".").strip()
     if p in ("", "."):
         return SANDBOX_ROOT
     if not os.path.isabs(p):
-        norm = p.replace("\\", "/").lstrip("/")
-        cand_ws = os.path.normpath(os.path.join(SANDBOX_ROOT, norm))
-        cand_pr = os.path.normpath(os.path.join(PROJECT_ROOT, norm))
-        if not os.path.exists(cand_ws) and os.path.exists(cand_pr):
-            return cand_pr
-        return cand_ws
-    return _norm(p)
+        try:
+            cand = _resolve_model_path(p)  # workspace/… · .workbuddy/generated/… 同规则
+        except SandboxError:
+            norm = p.replace("\\", "/").lstrip("/")
+            cand_ws = os.path.normpath(os.path.join(SANDBOX_ROOT, norm))
+            cand_pr = os.path.normpath(os.path.join(PROJECT_ROOT, norm))
+            cand = cand_pr if (not os.path.exists(cand_ws) and os.path.exists(cand_pr)) else cand_ws
+    else:
+        cand = _norm(p)
+    # 越界拒绝（ls workspace/../../ 等）
+    if not (_under(PROJECT_ROOT, cand) or _under(SANDBOX_ROOT, cand)):
+        raise SandboxError(f"只能访问项目目录或工作区内路径（越界: {arg}）")
+    return cand
 
 
 def _w_ls(toks):
@@ -645,7 +678,7 @@ def _w_mkdir(toks):
     rest = [t for t in toks[1:] if t != "-p"]
     if not rest:
         raise SandboxError("mkdir 用法: mkdir [-p] <path>")
-    p = resolve_write(rest[0])
+    p = _resolve_sh_path(rest[0])
     os.makedirs(p, exist_ok=rec)
     return f"✅ mkdir {_disp(p)}"
 
@@ -654,7 +687,7 @@ def _w_touch(toks):
     """touch <path>"""
     if len(toks) < 2:
         raise SandboxError("touch 用法: touch <path>")
-    p = resolve_write(toks[1])
+    p = _resolve_sh_path(toks[1])
     os.makedirs(os.path.dirname(p), exist_ok=True)
     if not os.path.exists(p):
         open(p, "w", encoding="utf-8").close()
@@ -668,7 +701,7 @@ def _w_cp(toks):
     if len(toks) != 3:
         raise SandboxError("cp 用法: cp <src> <dst>")
     src = resolve_read(toks[1])
-    dst = resolve_write(toks[2])
+    dst = _resolve_sh_path(toks[2])
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     import shutil
     shutil.copy2(src, dst)
@@ -680,12 +713,8 @@ def _w_mv(toks):
     if len(toks) != 3:
         raise SandboxError("mv 用法: mv <src> <dst>")
     src = resolve_read(toks[1])
-    dst_p = _cwd_path(toks[2])
-    if not (_under(PROJECT_ROOT, dst_p) or _under(SANDBOX_ROOT, dst_p)) or _is_blacklisted(dst_p):
-        dst = resolve_write(toks[2])
-    else:
-        os.makedirs(os.path.dirname(dst_p), exist_ok=True)
-        dst = dst_p
+    dst = _resolve_sh_path(toks[2])
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
     import shutil
     shutil.move(src, dst)
     return f"✅ mv {_disp(src)} → {_disp(dst)}"
@@ -698,7 +727,7 @@ def _w_rm(toks):
     args = [t for t in toks[1:] if not t.startswith("-")]
     if not args:
         raise SandboxError("rm 用法: rm <file>")
-    p = resolve_write(args[0])  # 必须落在白名单写目录
+    p = _resolve_sh_path(args[0])  # 必须落在工作区内
     if os.path.isdir(p):
         raise SandboxError("rm 不接受目录；改用脚本/手动")
     if os.path.isfile(p):
