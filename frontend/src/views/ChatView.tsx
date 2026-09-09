@@ -66,6 +66,9 @@ export function ChatView({
   const [fileModal, setFileModal] = useState<{ name: string; path: string; size: number; is_text: boolean; content: string; too_large?: boolean; loading: boolean; error?: string } | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [convMenu, setConvMenu] = useState<string | null>(null); // 当前展开 ⋮ 菜单的会话 id
+  // v1.4.3 会话搜索：防抖调 /api/conversations/search；convHits 非空 = 搜索态（列表显示命中结果）
+  const [convQuery, setConvQuery] = useState("");
+  const [convHits, setConvHits] = useState<any[] | null>(null);
   const [wlItems, setWlItems] = useState<string[]>([]);
   const [wlOpen, setWlOpen] = useState(false);
   const [listening, setListening] = useState(false); // Web Speech 录音中
@@ -203,6 +206,15 @@ export function ChatView({
     api.conversations(true).then((d: any) => setConversations(Array.isArray(d) ? d : d?.items ?? [])).catch(() => {});
     api.rooms().then((d: any) => setRooms(Array.isArray(d?.rooms) ? d.rooms : [])).catch(() => {});
   };
+  // 会话搜索（v1.4.3）：300ms 防抖；清空即回到普通列表
+  useEffect(() => {
+    const q = convQuery.trim();
+    if (!q) { setConvHits(null); return; }
+    const id = setTimeout(() => {
+      api.searchConversations(q).then((d: any) => setConvHits(Array.isArray(d) ? d : [])).catch(() => setConvHits(null));
+    }, 300);
+    return () => clearTimeout(id);
+  }, [convQuery]);
   // 房间（群聊）加载/开关
   useEffect(() => { if (leftTab === "bots") { api.rooms().then((d: any) => setRooms(Array.isArray(d?.rooms) ? d.rooms : [])).catch(() => {}); } }, [leftTab]);
   const openRoomConv = (c: any) => {
@@ -784,7 +796,7 @@ export function ChatView({
         pushLog(`ERR > ${e?.message ?? e}`);
         setMessages((m) => m.map((x) => x.id === asstId ? { ...x, text: t("chat.streamFail", { err: e?.message ?? e }), pending: false } : x));
       }
-    } finally { setStreaming(false); abortRef.current = null; refreshList(); }
+    } finally { setStreaming(false); abortRef.current = null; refreshList(); /* 5s 后再刷一次：等自动标题落库 */ setTimeout(refreshList, 5000); }
   };
   // Stop：中断当前生成（前端断开流；后端断连后不再落库该条回复）
   const stopGen = () => { abortRef.current?.abort(); };
@@ -986,6 +998,13 @@ export function ChatView({
     if (scopeName) return c.persona === scopeName;
     return !c.persona || c.persona === "__group__";
   });
+  // 搜索态（v1.4.3）：命中结果同样按当前作用域过滤；preview 已替换为命中片段
+  const searching = convHits !== null;
+  const convList = searching ? convHits!.filter((c: any) => {
+    if (c.kind === "room") return false;
+    if (scopeName) return c.persona === scopeName;
+    return !c.persona || c.persona === "__group__";
+  }) : sessConvs;
 
   return (
     <div className="grid grid-cols-12 gap-4 p-5 h-full">
@@ -1020,14 +1039,27 @@ export function ChatView({
                   {autoExec && <span className="ml-auto inline-flex items-center gap-1 px-1 py-px rounded text-[9px] text-gold border border-gold/40 bg-gold/5">🌟 {t("chat.omni")}</span>}
                 </div>
               )}
+              <div className="relative mb-1.5">
+                <I.Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-mute pointer-events-none" />
+                <input value={convQuery} onChange={(e) => setConvQuery(e.target.value)}
+                  placeholder={t("chat.searchConvs")}
+                  className="w-full field !py-1.5 !pl-7 !pr-7 !text-[11px] font-mono" />
+                {convQuery && (
+                  <button onClick={() => setConvQuery("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-mute hover:text-ink">
+                    <I.X size={11} />
+                  </button>
+                )}
+              </div>
               <button onClick={newConv}
                 className="w-full text-left rounded-md px-3 py-2 border border-line bg-card/40 hover:bg-elevated/60 flex items-center gap-2">
                 <I.Plus size={12} className="text-gold" /><span className="font-mono text-[12px] text-ink">{scopeName ? t("sessions.newConvForAgent", { agent: scopeName }) : t("sessions.newConv")}</span>
               </button>
-              {[
-                ...sessConvs.filter((c: any) => !c.archived),
-                ...(showArchived ? sessConvs.filter((c: any) => c.archived) : []),
-              ].map((c: any) => (
+              {(searching
+                ? convList
+                : [...convList.filter((c: any) => !c.archived),
+                   ...(showArchived ? convList.filter((c: any) => c.archived) : [])]
+              ).map((c: any) => (
                 <div key={c.id}
                   onContextMenu={(e) => { e.preventDefault(); if (c.kind !== "room") { setRenamingId(c.id); setRenameDraft(c.title || ""); } }}
                   onClick={() => selectConv(c.id)}
@@ -1054,7 +1086,10 @@ export function ChatView({
                         {c.archived && <span className="text-ink-mute mr-1">{t("sessions.archived")}</span>}
                         {c.title || c.id.slice(0, 8)}
                       </span>
-                      <span className="font-mono text-[9.5px] text-ink-mute shrink-0 ml-1">{c.kind === "group" ? t("sessions.groupView") : fmtWhen(c.updated_at)}</span>
+                      <span className="font-mono text-[9.5px] text-ink-mute shrink-0 ml-1">
+                        {!!c.hits && <span className="text-gold mr-1.5">🔍{c.hits}</span>}
+                        {c.kind === "group" ? t("sessions.groupView") : fmtWhen(c.updated_at)}
+                      </span>
                     </div>
                   )}
                   <div className="font-mono text-[10px] text-ink-mute mt-0.5 truncate pr-4">{c.preview ?? t("sessions.empty")}</div>
@@ -1099,7 +1134,8 @@ export function ChatView({
                 );
               })()}
               {loadingHist && <div className="shimmer h-8 mt-1" />}
-              {sessConvs.length === 0 && <div className="text-[12px] text-ink-mute text-center py-6 font-mono">{scopeName ? t("chat.noConvsBot") : t("chat.noConvs")}</div>}
+              {searching && convList.length === 0 && <div className="text-[12px] text-ink-mute text-center py-6 font-mono">{t("chat.searchNoHit")}</div>}
+              {!searching && sessConvs.length === 0 && <div className="text-[12px] text-ink-mute text-center py-6 font-mono">{scopeName ? t("chat.noConvsBot") : t("chat.noConvs")}</div>}
             </div>
           )}
 

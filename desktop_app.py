@@ -457,6 +457,13 @@ async def chat_stream(req: Request):
                 agent_core.auto_memorize(message, reply, llm_cfg=llm_cfg)
             except Exception:
                 pass
+            # v1.4.3 会话标题自动生成：标题仍为默认截断时，后台线程用 summarize 槽位升级（失败静默）
+            if conv_id and str(reply or "").strip():
+                try:
+                    threading.Thread(target=agent_core.auto_title, args=(conv_id,),
+                                     kwargs={"llm_cfg": llm_cfg}, daemon=True, name="auto-title").start()
+                except Exception:
+                    pass
 
         try:
             for ev in agent_core.run_stream(message, confirm=confirm, signal=signal, approval=approval,
@@ -489,6 +496,9 @@ async def chat_stream(req: Request):
             except GeneratorExit:
                 pass
             _persist()
+        else:
+            # v1.4.3 修复：流自然完成此前从不落库（仅 Stop 断开/异常时才写库），补上 else 分支
+            _persist()
 
     return StreamingResponse(gen(), media_type="application/x-ndjson")
 
@@ -517,6 +527,15 @@ async def rename_conv(cid: str, req: Request):
         return JSONResponse({"error": "not found"}, status_code=404)
     state.touch_conversation(cid, title=title)
     return {"ok": True, "id": cid, "title": title}
+
+
+@app.get("/api/conversations/search")
+def search_conv(request: Request):
+    # v1.4.3 会话搜索：LIKE 匹配标题+消息正文。注意必须注册在 /api/conversations/{cid} 之前
+    q = (request.query_params.get("q") or "").strip()
+    if not q:
+        return []
+    return state.search_conversations(q, limit=30)
 
 
 # ---------------- 群聊房间 CRUD（Hermes Bot Mode rooms） ----------------

@@ -56,6 +56,8 @@ export const api = {
     jpost("/conversations/" + encodeURIComponent(id) + "/archive", { archived }),
   renameConversation: (id: string, title: string) =>
     jpost("/conversations/" + encodeURIComponent(id) + "/rename", { title }),
+  searchConversations: (q: string) =>
+    jget("/conversations/search?q=" + encodeURIComponent(q)),
   workspaceFiles: (path: string = "") =>
     jget("/workspace/files?path=" + encodeURIComponent(path)),
   workspaceRead: (path: string) =>

@@ -231,6 +231,63 @@ def get_conversation(cid):
     return _conv_out(r) if r else None
 
 
+def _msg_snippet(content, q, width=72):
+    """在消息正文里定位关键词首次出现处，返回带省略号的上下文片段（无命中返回开头截断）。"""
+    text = " ".join(str(content or "").split())
+    if not text:
+        return ""
+    i = text.lower().find(str(q).lower())
+    if i < 0:
+        return text[:width] + ("…" if len(text) > width else "")
+    start = max(0, i - 20)
+    seg = text[start:start + width]
+    return ("…" if start > 0 else "") + seg + ("…" if start + width < len(text) else "")
+
+
+def search_conversations(q, limit=30):
+    """会话搜索（v1.4.3，学习 Hermes session_search）：LIKE 匹配标题 + 全部消息正文，
+    返回会话卡片（含命中片段 hits 片段与命中条数）。room 房间不参与（另有入口管理）。"""
+    q = str(q or "").strip()
+    if not q:
+        return []
+    like = f"%{q}%"
+    c = _conn_get()
+    hits = {}  # cid -> {"snippet": 最近一条命中片段, "n": 命中消息条数}
+    try:
+        mrows = c.execute(
+            "SELECT conv_id, content FROM messages WHERE content LIKE ? "
+            "ORDER BY created_at DESC LIMIT 500", (like,)).fetchall()
+        trows = c.execute(
+            "SELECT id FROM conversations WHERE title LIKE ? LIMIT 50", (like,)).fetchall()
+    except Exception:
+        return []
+    for r in mrows:
+        h = hits.setdefault(r["conv_id"], {"snippet": "", "n": 0})
+        h["n"] += 1
+        if not h["snippet"]:
+            h["snippet"] = _msg_snippet(r["content"], q)
+    for r in trows:
+        hits.setdefault(r["id"], {"snippet": "", "n": 0})
+    out = []
+    for cid, h in hits.items():
+        r = c.execute(
+            "SELECT id,title,persona,kind,members_json,provider_snapshot,archived,created_at,updated_at "
+            "FROM conversations WHERE id=?", (cid,)).fetchone()
+        if not r or (r["kind"] or "dm") == "room":
+            continue
+        d = _conv_out(r)
+        d["preview"] = h["snippet"]
+        d["hits"] = h["n"]
+        if not d["preview"]:
+            last = c.execute(
+                "SELECT content FROM messages WHERE conv_id=? ORDER BY created_at DESC LIMIT 1",
+                (cid,)).fetchone()
+            d["preview"] = (last["content"][:60] if last else "")
+        out.append(d)
+    out.sort(key=lambda d: d.get("updated_at", 0), reverse=True)
+    return out[:limit]
+
+
 def list_rooms():
     """群聊房间（Hermes: shared ordered room log, one conversation kind='room'）。"""
     rows = _conn_get().execute(

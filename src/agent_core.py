@@ -944,6 +944,100 @@ def auto_memorize(user_msg: str, reply: str, llm_cfg: dict = None) -> dict:
     return {"stored": len(keys), "keys": keys, "skipped": ""}
 
 
+# ---------------- 会话标题自动生成（v1.4.3，学习 Hermes title_generator） ----------------
+
+def _clean_title(raw: str) -> str:
+    """清洗模型产出的标题：剥围栏/JSON/引号/前缀，拒绝答案形状的超长输出（不截断）。"""
+    if not raw:
+        return ""
+    t = str(raw).strip()
+    if t.startswith("```"):
+        t = t.strip("`").removeprefix("json").strip()
+    try:
+        j = json.loads(t)
+        if isinstance(j, dict) and isinstance(j.get("title"), str):
+            t = j["title"].strip()
+    except Exception:
+        pass
+    if t.lower().startswith("title:"):
+        t = t[6:].strip()
+    t = t.strip("\"'「」『』“” 　").rstrip(".。，,！!？?；;：:…")
+    t = (t.splitlines() or [""])[0].strip()
+    if len(t) > 30:  # 答案形状输出（模型在回答而非命名）→ 整条拒绝
+        return ""
+    return t
+
+
+def auto_title(cid: str, llm_cfg: dict = None):
+    """会话标题自动升级：标题仍是默认截断（首条用户消息前 28 字 / 「新对话」/ @档案 前缀）时，
+    用 summarize 槽位模型生成 4-16 字标题落库。后台线程调用，失败静默；
+    用户手动改过或已有自动标题的不覆盖（写库前二次校验防改名竞态）。"""
+    if not cid:
+        return {"skipped": "no cid"}
+    try:
+        import state as _state
+        conv = _state.get_conversation(cid)
+        if not conv:
+            return {"skipped": "no conv"}
+        first_user = ""
+        for m in _state.get_messages(cid):
+            if m.get("role") == "user" and (m.get("content") or "").strip():
+                first_user = m["content"].strip()
+                break
+        if not first_user:
+            return {"skipped": "no user msg"}
+        persona_name = conv.get("persona") or ""
+        cur = (conv.get("title") or "").strip()
+        base = first_user[:28]
+        defaults = {d for d in ("新对话", base, (f"@{persona_name} · {base}" if persona_name else "")) if d}
+        if cur not in defaults:
+            return {"skipped": "already titled"}
+        sysp = ("你是对话命名器。根据用户的第一条消息，给这段对话起一个便于在会话列表中再次找到它的标题。\n"
+                "规则：4-16 个字；说清用户想做什么事，不写问句；保留关键术语/币种/数字；"
+                "去掉「帮我/请/我想」等填充词；结尾不带标点；只命名，不要回答消息内容。\n"
+                '只输出 JSON：{"title": "..."}')
+        out = llm.chat(sysp, first_user[:500], temperature=0.3, max_tokens=64,
+                       llm_cfg=llm_cfg, task="summarize")
+        title = _clean_title(out)
+        if not title:
+            return {"skipped": "model no title"}
+        if persona_name:
+            title = f"@{persona_name} · {title}"
+        conv2 = _state.get_conversation(cid) or {}
+        if (conv2.get("title") or "").strip() != cur:
+            return {"skipped": "renamed during generation"}
+        _state.touch_conversation(cid, title=title[:60])
+        return {"ok": True, "title": title}
+    except Exception as e:
+        return {"skipped": str(e)[:120]}
+
+
+def _run_search_history(query: str = "") -> Dict[str, Any]:
+    """搜索本地历史会话（v1.4.3）：标题 + 消息正文 LIKE 匹配，返回会话卡片与命中片段。"""
+    query = str(query or "").strip()
+    if not query:
+        return {"reply": "请告诉我要在历史会话中搜索的关键词。", "tools": [
+            {"icon": "🔍", "name": "历史搜索", "status": "warn", "detail": "关键词为空"}]}
+    try:
+        import state as _state
+        results = _state.search_conversations(query, limit=8)
+    except Exception as e:
+        return {"reply": f"历史搜索失败：{e}", "tools": [
+            {"icon": "🔍", "name": "历史搜索", "status": "error", "detail": str(e)[:120]}]}
+    if not results:
+        return {"reply": f"历史会话中没有找到与「{query}」相关的内容。",
+                "tools": [{"icon": "🔍", "name": "历史搜索", "status": "success", "detail": "0 条命中"}]}
+    lines = []
+    for r in results:
+        when = time.strftime("%m-%d %H:%M", time.localtime(r.get("updated_at") or 0))
+        title = r.get("title") or str(r.get("id", ""))[:8]
+        lines.append(f"- 「{title}」（{when}，命中 {r.get('hits', 0)} 条消息）：{(r.get('preview') or '')[:120]}")
+    reply = (f"在历史会话中找到 {len(results)} 个相关对话（按最近排序）：\n" + "\n".join(lines) +
+             "\n\n可据此结合用户问题作答；如需完整上下文，请用户在会话列表搜索框中打开对应会话。")
+    return {"reply": reply, "tools": [{"icon": "🔍", "name": "历史搜索", "status": "success",
+                                       "detail": f"{len(results)} 个会话命中"}]}
+
+
 def _run_memory_write(message: str = "", action: str = "add", key: str = "",
                       text: str = "", kind: str = "", agent_call: bool = False):
     """记忆统一入口（v1.4.1 对齐 Hermes 动作模型）：add / replace / remove / read。
@@ -1170,6 +1264,8 @@ def _dispatch_tool(name: str, args: dict, confirmed: bool = False) -> Dict[str, 
         return _run_memory_write(action=args.get("action", "add"), key=args.get("key", ""),
                                  text=args.get("text", ""), kind=args.get("kind", ""),
                                  agent_call=True)
+    if name == "search_history":
+        return _run_search_history(args.get("query") or "")
     if name == "fetch_url":
         return _run_fetch_url(args.get("url", ""))
     if name == "get_help":
@@ -1650,7 +1746,7 @@ def _dispatch_is_approval_needed(name: str) -> bool:
 
 
 # Hermes bots：persona 可声明 config.tools 工具子集白名单（留空/缺省 = 全部工具）
-_TOOL_UNIVERSAL = {"get_help", "memory_write", "memory_read", "fetch_url", "gateway_status"}
+_TOOL_UNIVERSAL = {"get_help", "memory_write", "memory_read", "fetch_url", "gateway_status", "search_history"}
 
 
 def _persona_allowed_tools(persona: dict) -> set:

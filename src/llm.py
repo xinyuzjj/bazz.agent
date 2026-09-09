@@ -519,6 +519,20 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "search_history",
+            "description": "搜索本地历史会话（跨全部对话的标题与消息正文，按最近排序返回会话卡片+命中片段）。用户说‘我之前说过/上次聊到/历史里有没有/之前查过的XX/翻翻旧对话’时调用。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "搜索关键词（支持标题与正文模糊匹配）"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "fetch_url",
             "description": "基础研究技能：抓取一个网页/URL 并返回纯文本内容（用户要求查资料/看某网页/研究某话题时先用它）。",
             "parameters": {

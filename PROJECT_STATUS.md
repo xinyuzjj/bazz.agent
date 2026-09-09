@@ -1,4 +1,4 @@
-# BAZZ.AGENT 项目状态交接（2026-09-09 会话收尾）
+# BAZZ.AGENT 项目状态交接（2026-09-10 会话收尾）
 
 > 用途：开新任务/新会话前快速恢复上下文。读完即可继续开发，无需翻旧对话。
 > 项目路径：`e:\hermes_app\binance-agent-os-scout` ｜ 仓库：`github.com/xinyuzjj/bazz.agent`
@@ -9,13 +9,14 @@
 
 - **形态**：Windows 桌面端（Electron 壳）+ FastAPI Python 后端 + TS/Vite 前端
 - **定位**：币安 AI 交易终端 —— Agent 对话、行情（现货/合约/股票化代币）、交易方案卡、CEX 连接、Agentic Wallet、广场发文、Skills Hub
-- **当前版本**：v1.4.2（已发布 Latest，4 资产齐全）
+- **当前版本**：v1.4.3（已发布 Latest，4 资产齐全）
 - **工作区**：安装目录 `<安装根>/workspace`（state.db / proxies.json / .skill_update.json / 附件 / 日志）
 
 ## 二、近期发布版本
 
 | 版本 | 核心内容 |
 |---|---|
+| **v1.4.3** | 会话搜索 + 标题自动生成（学习 Hermes）：① `state.search_conversations`（LIKE 标题+消息正文，命中片段+条数，room 排除）→ `GET /api/conversations/search`（注册在 {cid} 路由之前）→ ChatView 会话列表防抖搜索框（结果按当前 Agent 作用域过滤，🔍 命中数徽标）；② `agent_core.auto_title`——chat 流 `_persist` 末尾起后台线程，标题仍为默认截断（首条 user 消息[:28]/新对话/@档案前缀）时用 summarize 槽位生成 4-16 字标题，写库前二次校验防改名竞态，前端 send 后 5s 二刷列表；③ Agent 新工具 `search_history`（llm.py TOOLS + dispatch + _TOOL_UNIVERSAL）；④ **重要修复：流自然完成此前从不落库**（_persist 只挂 GeneratorExit/Exception，正常播完回复/记忆/标题全丢）——补 `else: _persist()`。21 项隔离库单测全过 |
 | **v1.4.2** | 上下文压缩 + 循环健壮性（学习 Hermes）：① conversations 加 `ctx_summary` 列 + 游标 `ctxcur:{cid}`（settings 表）——被裁旧历史不再蒸发，增量并入持久化滚动摘要，重复请求不重烧 summarize 模型（`_history_blocks` 重写，`run_stream`/`_run_llm_agent` 加 cid 透传，desktop_app 传 conv_id）；② repetition guard——同工具+同参数执行 ≥2 次拦截并提示模型直接作答（审批类交易工具豁免）；③ 空回复重试预算限 1 次；④ 轮次将尽（MAX-2）注入「立即汇总作答」预警。7 项单测全过 |
 | **v1.4.1** | 记忆系统升级（对齐 Hermes 精选式记忆）：① memory 表加 kind/source/hits 列（旧库自动迁移）；② 注入重写——按 kind 分组、3500 字符预算、提示注入清洗（`_sanitize_mem` 剥离「忽略以上/ignore previous/伪标签」）；③ auto_memorize 合并式去重（bigram ≥0.6 原地 replace）+ 敏感信息拒绝入库（API key/助记词/密码）；④ memory_write 工具升级 add/replace/remove/read 动作模型（Agent 不能删 manual 来源）；⑤ 记忆页类型徽标 + ⚡命中次数。9 项单测全过（隔离库） |
 | **v1.4.0** | 行情实时化四件套：① 现货 WS 实时流（`!miniTicker@arr` 替换 30s 轮询，`src/market_ws.py` + 前端 `lib/live.ts`）；② 微渲染（拆 memo 行组件，只重渲变化的行，`MarketRows.tsx`）；③ 订单状态跟踪卡（`src/order_tracker.py` + state.db `tracked_orders` 表，交易所页展示）；④ SL/TP 接近 0.5%/触发提醒（toast + 系统通知，冷却抑制）。※ 实测：币安已下线 `!ticker@arr` 全市场数组流；fstream 合约 WS 对部分地区不推流 → 合约维持 REST 30s。CI 修复：mihomo 内核下载步需显式 `env: BAZZ_GH_TOKEN: ${{ github.token }}`（GITHUB_TOKEN 默认不注入步骤，runner 匿名 API 限额极易耗尽） |
@@ -47,7 +48,7 @@
 
 **记忆系统已升级（v1.4.1）**：kind/source/hits 分类、注入预算+清洗、合并去重、敏感过滤、memory_write 动作工具 —— 勿重复改造；后续记忆相关只剩「导出 Markdown 报告」（见 P2-4）。
 
-**Hermes 学习清单进度**：✅ 记忆系统（v1.4.1）、✅ 上下文持久化压缩 + 循环健壮性（v1.4.2）；候选剩余（按价值）：会话搜索（session_search）、用户自定义 cron 盯盘（cronjob_tools）、会话标题自动生成（title_generator）、Agent 任务清单（todo_tool）、旁问模式（side_question）。低价值勿做：MCP/OAuth、浏览器自动化全家桶、语音 TTS。
+**Hermes 学习清单进度**：✅ 记忆系统（v1.4.1）、✅ 上下文持久化压缩 + 循环健壮性（v1.4.2）、✅ 会话搜索 + 会话标题自动生成（v1.4.3）；候选剩余（按价值）：用户自定义 cron 盯盘（cronjob_tools）、Agent 任务清单（todo_tool）、旁问模式（side_question）。低价值勿做：MCP/OAuth、浏览器自动化全家桶、语音 TTS。
 
 **P2（下一版建议）**
 1. 启动加速（splash 保底 5.2s 可压到就绪即切换）
