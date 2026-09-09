@@ -58,6 +58,7 @@ def _init():
         kind TEXT DEFAULT 'dm',
         members_json TEXT DEFAULT '',
         provider_snapshot TEXT DEFAULT '{}',
+        ctx_summary TEXT DEFAULT '',
         created_at REAL NOT NULL,
         updated_at REAL NOT NULL
     );
@@ -134,6 +135,10 @@ def _init():
         c.commit()
     if ccols and "archived" not in ccols:
         c.execute("ALTER TABLE conversations ADD COLUMN archived INTEGER DEFAULT 0")
+        c.commit()
+    if ccols and "ctx_summary" not in ccols:
+        # v1.4.2 持久化滚动摘要：长对话旧历史压缩产物落库，跨轮复用不重烧
+        c.execute("ALTER TABLE conversations ADD COLUMN ctx_summary TEXT DEFAULT ''")
         c.commit()
     mcols = {r[1] for r in c.execute("PRAGMA table_info(messages)").fetchall()}
     if mcols and "reasoning" not in mcols:
@@ -244,6 +249,19 @@ def list_rooms():
 def room_exists(name):
     r = _conn_get().execute("SELECT id FROM conversations WHERE kind='room' AND title=?", (name,)).fetchone()
     return r["id"] if r else None
+
+
+def get_conv_summary(cid):
+    """会话的持久化滚动摘要（v1.4.2 上下文压缩；无则空串）。"""
+    r = _conn_get().execute("SELECT ctx_summary FROM conversations WHERE id=?", (cid,)).fetchone()
+    return (r["ctx_summary"] or "") if r else ""
+
+
+@_serialized
+def set_conv_summary(cid, summary):
+    _conn_get().execute("UPDATE conversations SET ctx_summary=? WHERE id=?",
+                        (str(summary or "")[:2000], cid))
+    _conn_get().commit()
 
 
 @_serialized

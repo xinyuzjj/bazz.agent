@@ -13,6 +13,7 @@ import os
 import re
 import time
 import json
+import hashlib
 import threading
 from typing import Optional, Iterator, Dict, Any
 from concurrent.futures import ThreadPoolExecutor
@@ -1752,34 +1753,59 @@ _CTX_MAX_CHARS = 9000       # 历史累计超过该长度 → 把最旧一半压
 _CTX_MAX_MSG = 1600         # 单条历史正文截断
 
 
-def _summarize_old(hist_lines: list, llm_cfg: dict) -> str:
-    """把早期历史压成一段「此前对话摘要」（用 summarize 槽位模型；失败则硬截断）。"""
+def _summarize_old(hist_lines: list, llm_cfg: dict, old_summary: str = "") -> str:
+    """增量压缩：把被裁历史并入旧摘要，产出 ≤600 字滚动摘要（summarize 槽位模型；失败硬截断兜底）。
+
+    v1.4.2 对齐 Hermes：摘要跨轮持久化复用，不再每次重烧；被裁内容不再蒸发。
+    """
     text = "\n".join(hist_lines)
-    if len(text) <= _CTX_MAX_CHARS:
-        return ""
+    if not text.strip():
+        return old_summary or ""
     try:
-        sysp = ("你是会话摘要器。把下面的对话要点压缩成 ≤260 字中文摘要：保留用户偏好、"
-                "已查过的标的与关键结论、进行中的任务、未完成事项。只输出摘要正文。")
-        summ = llm.chat(sysp, text, temperature=0.2, max_tokens=400, llm_cfg=llm_cfg, task="summarize")
+        sysp = ("你是会话摘要器。把「已有摘要」与「新对话片段」合并成一段 ≤260 字中文滚动摘要："
+                "保留用户偏好、已查过的标的与关键结论、已定的关键参数（如止损止盈价位）、"
+                "进行中的任务与未完成事项。已有摘要仍然有效的内容直接保留，不要丢失。只输出摘要正文。")
+        prompt = (("已有摘要：\n" + old_summary + "\n\n") if old_summary else "") + "新对话片段：\n" + text
+        summ = llm.chat(sysp, prompt, temperature=0.2, max_tokens=400, llm_cfg=llm_cfg, task="summarize")
         if summ and summ.strip():
-            return "\n[此前对话摘要] " + summ.strip()[:600]
+            return summ.strip()[:600]
     except Exception:
         pass
-    # 硬截断兜底：保留开头与结尾意图
-    return ("\n[此前对话（截断）] " + text[:_CTX_MAX_CHARS // 2] + "\n……\n" + text[-800:])
+    if old_summary:
+        # 已有摘要时保底：旧摘要 + 新片段硬截断拼接
+        return (old_summary[:300] + "\n" + text[-300:])[:600]
+    return text[:600]
 
 
-def _history_blocks(history: list, llm_cfg: dict = None):
+def _history_blocks(history: list, llm_cfg: dict = None, cid: str = ""):
     """把 (role, text) 历史列表整理成注入用的 blocks 文本。
 
     - 只保留 user/assistant 两种角色文本（tool/系统噪音不带入）；
-    - 数量上限 _CTX_MAX_HIST（超出的最旧部分先丢弃）；
-    - 若剩余累计超长，最旧一半送入摘要器压缩成一段。
+    - 数量上限 _CTX_MAX_HIST，**被裁掉的历史不蒸发**：与旧摘要增量合并成滚动摘要；
+    - 有 cid 时摘要持久化到 conversations.ctx_summary + 游标 `ctxcur:{cid}`（settings 表，
+      记录已摘要覆盖到第几条——重复请求不重烧摘要模型）；无 cid 退化为一次性临时压缩；
+    - 若保留部分仍超长，最旧一半并入摘要。
     """
-    hist = [h for h in (history or []) if isinstance(h, dict) and h.get("role") in ("user", "assistant")]
-    if not hist:
+    import state as _state  # 局部导入避免循环依赖
+    hist_all = [h for h in (history or []) if isinstance(h, dict) and h.get("role") in ("user", "assistant")]
+    if not hist_all:
         return []
-    hist = hist[:_CTX_MAX_HIST]
+    old_summary = ""
+    covered = 0
+    try:
+        if cid:
+            old_summary = _state.get_conv_summary(cid)
+            covered = int(_state.get_setting(f"ctxcur:{cid}", "0") or 0)
+    except Exception:
+        old_summary, covered = "", 0
+    covered = max(0, min(covered, len(hist_all)))
+    evicted, overflow, hist = [], [], hist_all
+    if len(hist_all) > _CTX_MAX_HIST:
+        cut = len(hist_all) - _CTX_MAX_HIST
+        hist = hist_all[cut:]
+        evicted = hist_all[covered:cut]  # 只压缩「新」被裁片段（游标增量）
+        if not cid:
+            evicted = hist_all[:cut]     # 临时会话无游标：全量被裁片段一次性压缩
     # 数值化：每条文本允许截断
     pairs = []
     total = 0
@@ -1790,23 +1816,36 @@ def _history_blocks(history: list, llm_cfg: dict = None):
         t = t[:_CTX_MAX_MSG]
         pairs.append((h["role"], t))
         total += len(t)
-    if total <= _CTX_MAX_CHARS:
-        return pairs
-    # 超长：最旧一半尝试压缩为摘要块
-    mid = max(1, len(pairs) // 2)
-    old_lines = [f"{'用户' if r=='user' else '助手'}：{t}" for r, t in pairs[:mid]]
-    summ = _summarize_old(old_lines, llm_cfg)
-    keep = pairs[mid:]
+    if total > _CTX_MAX_CHARS:
+        mid = max(1, len(pairs) // 2)
+        overflow = pairs[:mid]
+        pairs = pairs[mid:]
+    # 被裁内容（数量裁剪 + 超长裁剪）→ 增量滚动摘要
+    if evicted or overflow:
+        ev_lines = [f"{'用户' if h.get('role') == 'user' else '助手'}：{(h.get('content') or '')[:400]}"
+                    for h in evicted]
+        ov_lines = [f"{'用户' if r == 'user' else '助手'}：{t}" for r, t in overflow]
+        new_summ = _summarize_old(ev_lines + ov_lines, llm_cfg, old_summary)
+        if new_summ and new_summ != old_summary:
+            old_summary = new_summ
+            if cid:
+                try:
+                    _state.set_conv_summary(cid, old_summary)
+                    _state.set_setting(f"ctxcur:{cid}", str(max(covered, len(hist_all) - _CTX_MAX_HIST
+                                                                if len(hist_all) > _CTX_MAX_HIST else covered)))
+                except Exception:
+                    pass
     blocks = []
-    if summ:
-        blocks.append(("ctx", summ.strip()))
-    blocks.extend(keep)
+    if old_summary:
+        blocks.append(("ctx", "[此前对话摘要·持续更新] " + old_summary))
+    blocks.extend(pairs)
     return blocks
 
 
 def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, approval: dict = None,
                    persona: dict = None, llm_cfg: dict = None, images: list = None,
-                   auto_exec: bool = False, history: list = None, locale: str = "zh"):
+                   auto_exec: bool = False, history: list = None, locale: str = "zh",
+                   cid: str = ""):
     """真 LLM 接上（Hermes 风格 function-calling 循环）。
 
     1) LLM 看 system + 历史上下文(history) + 用户消息 + TOOLS(含插件命令)，决定调用哪些工具；
@@ -1830,8 +1869,8 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
     if img_notes:
         yield {"type": "reasoning", "text": img_notes[0]}
     messages = [{"role": "system", "content": system}]
-    # 记住上下文：历史块注入（早期超长部分压缩成摘要）
-    ctx_blocks = _history_blocks(history, llm_cfg)
+    # 记住上下文：历史块注入（被裁部分增量并入持久化滚动摘要）
+    ctx_blocks = _history_blocks(history, llm_cfg, cid=cid)
     for role, text in ctx_blocks:
         if role == "ctx":
             messages.append({"role": "system", "content": text})  # 摘要以 system 注入（不带对话轮次属性）
@@ -1845,8 +1884,27 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
     turns = 0
     heal_left = _HEAL_MAX  # 工具失败自愈预算（同一请求内共享）
     ever_failed = False    # 出现过工具失败（用于轮次用尽时区分提示语）
+    # v1.4.2 循环健壮性（Hermes repetition_guard / empty_response_guard / iteration 预警）
+    recent_calls: list = []      # 已执行的工具签名（name+args 摘要），防同参重复调用
+    empty_retry_left = 1         # 空回复重试预算（用尽不再空转）
+    warned_wrap_up = False       # 轮次将尽预警只注入一次
+
+    def _tc_sig(tc) -> str:
+        try:
+            digest = hashlib.md5(json.dumps(tc.get("args", {}), sort_keys=True,
+                                            ensure_ascii=False).encode("utf-8")).hexdigest()[:10]
+        except Exception:
+            digest = str(tc.get("args", {}))[:40]
+        return f"{tc.get('name', '?')}:{digest}"
+
     while turns < MAX_AGENT_TURNS:  # 长链研究（行情/合约多币对比/多步分析）轮次充足；见常量说明
         turns += 1
+        # 轮次将尽预警：让 LLM 在硬截止前汇总已有信息作答，而不是被掐断
+        if (not warned_wrap_up) and accumulated_tools and turns >= MAX_AGENT_TURNS - 2:
+            warned_wrap_up = True
+            messages.append({"role": "user", "content":
+                             "（系统提示）工具调用轮次即将用尽。请立即基于已获得的工具结果"
+                             "汇总出最终回答，不要再发起新的工具调用。"})
         try:
             resp = llm.chat_with_tools(messages, tools, llm_cfg=llm_cfg)
         except Exception:
@@ -1921,8 +1979,10 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
                 continue  # 进下一轮让 LLM 看到 tool 结果再合成最终回答
             # 已是最终回答轮（或意图不匹配）：把 LLM 正文流式输出（剥掉「我先…让我…」客套）
             if not content.strip() and not accumulated_tools:
-                # 模型既没调工具又没输出正文（偶发空返回）→ 追加一次明确指令再生成，避免空 done 直接结束
-                if turns < MAX_AGENT_TURNS:
+                # 模型既没调工具又没输出正文（偶发空返回）→ 用有限预算追加一次明确指令再生成，
+                # 预算用尽直接以空回复收尾，不再空转烧轮次（Hermes empty_response_guard）。
+                if empty_retry_left > 0 and turns < MAX_AGENT_TURNS:
+                    empty_retry_left -= 1
                     messages.append({"role": "user", "content": "（你刚才没有输出任何内容）请直接回答用户的问题。"})
                     continue
             if content.strip():
@@ -1947,14 +2007,33 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
         def _run_one(tc):
             return tc, _dispatch_tool(tc["name"], tc.get("args", {}), confirmed=auto_exec)
 
-        if len(tool_calls) <= 1 or any(_dispatch_is_approval_needed(tc["name"]) for tc in tool_calls):
-            results = [_run_one(tc) for tc in tool_calls]
+        # 重复调用防护（Hermes repetition_guard）：同签名已真实执行 ≥2 次 → 不再执行，
+        # 直接回传提示让 LLM 基于已有结果作答（省 API 调用，防同参死循环烧到轮次上限）。
+        # 审批类工具不拦（交易参数不变的重试是合理用户行为）。
+        pending = []
+        for tc in tool_calls:
+            sig = _tc_sig(tc)
+            if (not _dispatch_is_approval_needed(tc["name"])) and recent_calls.count(sig) >= 2:
+                messages.append({"role": "tool", "tool_call_id": tc["id"],
+                                 "content": f"[{tc['name']}] 相同参数已执行过，结果不会变化。"
+                                            "请直接基于已有工具结果汇总作答，不要重复调用。"})
+                continue
+            pending.append((tc, sig))
+        if not pending:
+            continue  # 本轮全部被拦截 → 直接进下一轮让 LLM 看到提示后收尾
+        tool_calls_exec = [tc for tc, _sig in pending]
+        if len(tool_calls_exec) <= 1 or any(_dispatch_is_approval_needed(tc["name"]) for tc in tool_calls_exec):
+            results = [_run_one(tc) for tc in tool_calls_exec]
         else:
             try:
-                with ThreadPoolExecutor(max_workers=min(len(tool_calls), 4)) as pool:
-                    results = list(pool.map(_run_one, tool_calls))
+                with ThreadPoolExecutor(max_workers=min(len(tool_calls_exec), 4)) as pool:
+                    results = list(pool.map(_run_one, tool_calls_exec))
             except Exception:
-                results = [_run_one(tc) for tc in tool_calls]
+                results = [_run_one(tc) for tc in tool_calls_exec]
+        for sig, (tc, res) in zip([s for _tc, s in pending], results):
+            recent_calls.append(sig)
+            if len(recent_calls) > 8:
+                del recent_calls[:len(recent_calls) - 8]
         for tc, res in results:
             for t in res.get("tools", []):
                 accumulated_tools.append(_norm_tool(t))
@@ -2129,11 +2208,11 @@ def _strip_preamble(text: str) -> str:
 def run_stream(message: str, confirm: bool = False, signal: dict = None,
                approval: dict = None, persona: dict = None, llm_cfg: dict = None,
                images: list = None, auto_exec: bool = False,
-               history: list = None, locale: str = "zh") -> Iterator[Dict[str, Any]]:
+               history: list = None, locale: str = "zh", cid: str = "") -> Iterator[Dict[str, Any]]:
     """产出 NDJSON 事件流。persona 可选：来自 Bots 页的 Agent 档案（身份/口吻）。
     llm_cfg 可选：会话级 provider 快照（防漂移）。images 可选：用户附图 dataURL 列表。
     auto_exec：全能模式（首页默认），沙箱工具跳过审批直接执行；交易类仍需确认。
-    history：同会话前序消息（记住上下文）。"""
+    history：同会话前序消息（记住上下文）。cid：会话 id（滚动摘要持久化键）。"""
     # 审批回调（用户确认了某个待审批动作）始终走规则引擎精确处理
     if approval:
         yield from _emit_dispatch(dispatch(message, confirm=confirm, signal=signal, approval=approval,
@@ -2144,7 +2223,7 @@ def run_stream(message: str, confirm: bool = False, signal: dict = None,
     if llm.is_configured(llm_cfg):
         yield from _run_llm_agent(message, confirm=confirm, signal=signal, approval=approval,
                                   persona=persona, llm_cfg=llm_cfg, images=images,
-                                  auto_exec=auto_exec, history=history, locale=locale)
+                                  auto_exec=auto_exec, history=history, locale=locale, cid=cid)
         return
 
     # 未配置 LLM → 规则引擎

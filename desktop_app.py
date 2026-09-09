@@ -461,7 +461,8 @@ async def chat_stream(req: Request):
         try:
             for ev in agent_core.run_stream(message, confirm=confirm, signal=signal, approval=approval,
                                             persona=persona, llm_cfg=llm_cfg, images=images,
-                                            auto_exec=auto_exec, history=history, locale=locale):
+                                            auto_exec=auto_exec, history=history, locale=locale,
+                                            cid=conv_id or ""):
                 # 把 conversation_id 注入首事件与 done 事件，前端能持续复用同一会话
                 if (not first_meta_injected) or ev.get("type") == "done":
                     ev = {**ev, "conversation_id": conv_id}
