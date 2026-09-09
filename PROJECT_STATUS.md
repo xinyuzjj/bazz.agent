@@ -9,15 +9,14 @@
 
 - **形态**：Windows 桌面端（Electron 壳）+ FastAPI Python 后端 + TS/Vite 前端
 - **定位**：币安 AI 交易终端 —— Agent 对话、行情（现货/合约/股票化代币）、交易方案卡、CEX 连接、Agentic Wallet、广场发文、Skills Hub
-- **当前版本**：v1.3.9（已发布 Latest，4 资产齐全）
+- **当前版本**：v1.4.0（已发布 Latest，4 资产齐全）
 - **工作区**：安装目录 `<安装根>/workspace`（state.db / proxies.json / .skill_update.json / 附件 / 日志）
 
-## 二、今天发布的三个版本
+## 二、近期发布版本
 
 | 版本 | 核心内容 |
 |---|---|
-| **v1.3.7.2** | 修桌面版升级看不到新界面：Chromium 缓存旧 index.html → Electron 启动 `session.clearCache()` + 后端入口页 `Cache-Control: no-store` |
-| **v1.3.8** | ① mihomo 内核内置进安装包（CI 下载 → `<安装根>/.system/kernel/`，免单独下载，只读安装目录自动接化）；② 修代理池开启后 Agent 钱包「未返回 qrCodeId」 |
+| **v1.4.0** | 行情实时化四件套：① 现货 WS 实时流（`!miniTicker@arr` 替换 30s 轮询，`src/market_ws.py` + 前端 `lib/live.ts`）；② 微渲染（拆 memo 行组件，只重渲变化的行，`MarketRows.tsx`）；③ 订单状态跟踪卡（`src/order_tracker.py` + state.db `tracked_orders` 表，交易所页展示）；④ SL/TP 接近 0.5%/触发提醒（toast + 系统通知，冷却抑制）。※ 实测：币安已下线 `!ticker@arr` 全市场数组流；fstream 合约 WS 对部分地区不推流 → 合约维持 REST 30s。CI 修复：mihomo 内核下载步需显式 `env: BAZZ_GH_TOKEN: ${{ github.token }}`（GITHUB_TOKEN 默认不注入步骤，runner 匿名 API 限额极易耗尽） |
 | **v1.3.9** | 币安技能自动更新：baw CLI + Skills Hub 技能包启动 45s 后自动检查升级（每 6h 循环），技能库页更新条可手动触发；修打包版 npx/node 解析与安装 cwd 漂移 |
 
 ## 三、关键技术结论（重要，勿回退）
@@ -42,21 +41,18 @@
 
 ## 四、待办 / 优化清单（按优先级，代理池已明确冻结）
 
-**P1（下一版建议）**
-1. 行情 WebSocket 实时流（替换 30s 轮询，币安免费 WS）
-2. 行情界面渲染优化（时间戳每秒重渲全表 → 拆组件 + memo）
-3. 订单状态跟踪卡片（下单后待成交/已成交/撤销 + 提醒）
-4. 止损止盈接近触发提醒（应用内 + 系统通知）
+**P1 已全部完成（v1.4.0 已发布）**：行情 WS 实时流 / 微渲染 / 订单跟踪卡 / SL·TP 提醒 —— 勿重复开发。
 
-**P2**
-5. 启动加速（splash 保底 5.2s 可压到就绪即切换）
-6. 前端空 catch 补错误提示（SettingsView L52-69 等）
-7. 广场发文草稿箱/定时发布
-8. Agent 记忆导出 Markdown 报告
+**P2（下一版建议）**
+1. 启动加速（splash 保底 5.2s 可压到就绪即切换）
+2. 前端空 catch 补错误提示（SettingsView L52-69 等）
+3. 广场发文草稿箱/定时发布
+4. Agent 记忆导出 Markdown 报告
 
 **P3**
-9. 多会话并行 Agent 任务
-10. 行情自选列表置顶
+5. 多会话并行 Agent 任务
+6. 行情自选列表置顶
+7. 合约维度实时流恢复（若币安 fstream 对地区放开；或改用 fapi REST 短轮询 5-10s）
 
 **已修完不要重复提**：API 鉴权/CORS、更新器白名单、端口占用白屏、SQLite 并发、流中断、
 行情接口去重、后端守护、子进程清理、代理池内核内置、baw 代理、技能自动更新。
