@@ -45,7 +45,7 @@ export function SettingsView({ settings, onSaved, onNav }: { settings: any; onSa
   const [gwBusy, setGwBusy] = useState(false);
   const [mcpToolCount, setMcpToolCount] = useState(0);
   const [deepThinking, setDeepThinking] = useState(true);
-  const [proxyExpanded, setProxyExpanded] = useState(false);
+  const [proxyExpanded, setProxyExpanded] = useState(true);
   const gwOnline = gwList.filter((g: any) => g.connected).length;
   const gwTotal = gwList.length;
   const gwOk = gwTotal > 0 && gwOnline === gwTotal;
