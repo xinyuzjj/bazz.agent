@@ -533,6 +533,22 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "todo_write",
+            "description": "Agent 任务清单（跨轮持久化，未完成任务每轮自动注入提醒）。多步任务先拆解成 add 逐条登记，每完成一条立即 toggle 勾选；actions：add=新增（text）、toggle=勾/取消（todo_id 或 text）、remove=删除（todo_id）、list=查看全部、clear_done=清理已完成。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["add", "toggle", "remove", "list", "clear_done"],
+                               "description": "默认 add"},
+                    "text": {"type": "string", "description": "任务内容（add）或匹配文本（toggle）"},
+                    "todo_id": {"type": "string", "description": "任务 id（toggle/remove 精确操作时用，list 可查）"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "fetch_url",
             "description": "基础研究技能：抓取一个网页/URL 并返回纯文本内容（用户要求查资料/看某网页/研究某话题时先用它）。",
             "parameters": {

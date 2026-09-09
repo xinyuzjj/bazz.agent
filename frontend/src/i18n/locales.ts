@@ -4,6 +4,10 @@
 export type Dict = Record<string, string>;
 
 export const zh: Dict = {
+  // ===== 通用 =====
+  "common.opFailed": "操作失败",
+  "common.copyFail": "复制失败",
+
   // ===== 顶部主导航（Shell NAV）=====
   "nav.chat": "对话",
   "nav.markets": "行情",
@@ -128,6 +132,7 @@ export const zh: Dict = {
   "mem.localEmpty": "本地存档 · 空",
   "mem.lastUpd": "上次更新 {t}",
   "mem.exportBtn": "导出记忆知识库 (JSON)",
+  "mem.exportMdBtn": "导出记忆报告 (MD)",
   "mem.resetBtn": "重置非核心记忆",
   "mem.delConfirm": "删除记忆「{key}」？",
   "mem.clearConfirm": "将清空全部 {n} 条记忆（操作前请先导出备份），确定？",
@@ -1223,6 +1228,10 @@ export const zh: Dict = {
 };
 
 export const en: Dict = {
+  // ===== Common =====
+  "common.opFailed": "Operation failed",
+  "common.copyFail": "Copy failed",
+
   // ===== Top navigation (Shell NAV) — designed on top of the Chinese baseline =====
   "nav.chat": "Chat",
   "nav.markets": "Markets",
@@ -1339,6 +1348,7 @@ export const en: Dict = {
   "mem.localEmpty": "Local store · empty",
   "mem.lastUpd": "Last update {t}",
   "mem.exportBtn": "Export memory (JSON)",
+  "mem.exportMdBtn": "Export report (MD)",
   "mem.resetBtn": "Reset non-core memory",
   "mem.delConfirm": "Delete memory \"{key}\"?",
   "mem.clearConfirm": "This will clear all {n} memories (export a backup first). Continue?",

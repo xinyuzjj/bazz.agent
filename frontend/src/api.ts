@@ -91,6 +91,11 @@ export const api = {
     if (!r.ok) throw new Error(await r.text());
     return r.text();
   },
+  exportMemoryMd: async () => {
+    const r = await fetch(BASE + "/memory/export?format=md", { headers: authHeaders() });
+    if (!r.ok) throw new Error(await r.text());
+    return r.text();
+  },
   mcp: () => jget("/mcp"),
   addMcp: (b: any) => jpost("/mcp", b),
   deleteMcp: (name: string) => jdel("/mcp/" + encodeURIComponent(name)),

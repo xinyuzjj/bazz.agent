@@ -155,6 +155,15 @@ function MemoryBody({ onClose }: { onClose?: () => void }) {
     a.href = url; a.download = `bazz-memory-${new Date().toISOString().slice(0,10)}.json`;
     a.click(); URL.revokeObjectURL(url);
   };
+  // v1.4.4：Markdown 记忆报告（后端按 kind 分组排版）
+  const exportMd = async () => {
+    const txt = await api.exportMemoryMd();
+    const blob = new Blob([txt], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `bazz-memory-report-${new Date().toISOString().slice(0,10)}.md`;
+    a.click(); URL.revokeObjectURL(url);
+  };
 
   // 分组
   const grouped = useMemo(() => {
@@ -350,6 +359,9 @@ function MemoryBody({ onClose }: { onClose?: () => void }) {
           {stats?.db_path ? <span className="text-ink-mute" title={stats.db_path}>{stats.db_path}</span> : null}
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={exportMd} disabled={busy || total === 0} className="btn-ghost">
+            <I.Memory size={11} /> {t("mem.exportMdBtn")}
+          </button>
           <button onClick={exportJson} disabled={busy || total === 0} className="btn-ghost">
             <I.Download size={11} /> {t("mem.exportBtn")}
           </button>

@@ -9,13 +9,14 @@
 
 - **形态**：Windows 桌面端（Electron 壳）+ FastAPI Python 后端 + TS/Vite 前端
 - **定位**：币安 AI 交易终端 —— Agent 对话、行情（现货/合约/股票化代币）、交易方案卡、CEX 连接、Agentic Wallet、广场发文、Skills Hub
-- **当前版本**：v1.4.3（已发布 Latest，4 资产齐全）
+- **当前版本**：v1.4.4（已发布 Latest，4 资产齐全）
 - **工作区**：安装目录 `<安装根>/workspace`（state.db / proxies.json / .skill_update.json / 附件 / 日志）
 
 ## 二、近期发布版本
 
 | 版本 | 核心内容 |
 |---|---|
+| **v1.4.4** | Agent 任务清单 + 记忆报告 + 通知加固：① todo_tool（Hermes）——state `todos` 表（去重/按文本勾选/清已完成），agent 工具 `todo_write`（add/toggle/remove/list/clear_done，llm.py TOOLS + dispatch + 通用集），`todo_context()` 每轮把未完成任务注入 system prompt（防烂尾防装完成）；② `/api/memory/export?format=md`——按 kind 分组 Markdown 报告（含来源/命中/日期），JSON 导出并存，MemoryOverlay 加 MD 按钮（I.Memory）；③ 前端空 catch 补 pushToast 错误提示（SettingsView 4 处 + ChatView 新建/删除/归档/重命名会话 + CodeCard 复制），新增 common.opFailed/copyFail 双语 key。23 项隔离库单测全过 |
 | **v1.4.3** | 会话搜索 + 标题自动生成（学习 Hermes）：① `state.search_conversations`（LIKE 标题+消息正文，命中片段+条数，room 排除）→ `GET /api/conversations/search`（注册在 {cid} 路由之前）→ ChatView 会话列表防抖搜索框（结果按当前 Agent 作用域过滤，🔍 命中数徽标）；② `agent_core.auto_title`——chat 流 `_persist` 末尾起后台线程，标题仍为默认截断（首条 user 消息[:28]/新对话/@档案前缀）时用 summarize 槽位生成 4-16 字标题，写库前二次校验防改名竞态，前端 send 后 5s 二刷列表；③ Agent 新工具 `search_history`（llm.py TOOLS + dispatch + _TOOL_UNIVERSAL）；④ **重要修复：流自然完成此前从不落库**（_persist 只挂 GeneratorExit/Exception，正常播完回复/记忆/标题全丢）——补 `else: _persist()`。21 项隔离库单测全过 |
 | **v1.4.2** | 上下文压缩 + 循环健壮性（学习 Hermes）：① conversations 加 `ctx_summary` 列 + 游标 `ctxcur:{cid}`（settings 表）——被裁旧历史不再蒸发，增量并入持久化滚动摘要，重复请求不重烧 summarize 模型（`_history_blocks` 重写，`run_stream`/`_run_llm_agent` 加 cid 透传，desktop_app 传 conv_id）；② repetition guard——同工具+同参数执行 ≥2 次拦截并提示模型直接作答（审批类交易工具豁免）；③ 空回复重试预算限 1 次；④ 轮次将尽（MAX-2）注入「立即汇总作答」预警。7 项单测全过 |
 | **v1.4.1** | 记忆系统升级（对齐 Hermes 精选式记忆）：① memory 表加 kind/source/hits 列（旧库自动迁移）；② 注入重写——按 kind 分组、3500 字符预算、提示注入清洗（`_sanitize_mem` 剥离「忽略以上/ignore previous/伪标签」）；③ auto_memorize 合并式去重（bigram ≥0.6 原地 replace）+ 敏感信息拒绝入库（API key/助记词/密码）；④ memory_write 工具升级 add/replace/remove/read 动作模型（Agent 不能删 manual 来源）；⑤ 记忆页类型徽标 + ⚡命中次数。9 项单测全过（隔离库） |
@@ -46,9 +47,11 @@
 
 **P1 已全部完成（v1.4.0 已发布）**：行情 WS 实时流 / 微渲染 / 订单跟踪卡 / SL·TP 提醒 —— 勿重复开发。
 
-**记忆系统已升级（v1.4.1）**：kind/source/hits 分类、注入预算+清洗、合并去重、敏感过滤、memory_write 动作工具 —— 勿重复改造；后续记忆相关只剩「导出 Markdown 报告」（见 P2-4）。
+**记忆系统已升级（v1.4.1）+ Markdown 报告导出（v1.4.4）**：kind/source/hits 分类、注入预算+清洗、合并去重、敏感过滤、memory_write 动作工具、MD 报告导出 —— 勿重复改造。
 
-**Hermes 学习清单进度**：✅ 记忆系统（v1.4.1）、✅ 上下文持久化压缩 + 循环健壮性（v1.4.2）、✅ 会话搜索 + 会话标题自动生成（v1.4.3）；候选剩余（按价值）：用户自定义 cron 盯盘（cronjob_tools）、Agent 任务清单（todo_tool）、旁问模式（side_question）。低价值勿做：MCP/OAuth、浏览器自动化全家桶、语音 TTS。
+**Hermes 学习清单进度**：✅ 记忆系统（v1.4.1）、✅ 上下文持久化压缩 + 循环健壮性（v1.4.2）、✅ 会话搜索 + 会话标题自动生成（v1.4.3）、✅ Agent 任务清单 todo_tool（v1.4.4）；候选剩余（按价值）：用户自定义 cron 盯盘（cronjob_tools）、旁问模式（side_question）。低价值勿做：MCP/OAuth、浏览器自动化全家桶、语音 TTS。
+
+**P2 进度**：✅ 空 catch 补错误提示（v1.4.3+4）、✅ 记忆导出 Markdown（v1.4.4）；剩余：启动加速、广场发文草稿箱/定时发布。
 
 **P2（下一版建议）**
 1. 启动加速（splash 保底 5.2s 可压到就绪即切换）

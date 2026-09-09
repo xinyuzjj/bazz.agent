@@ -196,6 +196,20 @@ def memory_context() -> str:
     return "\n".join(blocks) + "\n" if blocks else ""
 
 
+def todo_context() -> str:
+    """把未完成任务注入 system prompt（v1.4.4，学习 Hermes todo_tool：长任务跨轮不烂尾）。"""
+    try:
+        from state import list_todos
+        todos = [t for t in list_todos(open_only=True) if _sanitize_mem(t.get("text"))]
+    except Exception:
+        return ""
+    if not todos:
+        return ""
+    lines = [f"- [{t['id'][:8]}] {_sanitize_mem(t['text'])[:100]}" for t in todos[:12]]
+    return ("【当前任务清单·进行中（用户托付的任务，完成后用 todo_write 勾选；"
+            "别在未完成时装作已做完）】\n" + "\n".join(lines) + "\n")
+
+
 _EN_LANG_BLOCK = ("[LANGUAGE & OUTPUT RULES - HIGHEST PRIORITY]\n"
   "- The product UI is in English. Write your ENTIRE reply - conclusions, tables, bullets and follow-ups - in English.\n"
   "- Keep tickers and technical terms as-is (BTC/USDT, funding rate, APY, RWA...).\n"
@@ -221,6 +235,7 @@ def _system_prompt(locale: str = "zh") -> str:
             "   风险/风控 → check_risk；买卖/多空 → propose_trade（仅出方案，下单需确认）；\n"
             "   支付/x402/402 → explain_x402；skills/技能 → list_skills；\n"
             "   链上/钱包/defi → onchain_ops；『记住…』→ memory_write；能力介绍 → get_help；\n"
+            "   多步任务拆解/『加个任务/任务完成/清单』→ todo_write（建/勾/删任务，完成一条立刻勾一条）；\n"
             "   **妖币 / 启动前 / 埋伏 / 蓄势 / meme / 百倍币 → 立即用 meme_watch（**直接调取行情模块 Monster Radar 同源数据**——scanner.get_ignition_coins/get_monster_coins，与「行情→妖币雷达」展示内容 100% 一致），"
             "**不要**自己用价量/费率二次筛；拿到候选后可用 market_quote 查某币实时行情、propose_trade 给方案。\n"
             "   **mode 必须按用户语义传**：用户说『启动前/埋伏/蓄势/点火前/吸筹/二买点』→ `mode='ignition'`；说『起飞中/追涨/已爆发/拉升中/暴涨中/加速/起飞』→ `mode='takeoff'`；说『妖币/meme/百倍币/十倍币』等无明确阶段 → `mode='both'`。\n"
@@ -255,7 +270,7 @@ def _system_prompt(locale: str = "zh") -> str:
             "   先对照需求自查：价格有了，那资金费率？24h 量能？相对大盘强弱？历史高低点？风险与止损参考？\n"
             "   缺哪补哪（market_quote 逐项补 / scan_market 看大盘背景 / run_skill 查链上与官方榜单），补齐后再给结构化结论；\n"
             "   用户只要『报个价/一句话快答』、或所需数据已齐全时则立即收尾——不要为凑轮数空转。\n"
-            + memory_context())
+            + memory_context() + todo_context())
     if _lang(locale) == "en":
         s = _EN_LANG_BLOCK + s
     return s
@@ -1038,6 +1053,61 @@ def _run_search_history(query: str = "") -> Dict[str, Any]:
                                        "detail": f"{len(results)} 个会话命中"}]}
 
 
+def _todo_list_reply() -> str:
+    try:
+        from state import list_todos
+        todos = list_todos()
+    except Exception:
+        return "（任务清单读取失败）"
+    if not todos:
+        return "（任务清单为空）"
+    lines = [f"{'☑' if t['done'] else '☐'} [{t['id'][:8]}] {t['text']}" for t in todos]
+    return "当前任务清单：\n" + "\n".join(lines)
+
+
+def _run_todo_tool(action: str = "add", text: str = "", todo_id: str = "") -> Dict[str, Any]:
+    """Agent 任务清单（v1.4.4，学习 Hermes todo_tool）：add / toggle / remove / list / clear_done。
+    未完成任务每轮注入 system prompt，长任务跨轮不烂尾。"""
+    from state import (add_todo, list_todos, todo_toggle, todo_toggle_by_text,
+                       remove_todo, clear_done_todos)
+    action = (action or "add").lower()
+    try:
+        if action == "add":
+            t = str(text or "").strip()
+            if not t:
+                return {"reply": "请提供任务内容（text）。", "tools": [
+                    {"icon": "📋", "name": "任务清单", "status": "warn", "detail": "内容为空"}]}
+            add_todo(t)
+            reply = f"已加入任务：{t[:80]}\n" + _todo_list_reply()
+        elif action == "toggle":
+            ok = False
+            if todo_id:
+                todo_toggle(todo_id)
+                ok = True
+            elif str(text or "").strip():
+                ok = todo_toggle_by_text(text)
+            if not ok and not todo_id:
+                return {"reply": "没找到要勾选的任务（可先 list 查看任务与 id）。\n" + _todo_list_reply(),
+                        "tools": [{"icon": "📋", "name": "任务清单", "status": "warn", "detail": "未命中"}]}
+            reply = "已更新任务状态。\n" + _todo_list_reply()
+        elif action == "remove":
+            if not todo_id:
+                return {"reply": "remove 需要 todo_id（先 list 查看）。\n" + _todo_list_reply(),
+                        "tools": [{"icon": "📋", "name": "任务清单", "status": "warn", "detail": "缺 id"}]}
+            remove_todo(todo_id)
+            reply = "已删除任务。\n" + _todo_list_reply()
+        elif action == "clear_done":
+            n = clear_done_todos()
+            reply = f"已清理 {n} 条已完成任务。\n" + _todo_list_reply()
+        else:  # list
+            reply = _todo_list_reply()
+        return {"reply": reply, "tools": [{"icon": "📋", "name": "任务清单", "status": "success",
+                                           "detail": action}]}
+    except Exception as e:
+        return {"reply": f"任务清单操作失败：{e}", "tools": [
+            {"icon": "📋", "name": "任务清单", "status": "error", "detail": str(e)[:120]}]}
+
+
 def _run_memory_write(message: str = "", action: str = "add", key: str = "",
                       text: str = "", kind: str = "", agent_call: bool = False):
     """记忆统一入口（v1.4.1 对齐 Hermes 动作模型）：add / replace / remove / read。
@@ -1266,6 +1336,9 @@ def _dispatch_tool(name: str, args: dict, confirmed: bool = False) -> Dict[str, 
                                  agent_call=True)
     if name == "search_history":
         return _run_search_history(args.get("query") or "")
+    if name == "todo_write":
+        return _run_todo_tool(action=args.get("action", "add"), text=args.get("text", ""),
+                              todo_id=args.get("todo_id", ""))
     if name == "fetch_url":
         return _run_fetch_url(args.get("url", ""))
     if name == "get_help":
@@ -1746,7 +1819,8 @@ def _dispatch_is_approval_needed(name: str) -> bool:
 
 
 # Hermes bots：persona 可声明 config.tools 工具子集白名单（留空/缺省 = 全部工具）
-_TOOL_UNIVERSAL = {"get_help", "memory_write", "memory_read", "fetch_url", "gateway_status", "search_history"}
+_TOOL_UNIVERSAL = {"get_help", "memory_write", "memory_read", "fetch_url", "gateway_status",
+                   "search_history", "todo_write"}
 
 
 def _persona_allowed_tools(persona: dict) -> set:

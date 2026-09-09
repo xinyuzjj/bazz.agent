@@ -1100,10 +1100,39 @@ def memory_stats():
 
 
 @app.get("/api/memory/export")
-def memory_export():
-    """导出当前长期记忆为 JSON 文件下载。"""
+def memory_export(request: Request):
+    """导出长期记忆。默认 JSON；?format=md → Markdown 报告（按 kind 分组，v1.4.4）。"""
     from fastapi.responses import Response
     rows = state.list_memory()
+    fmt = (request.query_params.get("format") or "").lower()
+    if fmt == "md":
+        rank = {"pref": "对用户的了解（偏好/习惯）", "fact": "长期记忆·事实",
+                "event": "事件记录", "manual": "其他"}
+        groups = {}
+        for r in rows:
+            groups.setdefault(rank.get(r.get("kind") or "", "其他"), []).append(r)
+        stamp = time.strftime("%Y-%m-%d %H:%M")
+        md = [f"# BAZZ Agent 记忆报告", "", f"- 导出时间：{stamp}",
+              f"- 记忆条目：{len(rows)} 条", "",
+              "> 本报告由 BAZZ.AGENT 本地导出，仅存在于你的电脑。", ""]
+        for gname in ["对用户的了解（偏好/习惯）", "长期记忆·事实", "事件记录", "其他"]:
+            g = groups.get(gname)
+            if not g:
+                continue
+            md += [f"## {gname}（{len(g)} 条）", ""]
+            for r in sorted(g, key=lambda x: -(x.get("updated_at") or 0)):
+                when = time.strftime("%Y-%m-%d", time.localtime(r.get("updated_at") or 0))
+                val = " ".join(str(r.get("value") or "").split())
+                src = r.get("source") or ""
+                hits = r.get("hits") or 0
+                md.append(f"- **{r['key']}**（{when}{' · ' + src if src else ''}"
+                          f"{' · 命中 ' + str(hits) + ' 次' if hits else ''}）：{val}")
+            md.append("")
+        return Response(
+            content="\n".join(md),
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="bazz-memory-report.md"'},
+        )
     payload = {
         "exported_at": time.time(),
         "engine": "BAZZ_AGENT memory v2",

@@ -96,6 +96,13 @@ def _init():
         created_at REAL NOT NULL,
         updated_at REAL NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS todos (
+        id TEXT PRIMARY KEY,
+        text TEXT NOT NULL,
+        done INTEGER DEFAULT 0,
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS tracked_orders (
         id TEXT PRIMARY KEY,
         order_id TEXT NOT NULL,
@@ -611,6 +618,85 @@ def bump_memory_hits(keys):
 def delete_memory(key):
     _conn_get().execute("DELETE FROM memory WHERE key=?", (key,))
     _conn_get().commit()
+
+
+# ---------------- Agent 任务清单（v1.4.4，学习 Hermes todo_tool） ----------------
+
+def _todo_out(r):
+    d = dict(r)
+    d["done"] = bool(r["done"] or 0)
+    return d
+
+
+def list_todos(open_only=False):
+    """任务清单（open_only=True 仅未完成，按创建顺序）。"""
+    sql = "SELECT id,text,done,created_at,updated_at FROM todos"
+    if open_only:
+        sql += " WHERE COALESCE(done,0)=0"
+    sql += " ORDER BY created_at ASC LIMIT 50"
+    rows = _conn_get().execute(sql).fetchall()
+    return [_todo_out(r) for r in rows]
+
+
+@_serialized
+def add_todo(text):
+    """新增任务（去重：与现有未完成任务同文本则原样返回）。"""
+    text = str(text or "").strip()[:200]
+    if not text:
+        return ""
+    r = _conn_get().execute(
+        "SELECT id FROM todos WHERE COALESCE(done,0)=0 AND text=?", (text,)).fetchone()
+    if r:
+        return r["id"]
+    tid = _uid()
+    now = time.time()
+    _conn_get().execute(
+        "INSERT INTO todos (id,text,done,created_at,updated_at) VALUES (?,?,0,?,?)",
+        (tid, text, now, now))
+    _conn_get().commit()
+    return tid
+
+
+@_serialized
+def todo_toggle(tid, done=None):
+    """勾/取消勾（done=None 时翻转）。"""
+    if done is None:
+        _conn_get().execute("UPDATE todos SET done=1-COALESCE(done,0), updated_at=? WHERE id=?",
+                            (time.time(), tid))
+    else:
+        _conn_get().execute("UPDATE todos SET done=?, updated_at=? WHERE id=?",
+                            (1 if done else 0, time.time(), tid))
+    _conn_get().commit()
+
+
+@_serialized
+def todo_toggle_by_text(text, done=True):
+    """按文本勾选（供 Agent 不带 id 的快捷路径，命中最新一条未完成）。"""
+    text = str(text or "").strip()[:200]
+    if not text:
+        return False
+    cur = _conn_get().execute(
+        "SELECT id FROM todos WHERE COALESCE(done,0)=0 AND text=? ORDER BY created_at DESC LIMIT 1",
+        (text,)).fetchone()
+    if not cur:
+        return False
+    _conn_get().execute("UPDATE todos SET done=?, updated_at=? WHERE id=?",
+                        (1 if done else 0, time.time(), cur["id"]))
+    _conn_get().commit()
+    return True
+
+
+@_serialized
+def remove_todo(tid):
+    _conn_get().execute("DELETE FROM todos WHERE id=?", (tid,))
+    _conn_get().commit()
+
+
+@_serialized
+def clear_done_todos():
+    n = _conn_get().execute("DELETE FROM todos WHERE COALESCE(done,0)=1").rowcount
+    _conn_get().commit()
+    return n
 
 
 # ---------------- 订单跟踪（v1.4.0：下单后状态跟踪 + SL/TP 提醒） ----------------

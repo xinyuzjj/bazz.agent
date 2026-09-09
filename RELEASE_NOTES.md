@@ -1,3 +1,23 @@
+# BAZZ.AGENT v1.4.4
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.4.4 更新要点（Agent 任务清单 + 记忆报告 + 通知加固）
+
+### 1. Agent 任务清单 todo_write（学习 Hermes todo_tool）
+- Agent 可把多步任务**拆解登记成清单**（add/toggle/remove/list/clear_done），持久化到本地数据库
+- **未完成任务每轮自动注入提示**：跨轮、跨天都不会烂尾，Agent 不会在没做完时装作已完成
+- 问问它「帮我盯着这几件事」「任务完成了吗」就能看到清单勾选状态
+
+### 2. 记忆报告导出（Markdown）
+- 记忆页新增「导出记忆报告 (MD)」：按 **偏好/事实/事件** 分组排版，含更新日期、来源与命中次数
+- 原 JSON 备份导出保留，两者并存
+
+### 3. 操作失败不再静默（前端加固）
+- 网关加载、插件加载、深度思考开关、新建/删除/归档/重命名会话、代码复制等操作失败时**右下角弹出错误 toast**，排查问题不再两眼一抹黑
+
+---
+
 # BAZZ.AGENT v1.4.3
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**

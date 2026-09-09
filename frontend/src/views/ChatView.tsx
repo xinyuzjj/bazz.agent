@@ -4,6 +4,7 @@ import { I } from "../components/icons";
 import { AgentSigninCard, ChainWalletPanel, Spin } from "../components/WalletBits";
 import { AgentAvatar, Blobatar } from "../components/Blobatar";
 import { useT } from "../i18n/i18n";
+import { pushToast } from "../components/Toasts";
 
 type ChatMsg = {
   id: string; role: "user" | "assistant"; text: string;
@@ -291,18 +292,18 @@ export function ChatView({
       const r: any = await api.newConversation();
       setMessages([]); pushLog(`NEW > ${r?.id?.slice(0, 8)}`);
       setConvId(r.id ?? null); refreshList();
-    } catch {}
+    } catch (e: any) { pushToast(t("common.opFailed"), String(e?.message ?? e).slice(0, 120), "bad"); }
   };
   const delConv = async (cid: string) => {
     if (streaming) return;
     if (!window.confirm(t("chat.confirmDelSession"))) return;
-    try { await api.deleteConversation(cid); } catch {}
+    try { await api.deleteConversation(cid); } catch (e: any) { pushToast(t("common.opFailed"), String(e?.message ?? e).slice(0, 120), "bad"); }
     setConvMenu(null);
     refreshList();
     if (convId === cid) { setConvId(null); setMessages([]); }
   };
   const archiveConv = async (cid: string, archived: boolean) => {
-    try { await api.archiveConversation(cid, archived); } catch {}
+    try { await api.archiveConversation(cid, archived); } catch (e: any) { pushToast(t("common.opFailed"), String(e?.message ?? e).slice(0, 120), "bad"); }
     setConvMenu(null);
     refreshList();
     if (archived && convId === cid) { setConvId(null); setMessages([]); }
@@ -1071,8 +1072,8 @@ export function ChatView({
                         onChange={(e) => setRenameDraft(e.target.value)}
                         onKeyDown={async (e) => {
                           if (e.key === "Enter") {
-                            const t = renameDraft.trim();
-                            if (t) { try { await api.renameConversation(c.id, t); refreshList(); } catch {} }
+                            const name = renameDraft.trim();
+                            if (name) { try { await api.renameConversation(c.id, name); refreshList(); } catch (err: any) { pushToast(t("common.opFailed"), String(err?.message ?? err).slice(0, 120), "bad"); } }
                             setRenamingId(null);
                           } else if (e.key === "Escape") setRenamingId(null);
                         }}
@@ -2273,7 +2274,7 @@ function CodeCard({ lang, code }: { lang: string; code: string }) {
   const [fold, setFold] = useState(code.split("\n").length > 40);
   const lineCount = code.split("\n").length;
   const copy = async () => {
-    try { await navigator.clipboard.writeText(code); setCopied(true); setTimeout(() => setCopied(false), 1200); } catch {}
+    try { await navigator.clipboard.writeText(code); setCopied(true); setTimeout(() => setCopied(false), 1200); } catch { pushToast(t("common.copyFail"), "", "warn"); }
   };
   return (
     <div className="my-2 rounded-md border border-line bg-canvas overflow-hidden">

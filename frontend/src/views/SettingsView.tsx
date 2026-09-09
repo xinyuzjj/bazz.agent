@@ -5,6 +5,7 @@ import { CronPanel, McpPanel, ChannelPanel } from "./AdminPanels";
 import { useI18n } from "../i18n/i18n";
 import UpdatePanel from "../components/UpdatePanel";
 import { ProxyPoolView } from "./ProxyPoolView";
+import { pushToast } from "../components/Toasts";
 
 const LLM_PROVIDERS = [
   // presets 与后端 src/llm.py 的 PROVIDERS 完全对齐（按 2026-09 各厂商官方 API 现役目录核实）。
@@ -55,7 +56,7 @@ export function SettingsView({ settings, onSaved, onNav }: { settings: any; onSa
       const r: any = await fetch("/api/gateways", { headers: authHeaders() }).then((x) => x.json());
       setGwList(Array.isArray(r?.gateways) ? r.gateways : []);
       setMcpToolCount(r?.mcp_tools ?? 0);
-    } catch {}
+    } catch (e: any) { pushToast(t("common.opFailed"), String(e?.message ?? e).slice(0, 120), "bad"); }
     setGwBusy(false);
   };
   useEffect(() => { loadGateways(); }, []);
@@ -63,10 +64,10 @@ export function SettingsView({ settings, onSaved, onNav }: { settings: any; onSa
   useEffect(() => { if (settings?.llm) setLlm((p: any) => ({ backup_models: p.backup_models ?? [], ...settings.llm })); }, [settings]);
 
   const loadPlugins = async () => {
-    try { const d: any = await api.plugins(); setPlugins(Array.isArray(d) ? d : []); } catch {}
+    try { const d: any = await api.plugins(); setPlugins(Array.isArray(d) ? d : []); } catch (e: any) { pushToast(t("common.opFailed"), String(e?.message ?? e).slice(0, 120), "bad"); }
   };
   useEffect(() => { loadPlugins(); }, []);
-  useEffect(() => { (async () => { try { setDeepThinking(await api.getDeepThinking()); } catch {} })(); }, []);
+  useEffect(() => { (async () => { try { setDeepThinking(await api.getDeepThinking()); } catch (e: any) { pushToast(t("common.opFailed"), String(e?.message ?? e).slice(0, 120), "bad"); } })(); }, []);
   const runPlugin = async (p: any, cmd: string) => {
     if (plBusy) return;
     setPlBusy(`${p.id}.${cmd}`);
@@ -278,7 +279,7 @@ export function SettingsView({ settings, onSaved, onNav }: { settings: any; onSa
             <div className="flex items-center gap-2 mb-1.5">
               <input type="checkbox" checked={deepThinking} onChange={async (e) => {
                 const on = e.target.checked; setDeepThinking(on);
-                try { await api.setDeepThinking(on); } catch {}
+                try { await api.setDeepThinking(on); } catch (err: any) { pushToast(t("common.opFailed"), String(err?.message ?? err).slice(0, 120), "bad"); }
               }} className="accent-gold" />
               <span className="font-mono text-[12px] text-ink">{t("settings.deepToggleLabel")}</span>
             </div>
