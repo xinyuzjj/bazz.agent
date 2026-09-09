@@ -504,6 +504,25 @@ def _apply_env():
         for k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
                   "http_proxy", "https_proxy", "all_proxy"):
             os.environ.pop(k, None)
+    _ensure_node_preload()
+
+
+def _ensure_node_preload():
+    """v1.3.8：给 Node 子进程（baw CLI 等）挂 fetch 代理补丁。
+
+    Node 20 的全局 fetch（内置 undici）不读 HTTP(S)_PROXY env —— 代理池启用后
+    env 注入对 baw 无效（仍直连，二维码生成失败），只有系统级 TUN/全局才拦得到。
+    通过 NODE_OPTIONS 预加载 runtime/proxy-preload.cjs（undici EnvHttpProxyAgent），
+    子进程启动时若存在代理 env 即接管全部 fetch 流量。无代理 env 时脚本自动跳过，
+    因此常挂不影响直连场景。"""
+    preload = os.path.join(workspace.RUNTIME_DIR, "proxy-preload.cjs")
+    if not os.path.isfile(preload):
+        return  # dev / runtime 缺失：跳过（baw 走系统 PATH，代理由用户自行解决）
+    flag = '--require="' + preload.replace("\\", "/") + '"'
+    cur = (os.environ.get("NODE_OPTIONS") or "").strip()
+    if "proxy-preload.cjs" in cur:
+        return  # 已挂过
+    os.environ["NODE_OPTIONS"] = (cur + " " + flag) if cur else flag
 
 
 def active_entry():

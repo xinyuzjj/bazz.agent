@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import threading
@@ -27,6 +28,9 @@ PROVIDERS_DIR = os.path.join(KERNEL_DIR, "providers")
 MIHOMO_EXE = os.path.join(KERNEL_DIR, "mihomo.exe")
 CONFIG_PATH = os.path.join(KERNEL_DIR, "config.yaml")
 LOG_PATH = os.path.join(KERNEL_DIR, "kernel.log")
+
+# v1.3.8：安装包内置内核的位置（build-desktop.js 由 CI 下载后打进 <安装根>/.system/kernel/）
+BUNDLED_KERNEL_EXE = os.path.join(workspace.app_root(), ".system", "kernel", "mihomo.exe")
 
 GROUP_NAME = "BAZZ"
 TEST_URL = "https://api.binance.com/api/v3/ping"
@@ -49,7 +53,30 @@ _MIRRORS = [
 
 # ---------------- 基础状态 ----------------
 
+_bundled_adopted = False
+
+
+def _adopt_bundled_kernel():
+    """v1.3.8：把安装包内置内核接化为当前内核（仅首次尝试一次）。
+
+    正常情况下内置内核就落在 <安装根>/.system/kernel/ = SYSTEM_DIR/kernel（同一位置，
+    无需任何动作）。只有安装目录只读、SYSTEM_DIR 回退到 workspace 时，内置内核才
+    「看得见摸不着」，这里把它拷贝到激活的 KERNEL_DIR。"""
+    global _bundled_adopted
+    if _bundled_adopted:
+        return
+    _bundled_adopted = True
+    if os.path.isfile(MIHOMO_EXE) or not os.path.isfile(BUNDLED_KERNEL_EXE):
+        return
+    try:
+        os.makedirs(KERNEL_DIR, exist_ok=True)
+        shutil.copyfile(BUNDLED_KERNEL_EXE, MIHOMO_EXE)
+    except OSError:
+        pass
+
+
 def is_installed():
+    _adopt_bundled_kernel()
     return os.path.isfile(MIHOMO_EXE)
 
 

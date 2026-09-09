@@ -113,9 +113,45 @@ function rmrf(p) {
   spawnSync("cmd", ["/c", "rd", "/s", "/q", p], { stdio: "ignore" });
 }
 
+// v1.3.8：fetch 代理支持 —— undici（纯 JS，~1MB）+ proxy-preload.cjs。
+// baw 的全局 fetch（Node 20 内置 undici）不读 HTTP(S)_PROXY env，代理池开了也直连失败；
+// 预加载脚本经 NODE_OPTIONS 挂载后把全局 dispatcher 换成 EnvHttpProxyAgent 才生效。
+// 注意①：runtime/ 无 package.json，npm 会把「不在本次安装清单里」的包全部剪掉 ——
+//         baw 与 undici 必须在同一条命令里装，分两次会把先装的删掉（实测 74 包被剪）。
+// 注意②：stamp 命中的缓存路径也必须执行（老 runtime 升级后要补齐这两个文件）。
+async function ensureProxySupport() {
+  const nodeExe = fs.existsSync(path.join(RUNTIME, "node", "node.exe"))
+    ? path.join(RUNTIME, "node", "node.exe") : process.execPath;
+  const npmCli = path.join(RUNTIME, "node", "node_modules", "npm", "bin", "npm-cli.js");
+  const bawPkg = path.join(RUNTIME, "node_modules", "@binance", "agentic-wallet", "package.json");
+  const undiciPkg = path.join(RUNTIME, "node_modules", "undici", "package.json");
+  if (!fs.existsSync(npmCli)) { console.warn("⚠ runtime 内无 npm-cli，跳过 undici 安装（baw fetch 代理将不可用）"); return; }
+  const need = [];
+  if (!fs.existsSync(bawPkg)) need.push("@binance/agentic-wallet");
+  if (!fs.existsSync(undiciPkg)) need.push("undici@6");
+  if (need.length) {
+    // 任何时候都带上完整清单（baw + undici），避免 npm 理树时把另一个剪掉
+    log("npm install " + need.join(" + ") + "（补齐缺失组件）…");
+    const env = { ...process.env, npm_config_registry: NPM_REG };
+    if (BAZZ_PROXY) {
+      env.HTTPS_PROXY = BAZZ_PROXY; env.HTTP_PROXY = BAZZ_PROXY; env.NPM_CONFIG_PROXY = BAZZ_PROXY;
+    }
+    const r = spawnSync(nodeExe, [npmCli, "install", "--no-audit", "--no-fund", "--no-save",
+      "--prefix", RUNTIME, "--loglevel=error", "@binance/agentic-wallet", "undici@6"],
+      { cwd: PROJ, stdio: "inherit", env });
+    if (r.status !== 0) fail("npm install 失败（baw + undici）");
+  }
+  fs.copyFileSync(path.join(__dirname, "proxy-preload.cjs"), path.join(RUNTIME, "proxy-preload.cjs"));
+  ok("baw fetch 代理支持就绪：undici + proxy-preload.cjs");
+}
+
 async function main() {
   console.log(`ℹ PROJ=${PROJ}  RUNTIME=${RUNTIME}  NODE_VER=${NODE_VER}`);
-  if (!FORCE && fs.existsSync(STAMP)) { ok(`runtime 已就绪（stamp 存在，FORCE=1 重下）：${RUNTIME}`); return; }
+  if (!FORCE && fs.existsSync(STAMP)) {
+    ok(`runtime 已就绪（stamp 存在，FORCE=1 重下）：${RUNTIME}`);
+    await ensureProxySupport();   // v1.3.8：缓存命中也要补齐 undici + 预加载脚本
+    return;
+  }
 
   fs.mkdirSync(RUNTIME, { recursive: true });
 
@@ -207,11 +243,12 @@ async function main() {
   if (BAZZ_PROXY) {
     env.HTTPS_PROXY = BAZZ_PROXY; env.HTTP_PROXY = BAZZ_PROXY; env.NPM_CONFIG_PROXY = BAZZ_PROXY;
   }
-  log("npm install @binance/agentic-wallet 到 runtime/node_modules（~70MB，1-2 分钟）…");
+  log("npm install @binance/agentic-wallet + undici@6 到 runtime/node_modules（~70MB，1-2 分钟）…");
   // 用 --prefix CLI 参数（不是 env npm_config_prefix）—— 前者装到 <prefix>/node_modules/，
   // 后者会装到 <prefix>/lib/node_modules/。cwd 设到 prefix 之外避免 npm 误把它当 package。
+  // v1.3.8：undici@6 与 baw 同一条命令安装（runtime/ 无 package.json，分开装会互相剪掉）
   const r = spawnSync(nodeExe, [npmCli, "install", "--no-audit", "--no-fund", "--no-save",
-    "--prefix", RUNTIME, "--loglevel=error", "@binance/agentic-wallet"], {
+    "--prefix", RUNTIME, "--loglevel=error", "@binance/agentic-wallet", "undici@6"], {
     cwd: PROJ, stdio: "inherit", env,
   });
   if (r.status !== 0) fail("npm install 失败");
@@ -220,6 +257,9 @@ async function main() {
   const bawPkg = path.join(RUNTIME, "node_modules", "@binance", "agentic-wallet", "package.json");
   if (!fs.existsSync(bawPkg)) fail("安装后未找到 @binance/agentic-wallet：" + bawPkg);
   ok(`baw CLI 就绪：${bawPkg}`);
+
+  // v1.3.8：undici + fetch 代理预加载（baw 走代理池的关键）
+  await ensureProxySupport();
 
   fs.writeFileSync(STAMP, `node=${NODE_VER} npm-reg=${NPM_REG} ts=${new Date().toISOString()}\n`);
   // 打印 runtime 体积

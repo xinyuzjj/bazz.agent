@@ -150,6 +150,21 @@ const packOpts = {
   if (!fs.existsSync(exe)) fail(`未找到产物 exe：${exe}`);
   // 版本标记（产物根目录 —— 更新整目录替换后随新版更新）
   fs.writeFileSync(path.join(FINAL, "BAZZ_VERSION.txt"), VERSION + "\n");
+
+  // ---------- v1.3.8：内置 mihomo 内核 ----------
+  // BAZZ_KERNEL_EXE 由 CI 下载 mihomo release 后传入；拷进 <安装根>/.system/kernel/mihomo.exe
+  // （与 src/proxy_kernel.py 的 KERNEL_DIR/BUNDLED_KERNEL_EXE 对齐）。缺省跳过 → 运行时仍可在线下载。
+  const KERNEL_EXE = process.env.BAZZ_KERNEL_EXE || "";
+  if (KERNEL_EXE) {
+    if (!fs.existsSync(KERNEL_EXE)) fail(`BAZZ_KERNEL_EXE 指向的内核不存在：${KERNEL_EXE}`);
+    const kdir = path.join(FINAL, ".system", "kernel");
+    fs.mkdirSync(kdir, { recursive: true });
+    fs.copyFileSync(KERNEL_EXE, path.join(kdir, "mihomo.exe"));
+    ok(`内置 mihomo 内核：${path.join(kdir, "mihomo.exe")}`);
+  } else {
+    console.warn("⚠ 未设置 BAZZ_KERNEL_EXE，本次产物不内置内核（用户首次使用需在线下载）");
+  }
+
   ok(`便携版就绪：${exe}`);
 
   // ---------- 6) 可选：压成最终便携 zip ----------

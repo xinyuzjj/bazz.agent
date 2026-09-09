@@ -1,3 +1,24 @@
+# BAZZ.AGENT v1.3.8
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.3.8 更新要点（代理池增强：内核内置 + Agent 钱包走代理）
+
+### 1. mihomo 内核内置（不再单独下载）
+- 安装包现已**自带 mihomo 内核**（CI 构建时打包进 `<安装根>/.system/kernel/`），开箱即用
+- hysteria2/vmess/trojan/ss 等内核型节点首次使用不再需要联网下载内核
+- 安装目录只读的兜底场景会自动把内置内核接化到工作区，在线下载通道保留作为最后兜底
+
+### 2. 修复：开启代理池后 Agent 钱包二维码生成失败（「未返回 qrCodeId」）
+- **原因**：baw CLI 用 Node 20 全局 fetch（内置 undici），它不读 HTTP(S)_PROXY 环境变量 ——
+  代理池启用后环境变量注入对 baw 无效（仍直连），此前只有系统级全局/TUN 模式才能成功
+- **修复**：代理池启用时自动给所有 Node 子进程挂载 fetch 代理补丁
+  （`NODE_OPTIONS --require proxy-preload.cjs` → undici EnvHttpProxyAgent），
+  baw 扫码登录 / 余额 / 转账 / Agent 钱包技能全部流量自动走代理池当前节点
+- 切「直连」即恢复原样，无代理场景不受任何影响
+
+---
+
 # BAZZ.AGENT v1.3.7.2
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**

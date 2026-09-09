@@ -80,8 +80,28 @@ jobs:
           node scripts/prepare-runtime.js
           if (-not (Test-Path "runtime/node/node.exe")) { throw "runtime 准备失败：未生成 runtime/node/node.exe" }
           if (-not (Test-Path "runtime/node_modules/@binance/agentic-wallet/package.json")) { throw "runtime 准备失败：未安装 @binance/agentic-wallet" }
+          if (-not (Test-Path "runtime/node_modules/undici/package.json")) { throw "runtime 准备失败：未安装 undici（baw fetch 代理支持）" }
+          if (-not (Test-Path "runtime/proxy-preload.cjs")) { throw "runtime 准备失败：proxy-preload.cjs 未就位" }
           Write-Host "runtime 就绪："
           Get-ChildItem runtime | Select-Object Name, @{N="MB";E={[math]::Round((Get-ChildItem $_.FullName -Recurse | Measure-Object Length -Sum).Sum/1MB,0)}}
+
+      - name: 下载 mihomo 内核（v1.3.8 起内置进安装包，用户免单独下载）
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $headers = @{ "User-Agent" = "BAZZ.AGENT" }
+          $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest" -Headers $headers
+          $asset = $rel.assets | Where-Object { $_.name -match "^mihomo-windows-amd64-v[\d.]+\.zip$" } | Select-Object -First 1
+          if (-not $asset) { throw "mihomo 最新 Release 未找到 windows-amd64 资产" }
+          $zip = Join-Path $env:RUNNER_TEMP "mihomo.zip"
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -Headers $headers
+          $out = Join-Path $env:RUNNER_TEMP "mihomo-extract"
+          if (Test-Path $out) { Remove-Item $out -Recurse -Force }
+          Expand-Archive -Path $zip -DestinationPath $out -Force
+          $exe = Get-ChildItem $out -Recurse -Filter "mihomo*.exe" | Select-Object -First 1
+          if (-not $exe) { throw "解压后未找到 mihomo exe" }
+          Add-Content -Path $env:GITHUB_ENV -Value "BAZZ_KERNEL_EXE=$($exe.FullName)"
+          Write-Host "mihomo 内核就绪：$($exe.FullName)（$([math]::Round($asset.size/1MB,1)) MB，tag $($rel.tag_name)）"
 
       - name: PyInstaller 冻后端
         shell: pwsh
