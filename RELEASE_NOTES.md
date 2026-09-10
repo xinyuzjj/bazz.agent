@@ -1,3 +1,16 @@
+# BAZZ.AGENT v1.5.1
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.1 更新要点（修复）
+
+### 修复：妖币雷达报错「list index out of range」
+- 修复妖币雷达 v2 在部分币种 15m K 线不足 96 根时（新上市币 / 数据缺口），BTC β 残差计算出现负索引越界，导致整个雷达请求失败、界面显示红色错误条的问题
+- 现在数据不足时自动从可用区间起始计算；数据充足时评分行为完全不变
+- 实测恢复正常：单次扫描返回 30+ 币种与完整阶段分布（垂直拉升 / 点火 / 吸筹 / 崩跌 / 沉寂）
+
+---
+
 # BAZZ.AGENT v1.5.0
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**

@@ -1289,9 +1289,11 @@ def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_F
         d["speed5m"] = t["speed5m"]
         # BTC β 残差
         if btc15 and len(c15) >= 30 and len(btc15) >= 30:
-            sym_rets = [math.log(c15[i] / c15[i - 1]) for i in range(len(c15) - 96, len(c15))
+            s0 = max(1, len(c15) - 96)
+            b0 = max(1, len(btc15) - 96)
+            sym_rets = [math.log(c15[i] / c15[i - 1]) for i in range(s0, len(c15))
                         if c15[i - 1] > 0 and c15[i] > 0]
-            btc_rets = [math.log(btc15[i] / btc15[i - 1]) for i in range(len(btc15) - 96, len(btc15))
+            btc_rets = [math.log(btc15[i] / btc15[i - 1]) for i in range(b0, len(btc15))
                         if btc15[i - 1] > 0 and btc15[i] > 0]
             bb = _btc_beta(sym_rets, btc_rets, r["change_pct"],
                            _btc_chg24(btc15, r["change_pct"]))
