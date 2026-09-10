@@ -747,11 +747,30 @@ _WRAPPERS = {
 }
 
 
+def _resolve_exe0(tok: str) -> tuple:
+    r"""token0 白名单解析（v1.5.8 修复打包版 run_skill 报『命令不在白名单: F:\...\node.exe』）：
+    run_skill_cmd 会用内置 runtime 的**绝对路径** node.exe（打包用户机器没有 PATH node）拼命令，
+    绝对路径形式若 basename 命中 EXE_BIN 且文件真实存在 → 折算为白名单键，启动时用回原绝对路径。
+    返回 (白名单键 or None, 启动路径 or None)。"""
+    is_path = ("/" in tok) or ("\\" in tok)
+    if is_path:
+        b = os.path.basename(tok.strip('"')).lower()
+        if b.endswith(".exe"):
+            b = b[:-4]
+        if b in EXE_BIN and os.path.isfile(tok.strip('"')):
+            return b, tok.strip('"')
+        return None, None
+    key = tok.lower()
+    if key in EXE_BIN:
+        return key, None
+    return None, None
+
+
 def _run_one(command: str, timeout: int, max_out: int) -> dict:
     """执行单条命令（不含 &&/||/; 链式）。返回 {exit_code, output, truncated, cmd, elapsed}。"""
     toks = _tokenize(command)
-    exe0 = toks[0].lower()
-    if exe0 not in ALLOWED_EXE:
+    exe0, exe_abs = _resolve_exe0(toks[0])
+    if exe0 is None:
         raise SandboxError(f"命令不在白名单（{', '.join(sorted(ALLOWED_EXE))}）: {toks[0]}")
     lower = command.lower()
     for pat in FORBIDDEN_PATTERNS:
@@ -769,9 +788,10 @@ def _run_one(command: str, timeout: int, max_out: int) -> dict:
         truncated = len(out) > max_out
         return {"exit_code": code, "output": out[:max_out], "truncated": truncated,
                 "cmd": command, "elapsed": round(time.time() - t0, 2)}
-    argv = [ALLOWED_EXE[exe0]] + toks[1:]
+    # v1.5.8：绝对路径白名单可执行文件（内置 runtime node.exe 等）用回原路径启动，不走 PATH
+    argv = [exe_abs or ALLOWED_EXE[exe0]] + toks[1:]
     # Windows 上 npm 全局命令是 .cmd/.bat 包装器，CreateProcess 不能直跑 → 用 cmd /c 包裹
-    exe_path = shutil.which(ALLOWED_EXE[exe0]) or ALLOWED_EXE[exe0]
+    exe_path = shutil.which(argv[0]) or argv[0]
     if os.name == "nt" and exe_path.lower().endswith((".cmd", ".bat")):
         argv = ["cmd", "/c"] + argv
     try:

@@ -79,7 +79,7 @@ export const OUTCOME_META: Record<string, { label: string; cls: string }> = {
 };
 export const TRACK_COLS = {
   pending: { tpl: "1.9fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.9fr", head: ["markets.col.symbol", "markets.trackFoundPrice", "markets.trackNowPrice", "markets.trackChg", "markets.trackMaxGain", "markets.trackMaxDrop", "markets.trackPnl", "markets.trackFoundAt"] },
-  history: { tpl: "1.9fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.9fr", head: ["markets.col.symbol", "markets.trackFoundPrice", "markets.trackOutcomePrice", "markets.trackChg", "markets.trackMaxGain", "markets.trackMaxDrop", "markets.trackPnl", "markets.trackDuration"] },
+  history: { tpl: "1.9fr 0.8fr 0.8fr 0.9fr 0.8fr 0.8fr 0.8fr 0.9fr", head: ["markets.col.symbol", "markets.trackFoundPrice", "markets.trackOutcomePrice", "markets.trackDate", "markets.trackMaxGain", "markets.trackMaxDrop", "markets.trackPnl", "markets.trackDuration"] },
 } as const;
 // 仓位模拟（与后端 radar_tracker 一致）：100U 本金 × 10x 合约，爆仓封底 -100U
 export const trackPnl = (direction: string | undefined, found: number, px: number) => {
@@ -87,6 +87,13 @@ export const trackPnl = (direction: string | undefined, found: number, px: numbe
   const chg = (px / found - 1) * 100;
   const roi = (direction === "SHORT" ? -chg : chg) * 10;
   return Math.max(-100, roi);
+};
+// 关单日期（历史战绩列）：MM-DD HH:mm
+export const fmtCloseDate = (ts: number | null) => {
+  if (!ts) return "—";
+  const d = new Date(ts);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };
 // 相对时间：60s→"xm"、1h→"x.xh"、更长→"x.xd"（列头文案区分"发现于/持续"）
 export const fmtAgo = (ts: number, now: number = Date.now() / 1000) => {
@@ -488,9 +495,15 @@ export const TrackLine = memo(function TrackLine({ r, variant, onDetail }: {
       </div>
       <div className="font-mono tabular text-ink text-[13px]">{fmtPrice(r.found_price)}</div>
       <div className="font-mono tabular text-ink text-[13px]">{curPx ? fmtPrice(curPx) : "—"}</div>
-      <div className={`font-mono tabular text-[13px] font-medium ${curChg == null ? "text-ink-mute" : curChg >= 0 ? "up" : "down"}`}>
-        {curChg == null ? "—" : `${curChg >= 0 ? "+" : ""}${curChg.toFixed(1)}%`}
-      </div>
+      {isP ? (
+        <div className={`font-mono tabular text-[13px] font-medium ${curChg == null ? "text-ink-mute" : curChg >= 0 ? "up" : "down"}`}>
+          {curChg == null ? "—" : `${curChg >= 0 ? "+" : ""}${curChg.toFixed(1)}%`}
+        </div>
+      ) : (
+        <div className="font-mono tabular text-ink-dim text-[12.5px]" title={new Date(r.closed_at || r.updated_at).toLocaleString()}>
+          {fmtCloseDate(r.closed_at || r.updated_at)}
+        </div>
+      )}
       <div className={`font-mono tabular text-[13px] ${gain > 0 ? "up" : "text-ink-mute"}`}>+{gain.toFixed(1)}%</div>
       <div className={`font-mono tabular text-[13px] ${drop > 0 ? "down" : "text-ink-mute"}`}>-{drop.toFixed(1)}%</div>
       {/* 仓位模拟：100U 本金 × 10x 合约（爆仓封底 -100U） */}

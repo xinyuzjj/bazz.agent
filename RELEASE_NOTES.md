@@ -1,3 +1,24 @@
+# BAZZ.AGENT v1.5.9
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.9 更新要点（打包版技能执行修复 + 追踪列调整）
+
+### 1. 打包版 Agent 调技能必失败 · 根因修复
+- **现象**：安装版（如 `F:\1\BAZZ.AGENT`）里 Agent 调 coin-report / market-data 全部报「命令不在白名单（baw, cat, …）: F:\1\BAZZ.」——技能一次都用不了，开发版无此问题
+- **根因**：`run_skill_cmd` 按规范用**内置 runtime 的绝对路径** node.exe 拼命令（打包用户机器没有 PATH node），但沙箱 `_run_one` 的白名单只认裸键名 `node`，`F:\...\runtime\node.exe` 被整段拒绝
+- **修复**：`_resolve_exe0` 白名单归一化——绝对路径形式若 basename 命中白名单可执行文件（node/npx/npm/git/baw/python 等）且文件真实存在，折算为白名单键并用**回原绝对路径**启动（不走 PATH）；不存在的路径 / 白名单外的 exe（如 cmd.exe）照旧拒绝，沙箱安全性不变
+
+### 2. 妖币追踪列调整
+- 历史战绩移除「当前涨跌幅」列，新增「**日期**」列（关单时间 MM-DD HH:mm，悬浮显示完整时间）
+- 进行中列表保留「当前涨跌幅」（现价 vs 发现价）
+
+### 3. 中英文补齐
+- 补 `markets.stage.SHORT_AMBUSH`（做空埋伏 / Short Ambush）——修复做空埋伏行显示原始 key
+- 补英文缺失的 `markets.trackPnl` / `trackPnlTip` / `holding` / `holdingTip` / `trackChg` / `trackDate`
+
+---
+
 # BAZZ.AGENT v1.5.8
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
