@@ -384,6 +384,9 @@ def _system_prompt(locale: str = "zh") -> str:
             "     ),不要走 mcp_call —— MCP binance 网关只有公开行情/账户/交易端点，没有发广场的能力，OAuth 授权也帮不上**。\n"
             "   **『帮我做个定时任务 / 每天 9 点分析妖币 / 每天早上定时扫描 / 每隔 30 分钟扫一次 / 加个日报 / 加个定时提醒 / cron / 自动定时』→ 立即用 schedule_task(action='create', name=…, time=…, task=…) 在后台真实注册 cron / interval 任务（不是给一句手动话术，也不要走 mcp_call 写系统级 cron）**。time 支持 `09:00`/`9 点`/`0 9 * * *`/`interval:30m`；task 默认 daily_scan_report，做妖币雷达传 meme_scan_report；**用户给出自定义周期指令（如『每天 9 点总结 BTC 行情并给关键位』）→ task='custom_prompt' 且把完整指令写进 prompt 参数（Agent 到点带全部工具无头真实执行）**。内置任务结果写『BAZZ Agent 日报』会话，custom_prompt 写专属会话「定时任务 · <name>」（都不需要用户在场）。**\n"
             "   **需求存在关键分叉（币种/周期/方向/预算不明且猜错代价高）→ 用 clarify 工具发结构化选择题让用户点选；能用合理默认值继续就不要问**。\n"
+            "   **币种识别 — 严禁猜交易对**：用户用中文名/展示名/别名指代币种（如『牛市』『未来』『小狗币』）→ 把『<名字>USDT』原样传给技能；\n"
+            "   若 coin-report / market-data 对该 SYMBOL 报错（说明是 Alpha/链上代币，不在币安现货/合约行情内）→ **绝不许换成别的交易对来猜**：改用 run_skill 调 `query-token-info`（按名称/合约地址搜链上数据）分析，"
+            "或用 clarify 问用户要英文 ticker / 合约地址。宁可承认不认识，也不要张冠李戴。\n"
             "   **多个相互独立的子任务（多标的各查各的/多路径排查）→ 用 delegate 并行委派子代理（tasks=[{name, prompt}]，prompt 必须自包含）；子任务间有依赖就自己做**。\n"
             "2) **绝不要先用文字叙述『我先调用 xxx』或『正在调用 xxx』！**\n"
             "   直接在 reply 之外、以 tool_calls 形式调用；用户必须看到真实数据。\n"
@@ -463,14 +466,57 @@ _QUOTES = ["USDT", "USDC", "FDUSD", "TUSD", "TRY", "BRL", "EUR"]
 # 单币深度分析请求（分析/研报/走势/解读 + 明确交易对）→ 兜底应推 coin-report 而非全市场扫描
 _COIN_ANALYSIS_PAT = re.compile(r"分析|研报|走势|解读|区间位置|入场计划|关键技术位", re.I)
 
+# 中文币名提取辅助：口语/大盘语剥离 与 常见中文别名
+_CJK_STRIP_RE = re.compile(
+    r"^(帮我看看|帮我|请你|分析一下|分析|研报|解读一下|解读|看看|查查|查一下|查|说说|讲讲|"
+    r"现在|最近|今天|什么|怎么|如何|为什么|一下|大盘|市场|币圈|行情|走势|价格|整体|全部|主流|山寨)")
+_CJK_STRIP_END_RE = re.compile(
+    r"(现在|最近|今天|怎么样|怎么看|如何|为什么|走势|行情|价格|点位|多少|这币|该币|这个币|情况|表现|潜力)$")
+_CJK_STOPWORDS = {"大盘", "市场", "币圈", "行情", "整体", "主流", "山寨", "全部", "走势", "价格", "点位", "妖币", " meme", "meme"}
+_CJK_ALIAS = {
+    "比特币": "BTC", "比特": "BTC", "大饼": "BTC", "以太坊": "ETH", "以太": "ETH", "以太币": "ETH",
+    "狗狗币": "DOGE", "狗狗": "DOGE", "瑞波": "XRP", "瑞波币": "XRP", "莱特币": "LTC",
+    "索拉纳": "SOL", "币安币": "BNB", "柚子": "EOS", "艾达": "ADA", "波卡": "DOT",
+}
+
 
 def _detect_coin_symbol(message: str) -> str:
     """从消息提取明确交易对（如 KATUSDT / WLDUSDT）；纯大盘语（无标的）返回 ''。
-    优先显式 BASEQUOTE，其次已知基础资产 + USDT。"""
+    优先显式 BASEQUOTE，其次已知基础资产 + USDT。
+    v1.5.12：支持中文展示名代币（如『牛市USDT』『帮我分析 牛市』）——Alpha 链上代币
+    的行情页 base 是中文，ASCII 正则提取不到 → 兜底走全市场扫描 → 模型只能瞎猜。
+    现在中文别名也原样拼成 <名字>USDT 传给技能（失败时系统提示引导走链上技能）。"""
     up = message.upper()
     m = re.search(r"(?<![A-Z0-9])([A-Z]{2,10})(USDT|USDC|FDUSD|TUSD)(?![A-Z0-9])", up)
     if m:
         return f"{m.group(1)}{m.group(2)}"
+    # 中文/混合展示名 + 报价后缀（如『牛市USDT』）
+    m = re.search(r"([\u4e00-\u9fff][\u4e00-\u9fffA-Za-z0-9]{0,7}?)(USDT|USDC|FDUSD|TUSD)(?![\u4e00-\u9fffA-Za-z0-9])", up)
+    if m:
+        return f"{m.group(1)}{m.group(2)}"
+    # 纯中文别名（无后缀）：『帮我分析 牛市』→ 牛市USDT；先剥掉口语/大盘语前缀，避免把整句当币名
+    if re.search(r"分析|研报|走势|解读|行情|价格|怎么样|怎么看|点位|多少|看看|查查|说说|讲讲", up):
+        cand = ""
+        for run in re.findall(r"[\u4e00-\u9fff]{2,12}", up):
+            s = run
+            for _ in range(4):
+                s2 = _CJK_STRIP_RE.sub("", s, count=1)
+                if s2 == s:
+                    break
+                s = s2
+            for _ in range(4):
+                s2 = _CJK_STRIP_END_RE.sub("", s, count=1)
+                if s2 == s:
+                    break
+                s = s2
+            if not s or s in _CJK_STOPWORDS:
+                continue
+            if s in _CJK_ALIAS:
+                return f"{_CJK_ALIAS[s]}USDT"
+            if not cand:
+                cand = s
+        if cand:
+            return f"{cand}USDT"
     for b in _TRADE_BASE:
         if re.search(rf"(?<![A-Z0-9]){b}(?![A-Z0-9])", up):
             return f"{b}USDT"

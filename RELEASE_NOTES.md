@@ -1,4 +1,18 @@
-# BAZZ.AGENT v1.5.12
+﻿# BAZZ.AGENT v1.5.13
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.13 更新要点（中文币名识别 · 防猜测规则）
+
+- **中文币名识别**：行情页中文展示名代币（如『牛市』）可直接识别——『帮我分析 牛市』→ 牛市USDT，不再误判成其他交易对
+- **口语剥离**：自动剥离 帮我/分析一下/大盘/怎么样 等口语与大盘语，整句不再被当成币名
+- **常见别名**：比特币→BTC、以太坊→ETH、狗狗币→DOGE、瑞波→XRP 等直接映射
+- **防猜测规则**：技能报错（Alpha 链上代币不在币安行情内）时改走 query-token-info 链上分析或反问用户，严禁换别的交易对来猜
+
+## 历史
+
+---
+
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
 
