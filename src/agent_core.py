@@ -1925,16 +1925,22 @@ def _run_sandbox_cmd(args: dict, confirmed: bool = False) -> Dict[str, Any]:
         return {"reply": "缺少 command 参数。", "tools": [
             {"icon": "⚡", "name": "命令执行", "status": "error", "detail": "缺 command"}]}
     # 白名单命中（用户此前「信任并执行」过同命令）→ 自动放行
+    try:
+        raw_t = args.get("timeout")
+        t = int(raw_t) if raw_t not in (None, "") else 0
+    except (TypeError, ValueError):
+        t = 0
+    t = max(5, min(120, t)) if t else 0   # 0 = 用沙箱默认 15s
     if not confirmed and _wl_has("run_command", args):
         confirmed = True
     if not confirmed:
-        return {"reply": f"准备在项目目录运行命令 **`{cmd[:80]}`**（白名单 python/node/npx/npm/git，15s 超时）。确认后执行。",
+        return {"reply": f"准备在项目目录运行命令 **`{cmd[:80]}`**（白名单 python/node/npx/npm/git，超时 {t or 15}s）。确认后执行。",
                 "needs_approval": True,
                 "approval": {"action": "local_exec", "op": "run_command", "args": args,
                              "title": f"运行命令 {cmd[:48]}", "label": "▶ 确认运行"},
                 "tools": [{"icon": "⚡", "name": "运行命令（待确认）", "status": "info", "detail": cmd[:80]}]}
     try:
-        r = _run(cmd)
+        r = _run(cmd, timeout=t) if t else _run(cmd)
     except SandboxError as e:
         return {"reply": f"⛔ 沙箱拦截：{e}", "tools": [
             {"icon": "⚡", "name": "运行命令", "status": "error", "detail": str(e)[:140]}]}

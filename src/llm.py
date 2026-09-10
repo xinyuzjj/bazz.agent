@@ -622,7 +622,7 @@ TOOLS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "run_command",
-            "description": ("受限本地执行：cwd 锁工作区根（打包态 = 应用安装目录下的 workspace），15s 超时、输出截断。运行需用户确认。"
+            "description": ("受限本地执行：cwd 锁工作区根（打包态 = 应用安装目录下的 workspace），默认 15s 超时（可传 timeout 调到 120s）、输出截断。运行需用户确认。"
                             "支持的命令：\n"
                             "- 真二进制白名单：python / node / npx / npm / git\n"
                             "- 内置 wrapper（POSIX 跨平台）：ls, cat, head, tail, wc, grep, find, pwd, mkdir, touch, cp, mv, rm, echo\n"
@@ -636,7 +636,8 @@ TOOLS: List[Dict[str, Any]] = [
                             "⚠️ 不要用本工具跑已装技能的 cli.mjs——统一走 run_skill。"),
             "parameters": {
                 "type": "object",
-                "properties": {"command": {"type": "string", "description": "命令，如 'python scripts/x.py' 或 'ls -la && find src -maxdepth 2 -type f -name \"*.py\"' "}},
+                "properties": {"command": {"type": "string", "description": "命令，如 'python scripts/x.py' 或 'ls -la && find src -maxdepth 2 -type f -name \"*.py\"' "},
+                               "timeout": {"type": "integer", "description": "可选，超时秒数（5–120），默认 15s；慢命令（git clone / npm install / 大脚本）建议 60–120"}},
                 "required": ["command"],
             },
         },
