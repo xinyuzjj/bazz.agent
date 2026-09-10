@@ -173,6 +173,54 @@ body {
 .field:focus { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold); }
 .field::placeholder { color: var(--ink-mute); }
 
+/* ---- 行情页 v1.5.3 可视化增强 ---- */
+
+/* 价格闪烁：WS tick 变化时一次性高亮（绿涨/红跌） */
+@keyframes flash-up {
+  0%   { background-color: rgba(14,203,129,0.28); }
+  100% { background-color: transparent; }
+}
+@keyframes flash-down {
+  0%   { background-color: rgba(246,70,93,0.28); }
+  100% { background-color: transparent; }
+}
+.flash-up   { animation: flash-up 0.6s ease-out; border-radius: 3px; }
+.flash-down { animation: flash-down 0.6s ease-out; border-radius: 3px; }
+
+/* 24h 区间位置条：当前价在 [low, high] 中的位置（CoinMarketCap 风格） */
+.posbar {
+  position: relative;
+  height: 3px;
+  border-radius: 9999px;
+  background: var(--line);
+  overflow: visible;
+}
+.posbar-fill {
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, rgba(246,70,93,0.75), rgba(240,185,11,0.75), rgba(14,203,129,0.75));
+}
+.posbar-dot {
+  position: absolute;
+  top: 50%;
+  width: 7px; height: 7px;
+  border-radius: 9999px;
+  background: var(--ink);
+  border: 1.5px solid var(--canvas);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 4px rgba(0,0,0,0.4);
+}
+
+/* 横向数据条（成交额热度 / 多空比可视化） */
+.hbar {
+  height: 3px;
+  border-radius: 9999px;
+  background: var(--line);
+  overflow: hidden;
+}
+.hbar > div { height: 100%; border-radius: 9999px; transition: width 0.4s ease; }
+
 /* Skeleton shimmer */
 .shimmer {
   background: linear-gradient(90deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.03) 100%);

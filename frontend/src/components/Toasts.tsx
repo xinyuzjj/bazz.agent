@@ -87,6 +87,20 @@ export default function Toasts() {
           systemNotify(title, body);
           return;
         }
+        // v1.5.2：妖币追踪结局（启动前发现 → 暴涨/暴跌兑现 / 到期）
+        if (kind === "radar_outcome") {
+          const oc = String(e.outcome ?? "");
+          const title = t(oc === "moon" ? "alert.radarMoon" : oc === "dump" ? "alert.radarDump" : "alert.radarExpired");
+          const body = t("alert.radarBody", {
+            found: e.found_price != null ? fmtPrice(Number(e.found_price)) : "—",
+            price: px,
+            gain: Number(e.max_gain_pct ?? 0).toFixed(1),
+            drop: Number(e.max_drop_pct ?? 0).toFixed(1),
+          });
+          pushToast(title, `${sym} · ${body}`, oc === "moon" ? "ok" : oc === "dump" ? "bad" : "info");
+          systemNotify(title, `${sym} · ${body}`);
+          return;
+        }
         const isHit = kind.endsWith("_hit");
         const isSl = kind.startsWith("sl");
         const title = t(isSl ? (isHit ? "alert.slHit" : "alert.slNear") : (isHit ? "alert.tpHit" : "alert.tpNear"));

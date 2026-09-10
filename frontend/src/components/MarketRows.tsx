@@ -1,7 +1,7 @@
 // 行情表格行组件（v1.4.0 拆分自 MarketsView）
 // 每行 React.memo + 内部 useLiveTick 订阅自身实时价：WS tick 只让价格变化的行重渲，
 // 父组件整表不再随每秒时间戳 tick 重渲。
-import React, { memo, useEffect, useState } from "react";
+import React, { memo, useEffect, useRef, useState } from "react";
 import { I } from "./icons";
 import { useT } from "../i18n/i18n";
 import { useLiveTick } from "../lib/live";
@@ -58,6 +58,35 @@ export const RADAR_COLS = {
   takeoff:  { tpl: "2fr 0.9fr 0.9fr 0.9fr 0.9fr 1.1fr 0.8fr 1fr 2.2fr", head: ["markets.col.symbol", "markets.h.price", "7D", "30D", "markets.col.fromhigh", "markets.h.quotevol", "markets.col.surge", "markets.col.verdict", "markets.col.action"] },
 } as const;
 
+// v1.5.2 妖币追踪：启动前发现 → 后续暴涨/暴跌结局验证
+export type TrackRow = {
+  id: string; symbol: string; stage: string;
+  found_price: number; found_score: number; reasons?: string[];
+  status: "pending" | "closed";
+  outcome: "" | "moon" | "dump" | "expired";
+  max_gain_pct: number; max_drop_pct: number;
+  peak_price: number; trough_price: number;
+  last_price: number; outcome_price: number;
+  found_at: number; closed_at: number | null; updated_at: number;
+};
+export type TracksData = { pending: TrackRow[]; history: TrackRow[]; stats?: { total?: number; pending?: number; moon?: number; dump?: number; expired?: number }; ts?: number; error?: string };
+export const OUTCOME_META: Record<string, { label: string; cls: string }> = {
+  moon:    { label: "markets.outcomeMoon", cls: "pill-green" },
+  dump:    { label: "markets.outcomeDump", cls: "pill-red" },
+  expired: { label: "markets.outcomeExpired", cls: "pill-dim" },
+};
+export const TRACK_COLS = {
+  pending: { tpl: "2.2fr 0.9fr 0.9fr 0.9fr 0.9fr 1fr", head: ["markets.col.symbol", "markets.trackFoundPrice", "markets.trackNowPrice", "markets.trackMaxGain", "markets.trackMaxDrop", "markets.trackFoundAt"] },
+  history: { tpl: "2.2fr 0.9fr 0.9fr 0.9fr 0.9fr 1fr", head: ["markets.col.symbol", "markets.trackFoundPrice", "markets.trackOutcomePrice", "markets.trackMaxGain", "markets.trackMaxDrop", "markets.trackDuration"] },
+} as const;
+// 相对时间：60s→"xm"、1h→"x.xh"、更长→"x.xd"（列头文案区分"发现于/持续"）
+export const fmtAgo = (ts: number, now: number = Date.now() / 1000) => {
+  const s = Math.max(0, now - ts);
+  if (s < 3600) return `${Math.max(1, Math.floor(s / 60))}m`;
+  if (s < 86400) return `${(s / 3600).toFixed(1)}h`;
+  return `${(s / 86400).toFixed(1)}d`;
+};
+
 /* ---------------- 格式化 ---------------- */
 
 export const fmtPrice = (n: number) => {
@@ -75,6 +104,94 @@ export const fmtVol = (v: number) => {
 };
 export const fmtRate = (r?: number) => r === undefined ? "—" : `${r > 0 ? "+" : ""}${(r * 100).toFixed(4)}%`;
 export const baseName = (s: string) => s.replace(/USDT$/, "");
+
+/* ---------------- v1.5.3 可视化：价格闪烁 / 24h 区间条 / 侧栏 bar 行 ---------------- */
+
+// 价格变化闪烁：对比上次值，变化时返回一次性 flash-up / flash-down class
+export function useFlash(value: number): string {
+  const prev = useRef(value);
+  const [cls, setCls] = useState("");
+  useEffect(() => {
+    if (value > prev.current) setCls("flash-up");
+    else if (value < prev.current) setCls("flash-down");
+    prev.current = value;
+    const t = setTimeout(() => setCls(""), 650);
+    return () => clearTimeout(t);
+  }, [value]);
+  return cls;
+}
+
+// 24h 区间位置条：当前价在 [low, high] 中的位置（CoinMarketCap 风格渐变条 + 位置点）
+export const PosBar = memo(function PosBar({ low, high, price }: { low: number; high: number; price: number }) {
+  const t = useT();
+  if (!(low > 0 && high > low)) return null;
+  const pos = Math.min(1, Math.max(0, (price - low) / (high - low)));
+  return (
+    <div className="posbar" title={t("markets.posbarTitle")}>
+      <div className="posbar-fill" style={{ width: "100%" }} />
+      <div className="posbar-dot" style={{ left: `${pos * 100}%` }} />
+    </div>
+  );
+});
+
+// 侧栏：24h 成交额热度行（底部横向 bar，宽度 = 相对最大成交额）
+export const VolHeatRow = memo(function VolHeatRow({ v, rank, maxVol, onTrade, onAnalyze }: {
+  v: { symbol: string; price: number; change_pct: number; quote_volume: number };
+  rank: number; maxVol: number;
+  onTrade?: (symbol: string) => void;
+  onAnalyze?: (symbol: string) => void;
+}) {
+  const t = useT();
+  const up = v.change_pct >= 0;
+  const w = maxVol > 0 ? Math.max(2, (v.quote_volume / maxVol) * 100) : 0;
+  return (
+    <button onClick={() => onTrade?.(v.symbol)}
+      className="w-full rounded-lg border border-line bg-card/40 px-2.5 py-1.5 hover:border-gold/40 transition-colors group">
+      <div className="flex items-center gap-2">
+        <span className="font-mono text-[9.5px] text-ink-mute w-4">#{rank + 1}</span>
+        <span className="font-mono text-[12px] text-ink flex-1 text-left truncate">{baseName(v.symbol)}</span>
+        <span className={`font-mono tabular text-[11.5px] ${up ? "up" : "down"}`}>{up ? "+" : ""}{v.change_pct.toFixed(1)}%</span>
+        <span className="font-mono tabular text-[11px] text-ink-dim">{fmtVol(v.quote_volume)}</span>
+        <span onClick={(e) => { e.stopPropagation(); onAnalyze?.(v.symbol); }}
+          className="btn-ghost px-1.5 py-0.5 text-[9.5px] opacity-0 group-hover:opacity-100"><I.Search size={9} /> {t("markets.analyze")}</span>
+      </div>
+      <div className="hbar mt-1.5"><div style={{ width: `${w}%`, background: up ? "var(--green)" : "var(--red)" }} /></div>
+    </button>
+  );
+});
+
+// 侧栏：多空比行（大户多空比双段比例条，1:1 = 中线）
+export const LsLine = memo(function LsLine({ r, onTrade }: {
+  r: { symbol: string; top_ratio: number | null; global_ratio: number | null; divergence: boolean };
+  onTrade?: (symbol: string) => void;
+}) {
+  const t = useT();
+  const ratio = r.top_ratio ?? 0;
+  const longPct = ratio > 0 ? Math.min(0.95, Math.max(0.05, ratio / (1 + ratio))) : 0.5;
+  return (
+    <button onClick={() => onTrade?.(r.symbol)}
+      className="w-full rounded-md px-1.5 py-1 hover:bg-elevated/40 transition-colors">
+      <div className="flex items-center gap-2 font-mono text-[10.5px]">
+        <span className="text-ink flex-1 text-left truncate">{baseName(r.symbol)}</span>
+        {r.divergence && <span className="pill pill-gold text-[8.5px]">{t("markets.lsDiverge")}</span>}
+        <span className="text-ink-dim tabular" title={t("markets.lsTop")}>
+          {t("markets.lsTopShort")} {r.top_ratio != null ? r.top_ratio.toFixed(2) : "—"}
+        </span>
+        <span className="text-ink-mute tabular" title={t("markets.lsGlobal")}>
+          {t("markets.lsGlobalShort")} {r.global_ratio != null ? r.global_ratio.toFixed(2) : "—"}
+        </span>
+      </div>
+      <div className="flex items-center gap-1.5 mt-1">
+        <span className="font-mono text-[8.5px] text-green">{t("markets.long")}</span>
+        <div className="hbar flex-1 flex">
+          <div style={{ width: `${longPct * 100}%`, background: "var(--green)" }} />
+          <div style={{ width: `${(1 - longPct) * 100}%`, background: "var(--red)" }} />
+        </div>
+        <span className="font-mono text-[8.5px] text-red">{t("markets.short")}</span>
+      </div>
+    </button>
+  );
+});
 
 /* ---------------- 更新时间角标（自带 1s tick，隔离重渲范围） ---------------- */
 
@@ -103,24 +220,26 @@ export const SpotRow = memo(function SpotRow({ r, onTrade, onAnalyze }: {
   const price = tick ? tick.p : r.price;
   const chg = tick ? tick.c : r.change_pct;
   const qv = tick && tick.q ? tick.q : r.quote_volume;
+  const low = tick && tick.l ? tick.l : r.low;
+  const high = tick && tick.h ? tick.h : r.high;
+  const flash = useFlash(price);
   const up = chg >= 0;
   return (
     <div key={r.symbol} onClick={() => onTrade?.(r.symbol)}
       className="grid items-center px-4 py-2.5 border-b border-line/60 last:border-0 hover:bg-elevated/40 transition-colors cursor-pointer group"
-      style={{ gridTemplateColumns: "1.7fr 1fr 1.1fr 1.2fr 1fr 1fr" }}>
+      style={{ gridTemplateColumns: "1.7fr 1fr 1.1fr 1.2fr 1.4fr" }}>
       <div className="flex items-center gap-2 min-w-0">
         <span className="font-mono font-semibold text-ink group-hover:text-gold transition-colors">{baseName(r.symbol)}</span>
         <span className="font-mono text-[10px] text-ink-mute">/USDT</span>
         <button onClick={(e) => { e.stopPropagation(); onAnalyze?.(r.symbol); }}
-          className="btn-ghost px-1.5 py-0.5 text-[9.5px]" title={t("markets.analyze")}><I.Search size={9} /> {t("markets.analyze")}</button>
+          className="btn-ghost px-1.5 py-0.5 text-[9.5px] opacity-0 group-hover:opacity-100" title={t("markets.analyze")}><I.Search size={9} /> {t("markets.analyze")}</button>
       </div>
-      <div className="font-mono tabular text-ink text-[12.5px]">{fmtPrice(price)}</div>
-      <div className={`font-mono tabular text-[12.5px] ${up ? "up" : "down"}`}>
+      <div className={`font-mono tabular text-ink text-[12.5px] px-1 -mx-1 ${flash}`}>{fmtPrice(price)}</div>
+      <div className={`font-mono tabular text-[12.5px] font-medium ${up ? "up" : "down"}`}>
         {up ? "+" : ""}{chg.toFixed(2)}%
       </div>
       <div className="font-mono tabular text-ink-dim text-[11.5px]">{fmtVol(qv)}</div>
-      <div className="font-mono tabular text-ink-dim text-[11.5px]">{r.high > 0 ? fmtPrice(r.high) : "—"}</div>
-      <div className="font-mono tabular text-ink-dim text-[11.5px]">{r.low > 0 ? fmtPrice(r.low) : "—"}</div>
+      <div className="pr-1"><PosBar low={low} high={high} price={price} /></div>
     </div>
   );
 });
@@ -137,21 +256,25 @@ export const FutRow = memo(function FutRow({ r, onTrade, onAnalyze }: {
   const price = tick ? tick.p : r.price;
   const chg = tick ? tick.c : r.change_pct;
   const qv = tick && tick.q ? tick.q : r.quote_volume;
+  const low = tick && tick.l ? tick.l : r.low;
+  const high = tick && tick.h ? tick.h : r.high;
+  const flash = useFlash(price);
   const up = chg >= 0;
   return (
     <div key={r.symbol} onClick={() => onTrade?.(r.symbol)}
       className="grid items-center px-4 py-2.5 border-b border-line/60 last:border-0 hover:bg-elevated/40 transition-colors cursor-pointer group"
-      style={{ gridTemplateColumns: "1.6fr 1fr 1fr 1.2fr 1fr" }}>
+      style={{ gridTemplateColumns: "1.6fr 1fr 1fr 1.2fr 1fr 1.3fr" }}>
       <div className="flex items-center gap-2 min-w-0">
         <span className="font-mono font-semibold text-ink group-hover:text-gold">{baseName(r.symbol)}</span>
         <span className="font-mono text-[10px] text-ink-mute">/USDT</span>
         <button onClick={(e) => { e.stopPropagation(); onAnalyze?.(r.symbol); }}
-          className="btn-ghost px-1.5 py-0.5 text-[9.5px]" title={t("markets.analyze")}><I.Search size={9} /> {t("markets.analyze")}</button>
+          className="btn-ghost px-1.5 py-0.5 text-[9.5px] opacity-0 group-hover:opacity-100" title={t("markets.analyze")}><I.Search size={9} /> {t("markets.analyze")}</button>
       </div>
-      <div className="font-mono tabular text-ink text-[12.5px]">{fmtPrice(price)}</div>
-      <div className={`font-mono tabular text-[12.5px] ${up ? "up" : "down"}`}>{up ? "+" : ""}{chg.toFixed(2)}%</div>
+      <div className={`font-mono tabular text-ink text-[12.5px] px-1 -mx-1 ${flash}`}>{fmtPrice(price)}</div>
+      <div className={`font-mono tabular text-[12.5px] font-medium ${up ? "up" : "down"}`}>{up ? "+" : ""}{chg.toFixed(2)}%</div>
       <div className="font-mono tabular text-ink-dim text-[11.5px]">{fmtVol(qv)}</div>
       <div className={`font-mono tabular text-[11.5px] ${Math.abs(r.funding_rate) >= 0.001 ? "text-gold font-semibold" : r.funding_rate >= 0 ? "text-green" : "text-red"}`}>{fmtRate(r.funding_rate)}</div>
+      <div className="pr-1"><PosBar low={low} high={high} price={price} /></div>
     </div>
   );
 });
@@ -282,6 +405,55 @@ export const RadarLine = memo(function RadarLine({ m, mode, onTrade, onOrder, on
           <button onClick={(e) => { e.stopPropagation(); onTrade?.(m.symbol); }}
             className="btn-ghost text-[10.5px] py-1"><I.Search size={10} /> {t("markets.view")}</button>
         )}
+      </div>
+    </div>
+  );
+});
+
+/* ---------------- 妖币追踪行（v1.5.2：启动前发现 → 结局验证） ---------------- */
+
+export const TrackLine = memo(function TrackLine({ r, variant, onTrade }: {
+  r: TrackRow;
+  variant: "pending" | "history";
+  onTrade?: (symbol: string) => void;
+}) {
+  const t = useT();
+  const isP = variant === "pending";
+  const stageCls = STAGE_META[r.stage]?.cls ?? "pill-dim";
+  const oc = OUTCOME_META[r.outcome] ?? null;
+  const gain = r.max_gain_pct ?? 0;
+  const drop = r.max_drop_pct ?? 0;
+  return (
+    <div onClick={() => onTrade?.(r.symbol)}
+      className="grid items-center px-4 py-2.5 border-b border-line/60 last:border-0 hover:bg-elevated/40 transition-colors cursor-pointer group"
+      style={{ gridTemplateColumns: TRACK_COLS[variant].tpl }}>
+      <div className="min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-mono font-semibold text-ink group-hover:text-gold">{baseName(r.symbol)}</span>
+          <span className="font-mono text-[9px] text-ink-mute">/USDT</span>
+          <span className={`pill ${stageCls} text-[9px]`}>{t(`markets.stage.${r.stage}`)}</span>
+          {!isP && oc && <span className={`pill ${oc.cls} text-[9px]`}>{t(oc.label)}</span>}
+          {!isP && r.outcome === "moon" && r.outcome_price > 0 && (
+            <span className="font-mono text-[9.5px] text-green">+{(((r.outcome_price / (r.found_price || 1)) - 1) * 100).toFixed(0)}%</span>
+          )}
+          {!isP && r.outcome === "dump" && r.outcome_price > 0 && (
+            <span className="font-mono text-[9.5px] text-red">{(((r.outcome_price / (r.found_price || 1)) - 1) * 100).toFixed(0)}%</span>
+          )}
+        </div>
+        {(r.reasons?.length ?? 0) > 0 && (
+          <div className="font-mono text-[9.5px] text-ink-mute truncate mt-0.5">{r.reasons!.slice(0, 3).join(" · ")}</div>
+        )}
+      </div>
+      <div className="font-mono tabular text-ink text-[12px]">{fmtPrice(r.found_price)}</div>
+      {isP ? (
+        <div className="font-mono tabular text-ink text-[12px]">{r.last_price ? fmtPrice(r.last_price) : "—"}</div>
+      ) : (
+        <div className="font-mono tabular text-ink text-[12px]">{fmtPrice(r.outcome_price || r.last_price)}</div>
+      )}
+      <div className={`font-mono tabular text-[12px] ${gain > 0 ? "up" : "text-ink-mute"}`}>+{gain.toFixed(1)}%</div>
+      <div className={`font-mono tabular text-[12px] ${drop > 0 ? "down" : "text-ink-mute"}`}>-{drop.toFixed(1)}%</div>
+      <div className="font-mono tabular text-ink-dim text-[11px]">
+        {isP ? fmtAgo(r.found_at) : fmtAgo(r.closed_at || r.updated_at, r.found_at)}
       </div>
     </div>
   );

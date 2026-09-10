@@ -93,8 +93,10 @@ proxy_pool.bootstrap()
 # v1.4.0：行情实时流（币安 WS，代理池 env 已就位后启动）+ 订单跟踪/SL·TP 监控
 import market_ws
 import order_tracker
+import radar_tracker
 market_ws.start()
 order_tracker.ensure_started()
+radar_tracker.ensure_started()  # v1.5.2：妖币启动前发现 → 后续暴涨/暴跌结局跟踪
 
 # 后台预热钱包状态缓存（baw 冷启动慢，先算好，前端打开钱包页即秒回）
 threading.Thread(target=wallet_client.warm_wallet_cache, daemon=True).start()
@@ -224,6 +226,15 @@ def api_market_longshort():
         return get_longshort_board()
     except Exception as e:
         return {"rows": [], "error": str(e)}
+
+
+@app.get("/api/market/radar/tracks")
+def api_market_radar_tracks():
+    """妖币追踪：启动前发现记录 + 后续暴涨/暴跌结局验证（进行中/历史/战绩统计）。"""
+    try:
+        return radar_tracker.tracks_view()
+    except Exception as e:
+        return {"pending": [], "history": [], "stats": {}, "error": str(e)}
 
 
 @app.get("/api/market/liquidations")

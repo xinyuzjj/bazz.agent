@@ -1425,6 +1425,12 @@ def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_F
     }
     _radar2_cache["data"] = payload
     _radar2_cache["ts"] = cycle_ts
+    # 妖币追踪（v1.5.2）：启动前发现的币登记进跟踪表（延迟 import 防循环，异常不影响雷达）
+    try:
+        import radar_tracker
+        radar_tracker.record_from_radar(payload)
+    except Exception:
+        pass
     # 清理 24h 前的冷却记录
     for k in [k for k, v in _radar_prev.items() if cycle_ts - v[0] > 86400]:
         _radar_prev.pop(k, None)

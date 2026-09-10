@@ -119,8 +119,29 @@ def _init():
         created_at REAL NOT NULL,
         updated_at REAL NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS radar_tracks (
+        id TEXT PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        stage TEXT NOT NULL,
+        found_price REAL NOT NULL,
+        found_score INTEGER DEFAULT 0,
+        reasons_json TEXT DEFAULT '[]',
+        status TEXT DEFAULT 'pending',
+        outcome TEXT DEFAULT '',
+        max_gain_pct REAL DEFAULT 0.0,
+        max_drop_pct REAL DEFAULT 0.0,
+        peak_price REAL DEFAULT 0,
+        trough_price REAL DEFAULT 0,
+        last_price REAL DEFAULT 0,
+        outcome_price REAL DEFAULT 0,
+        found_at REAL NOT NULL,
+        closed_at REAL,
+        updated_at REAL NOT NULL
+    );
     CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conv_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_mem ON memory(key);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_radar_tracks_pending ON radar_tracks(symbol) WHERE status='pending';
+    CREATE INDEX IF NOT EXISTS idx_radar_tracks_hist ON radar_tracks(status, found_at);
     """)
     # 兼容早期库：agents 缺 config 列时补上
     cols = {r[1] for r in c.execute("PRAGMA table_info(agents)").fetchall()}
@@ -747,6 +768,98 @@ def track_set_active(tid: str, active: bool) -> None:
 def track_remove(tid: str) -> None:
     _conn_get().execute("DELETE FROM tracked_orders WHERE id=?", (tid,))
     _conn_get().commit()
+
+
+# ---------------- 妖币追踪（v1.5.2：启动前发现 → 后续暴涨/暴跌结局验证） ----------------
+
+def _radar_track_out(r):
+    d = dict(r)
+    d["reasons"] = json.loads(d.get("reasons_json") or "[]")
+    d.pop("reasons_json", None)
+    return d
+
+
+@_serialized
+def radar_track_add(symbol: str, stage: str, found_price: float, found_score: int = 0,
+                    reasons=None, found_at: float = 0) -> str:
+    """登记一条启动前发现记录；同币已在跟踪中（pending）则幂等返回已有 id。"""
+    now = time.time()
+    exist = _conn_get().execute(
+        "SELECT id FROM radar_tracks WHERE symbol=? AND status='pending'",
+        (str(symbol).upper(),)).fetchone()
+    if exist:
+        return exist["id"]
+    tid = _uid()
+    _conn_get().execute(
+        "INSERT INTO radar_tracks (id,symbol,stage,found_price,found_score,reasons_json,"
+        "status,outcome,max_gain_pct,max_drop_pct,peak_price,trough_price,last_price,"
+        "outcome_price,found_at,closed_at,updated_at) VALUES (?,?,?,?,?,?, 'pending','',0,0,0,0,0,0,?,NULL,?)",
+        (tid, str(symbol).upper(), stage or "IGNITION", float(found_price or 0),
+         int(found_score or 0), json.dumps(reasons or [], ensure_ascii=False),
+         float(found_at or now), now))
+    _conn_get().commit()
+    return tid
+
+
+@_serialized
+def radar_track_progress(tid: str, price: float):
+    """跟踪线程每轮更新：last/peak/trough 与自发现价最大涨跌幅（正数 %）。返回本轮判定上下文。"""
+    now = time.time()
+    row = _conn_get().execute(
+        "SELECT found_price, found_at, max_gain_pct, max_drop_pct, peak_price, trough_price "
+        "FROM radar_tracks WHERE id=? AND status='pending'", (tid,)).fetchone()
+    if not row or price <= 0:
+        return None
+    found = row["found_price"] or 0
+    if found <= 0:
+        return None
+    gain = (price / found - 1.0) * 100.0
+    drop = (1.0 - price / found) * 100.0
+    mg = max(float(row["max_gain_pct"] or 0), gain)
+    md = max(float(row["max_drop_pct"] or 0), drop)
+    peak = max(float(row["peak_price"] or 0), price)
+    trough = price if float(row["trough_price"] or 0) <= 0 else min(float(row["trough_price"]), price)
+    _conn_get().execute(
+        "UPDATE radar_tracks SET last_price=?, peak_price=?, trough_price=?, "
+        "max_gain_pct=?, max_drop_pct=?, updated_at=? WHERE id=?",
+        (price, peak, trough, mg, md, now, tid))
+    _conn_get().commit()
+    return {"gain": gain, "drop": drop, "max_gain": mg, "max_drop": md,
+            "found": found, "found_at": row["found_at"]}
+
+
+@_serialized
+def radar_track_close(tid: str, outcome: str, price: float) -> bool:
+    """终态关单：moon|dump|expired。关单后不再被跟踪。"""
+    now = time.time()
+    cur = _conn_get().execute(
+        "UPDATE radar_tracks SET status='closed', outcome=?, outcome_price=?, closed_at=?, updated_at=? "
+        "WHERE id=? AND status='pending'", (outcome, float(price or 0), now, now, tid))
+    _conn_get().commit()
+    return cur.rowcount > 0
+
+
+def radar_tracks_list(status: str = "") -> list:
+    q = "SELECT * FROM radar_tracks"
+    args = ()
+    if status in ("pending", "closed"):
+        q += " WHERE status=?"
+        args = (status,)
+    q += " ORDER BY found_at DESC LIMIT 200"
+    return [_radar_track_out(r) for r in _conn_get().execute(q, args).fetchall()]
+
+
+def radar_tracks_stats() -> dict:
+    rows = _conn_get().execute(
+        "SELECT status, outcome, COUNT(*) AS n FROM radar_tracks GROUP BY status, outcome").fetchall()
+    st = {"total": 0, "pending": 0, "moon": 0, "dump": 0, "expired": 0}
+    for r in rows:
+        st["total"] += r["n"]
+        if r["status"] == "pending":
+            st["pending"] += r["n"]
+        elif r["outcome"] in ("moon", "dump", "expired"):
+            st[r["outcome"]] += r["n"]
+    return st
 
 
 if __name__ == "__main__":

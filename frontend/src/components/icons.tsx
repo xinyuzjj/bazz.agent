@@ -136,6 +136,13 @@ export const I = {
       <path d="M12 3s5 5 5 10a5 5 0 0 1-10 0c0-2 1-3 2-4-1 4 3 4 3 0 0-3-2-4 0-6z" />
     </svg>
   ),
+  Target: (p: P = {}) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" {...base(p)}>
+      <circle cx="12" cy="12" r="8" />
+      <circle cx="12" cy="12" r="4" />
+      <circle cx="12" cy="12" r="0.5" fill="currentColor" />
+    </svg>
+  ),
   Link: (p: P = {}) => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" {...base(p)}>
       <path d="M9 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" />

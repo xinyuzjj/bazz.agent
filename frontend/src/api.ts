@@ -43,6 +43,7 @@ export const api = {
   marketOverview: () => jget("/market/overview"),
   marketFutures: () => jget("/market/futures"),
   marketRadar: (force = false) => jget("/market/radar" + (force ? "?force=1" : "")),
+  marketRadarTracks: () => jget("/market/radar/tracks"),
   marketLongshort: () => jget("/market/longshort"),
   marketLiquidations: (limit = 60, window = 300) =>
     jget(`/market/liquidations?limit=${limit}&window=${window}`),
