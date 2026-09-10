@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "square-post": {
+      "source": "binance/binance-skills-hub",
+      "ref": "main",
+      "sourceType": "github",
+      "computedHash": "3732bcdc2b540307148348f46767783d28bacf0526aed22f12c96664183c7c9c"
+    }
+  }
+}
