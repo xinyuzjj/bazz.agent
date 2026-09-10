@@ -322,16 +322,29 @@ def _thinking_sys_msg() -> Dict[str, str]:
 
 def _extract_thinking_block(text: str) -> tuple:
     """从 LLM 正文里抽 <thinking>...</thinking> 块，返回 (思考, 清洁正文)。
+
+    v1.5.12 修复泄漏：
+    - 模型可能输出**多个**思考块（先推演再复核）→ 全部抽出合并；
+    - 第二个块可能**未闭合**（max_tokens 截断/模型忘写闭合标签）→ 尾部未闭合的
+      <thinking>... 整段视为思考，绝不让半截推理出现在正文里。
     没有 thinking 块时返回 ("", 原文本)。"""
     if not text:
         return "", text
     import re as _re
-    m = _re.search(r"<thinking>(.*?)</thinking>", text, flags=_re.S | _re.I)
-    if not m:
-        return "", text
-    thinking = m.group(1).strip()
-    cleaned = (text[:m.start()] + text[m.end():]).strip()
-    return thinking, cleaned
+    blocks = _re.findall(r"<thinking>(.*?)</thinking>", text, flags=_re.S | _re.I)
+    if blocks:
+        cleaned = _re.sub(r"<thinking>.*?</thinking>", "", text, flags=_re.S | _re.I)
+        # 移除闭合块后，尾部可能还残留未闭合的 <thinking>...（模型连续多个思考块且最后一个被截断）
+        m = _re.search(r"<thinking>(.*)$", cleaned, flags=_re.S | _re.I)
+        if m:
+            blocks.append(m.group(1))
+            cleaned = cleaned[:m.start()]
+        return "\n\n".join(b.strip() for b in blocks if b.strip()), cleaned.strip()
+    # 无闭合块：处理未闭合尾巴（<thinking> 后没有 </thinking>）
+    m = _re.search(r"<thinking>(.*)$", text, flags=_re.S | _re.I)
+    if m:
+        return m.group(1).strip(), text[:m.start()].strip()
+    return "", text
 
 
 def _apply_thinking_protocol(messages: List[Dict[str, Any]], deep_thinking: bool) -> List[Dict[str, Any]]:
@@ -421,6 +434,8 @@ TOOLS: List[Dict[str, Any]] = [
                 "properties": {
                     "symbol": {"type": "string", "description": "交易对或基础资产，如 BTCUSDT 或 BTC"},
                     "direction": {"type": "string", "enum": ["BULLISH", "BEARISH"], "description": "BULLISH=买入/做多，BEARISH=卖出/做空"},
+                    "margin_usdt": {"type": "number", "description": "本金（USDT，默认 50）。用户说了金额（如『用100U买』）时传入"},
+                    "leverage": {"type": "integer", "description": "杠杆倍数（默认 1=现货）。仅当用户明确要求杠杆时传入，如 10"},
                 },
                 "required": ["symbol"],
             },

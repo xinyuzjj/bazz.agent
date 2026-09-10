@@ -718,7 +718,8 @@ def _decide_route(*, signal: str = None) -> str:
     return "wallet"
 
 
-def _run_execute(confirm: bool = False, signal: dict = None, message: str = ""):
+def _run_execute(confirm: bool = False, signal: dict = None, message: str = "",
+                 margin_usdt: float = 50.0, leverage: int = 1):
     if confirm and signal:
         res = confirm_and_place(signal, confirm=True)
         ok = "error" not in res
@@ -729,10 +730,14 @@ def _run_execute(confirm: bool = False, signal: dict = None, message: str = ""):
                      f"- 订单号：`{res.get('orderId', 'N/A')}`\n- 标的：{res.get('symbol')}\n"
                      f"- 状态：{res.get('status', 'UNKNOWN')}\n\n请到 Binance 账户核对。")
         else:
-            # 按错误类型分类：CEX 下单报错仅与「币安交易所」相关，不要混入 Agentic Wallet 概念。
+            # 按错误类型 + 通道分类提示，不再让钱包通道误报「交易所连接问题」
             err = (res.get('error') or '').strip()
             err_l = err.lower()
-            if 'api key' in err_l or 'api_key' in err_l or '缺少 api' in err_l:
+            if (signal or {}).get("route") == "wallet":
+                reply = (f"⚠️ 钱包下单失败：{err}\n\n"
+                         "Agent 钱包走链上 DEX 兑换（仅 BNB/USDT）。要交易其他币种，"
+                         "请到「设置 → 币安 CEX」绑定 API Key 后重试，Agent 会自动改走交易所通道。")
+            elif 'api key' in err_l or 'api_key' in err_l or '缺少 api' in err_l:
                 reply = (f"⚠️ 下单失败：{err}\n\n"
                          "**币安交易所未连接。** 请到「设置 → 币安 CEX」面板填写交易所 API Key 后再试。")
             elif 'permission' in err_l or '权限' in err or 'signature' in err_l or '签名' in err or 'invalid' in err_l:
@@ -760,12 +765,16 @@ def _run_execute(confirm: bool = False, signal: dict = None, message: str = ""):
             {"icon": "📈", "name": "交易预检", "status": "warn", "detail": "无信号"}]}
     # Agent 决策执行通道：有交易所 API 密钥 → 走交易所（现货限价单，更精准）；否则走 Agent 钱包（baw swap）。
     route = _decide_route(signal=symbol)
+    margin = max(1.0, min(100000.0, float(margin_usdt or 50.0)))
+    lev = max(1, min(125, int(leverage or 1)))
     signal = {**best, "direction": direction, "price": price,
               "stop_loss": round(price * 0.97, 4), "take_profit": round(price * 1.08, 4),
-              "quantity": str(round(50 / price, 6)), "max_loss_usdt": 5.0, "route": route}
+              "quantity": str(round(margin * lev / price, 6)), "max_loss_usdt": round(margin * 0.1, 2),
+              "margin_usdt": margin, "leverage": lev, "route": route}
     route_txt = "币安交易所（API 密钥）" if route == "exchange" else "Agent 钱包（baw）"
     reply = (f"已生成下单方案（**未真实下单，需你确认**）：\n\n"
              f"- 标的：**{signal['symbol']}** · {signal['direction']}\n- 入场：{price}\n"
+             f"- 本金：{signal['margin_usdt']} USDT · 杠杆：{signal['leverage']}× · 名义：{round(float(signal['margin_usdt']) * signal['leverage'], 2)} USDT\n"
              f"- 止损：{signal['stop_loss']} · 止盈：{signal['take_profit']}\n"
              f"- 数量：{signal['quantity']} · 最大亏损：{signal['max_loss_usdt']} USDT\n"
              f"- 执行通道：**{route_txt}**（由 Agent 自动判断）\n\n"
@@ -1588,7 +1597,8 @@ def _dispatch_tool(name: str, args: dict, confirmed: bool = False) -> Dict[str, 
     if name == "check_risk":
         return _run_risk()
     if name == "propose_trade":
-        return _tool_propose_trade(args.get("symbol", ""), args.get("direction", "BULLISH"))
+        return _tool_propose_trade(args.get("symbol", ""), args.get("direction", "BULLISH"),
+                                   margin_usdt=args.get("margin_usdt"), leverage=args.get("leverage"))
     if name == "market_quote":
         symbol = (args.get("symbol") or "").strip().upper() or "BTCUSDT"
         if not symbol.endswith(("USDT", "USDC", "FDUSD", "TUSD", "TRY", "BRL")):
@@ -1773,11 +1783,17 @@ def _run_fetch_url(url: str):
                 "tools": [{"icon": "🌐", "name": "网页抓取", "status": "error", "detail": str(e)[:120]}]}
 
 
-def _tool_propose_trade(symbol: str, direction: str = "BULLISH"):
+def _tool_propose_trade(symbol: str, direction: str = "BULLISH",
+                        margin_usdt: float = None, leverage: int = None):
     if not symbol:
         return _run_scan()
     msg = f"{'买入' if str(direction).upper() == 'BULLISH' else '卖出'} {symbol}"
-    return _run_execute(message=msg)
+    kwargs = {}
+    if margin_usdt is not None:
+        kwargs["margin_usdt"] = margin_usdt
+    if leverage is not None:
+        kwargs["leverage"] = leverage
+    return _run_execute(message=msg, **kwargs)
 
 
 def _emit_llm_unavailable(message: str, locale: str = "zh"):

@@ -1585,6 +1585,8 @@ export function ChatView({
                             [t("chat.ordStopLoss"), s.stop_loss != null ? `$${s.stop_loss}` : "—"],
                             [t("chat.ordTakeProfit"), s.take_profit != null ? `$${s.take_profit}` : "—"],
                             [t("chat.ordQty"), s.quantity != null ? String(s.quantity) : "—"],
+                            [t("chat.ordMargin"), s.margin_usdt != null ? `$${s.margin_usdt}` : (s.price != null && s.quantity != null ? `$${(Number(s.price) * Number(s.quantity)).toFixed(2)}` : "—")],
+                            [t("chat.ordLeverage"), s.leverage != null ? `${s.leverage}×` : "1×"],
                             [t("chat.ordMaxLoss"), s.max_loss_usdt != null ? `$${s.max_loss_usdt}` : "—"],
                             ...(s.funding_rate != null ? [[t("chat.ordFunding"), `${(Number(s.funding_rate) * 100).toFixed(4)}%`] as [string, string]] : []),
                             ...(s.change_pct != null ? [[t("chat.ordChange"), `${Number(s.change_pct) > 0 ? "+" : ""}${Number(s.change_pct).toFixed(2)}%`] as [string, string]] : []),

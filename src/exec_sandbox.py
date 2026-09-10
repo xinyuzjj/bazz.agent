@@ -775,7 +775,11 @@ def _run_one(command: str, timeout: int, max_out: int) -> dict:
         if "skills" in low and low.endswith("cli.mjs"):
             # 模型绕过 run_skill 直跑技能 CLI：给出可执行的正确姿势，减少无效重试轮次
             raise SandboxError(f"已安装技能请用 run_skill 工具执行（skill_name=技能名, args=参数串），不要用 run_command 直跑: {toks[0]}")
-        raise SandboxError(f"命令不在白名单（{', '.join(sorted(ALLOWED_EXE))}）: {toks[0]}")
+        # v1.5.12：绝对路径被拒时区分「路径不存在」与「不在白名单」，便于定位打包环境问题
+        hint = ""
+        if "/" in toks[0] or "\\" in toks[0]:
+            hint = "（该绝对路径文件不存在，或可执行名未命中白名单）" if not os.path.isfile(toks[0].strip('"')) else "（可执行名未命中白名单）"
+        raise SandboxError(f"命令不在白名单{hint}（{', '.join(sorted(ALLOWED_EXE))}）: {toks[0]}")
     lower = command.lower()
     for pat in FORBIDDEN_PATTERNS:
         if re.search(pat, lower):

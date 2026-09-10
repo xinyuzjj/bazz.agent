@@ -92,8 +92,12 @@ def place_oco_order(symbol: str, side: str, quantity: str,
 
 
 def _wallet_place(signal: dict) -> dict:
-    """Agent 钱包通道：走 baw（沿用现有 send/swap 链路，非 MCP/OAuth）。
-    买入 = USDT→BASE 兑换；卖出 = BASE→USDT。失败返回含 error。"""
+    """Agent 钱包通道：走 baw 链上 DEX 兑换（非 MCP/OAuth）。
+    v1.5.12 修复：原 `baw token swap` 是不存在的命令（baw CLI 无 token 组 →
+    `unknown command 'token'`）；正确语法是 `baw market-order swap --fromTokenQty ...
+    --fromToken <合约地址> --toToken <合约地址> --binanceChainId 56 --json`。
+    且 DEX 链上只有 BNB/USDT 有已知合约地址——其他 CEX 币种（如 TRUMPUSDT）没有
+    对应链上资产，给出明确指引让用户连 CEX，而不是发一条必败命令。"""
     try:
         from wallet_client import run_command as baw_run
     except Exception as e:
@@ -106,19 +110,54 @@ def _wallet_place(signal: dict) -> dict:
     price = float(signal.get("price", 0) or 0)
     if qty <= 0 or price <= 0:
         return {"error": "数量或价格无效，无法在钱包执行。"}
+    if base not in ("BNB", "USDT"):
+        return {"error": (f"Agent 钱包走链上 DEX 兑换，仅支持 BNB/USDT；要交易 {symbol}，"
+                          "请在「设置 → 币安 CEX」绑定 API Key 后重试（Agent 会自动改走交易所通道）。")}
     bull = str(signal.get("direction") or "").upper() in ("BULLISH", "做多")
+    usdt_bsc = "0x55d398326f99059fF775485246999027B3197955"
+    bnb_bsc = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"
     if bull:
-        amt = round(qty * price, 4)  # 买入：按 USDT 计输入额
-        cmd = f"baw token swap USDT {base} {amt}"
+        amt = round(qty * price, 4)  # 买入：USDT→BNB，按 USDT 数量
+        cmd = (f"baw market-order swap --fromTokenQty {amt} --fromToken {usdt_bsc} "
+               f"--toToken {bnb_bsc} --binanceChainId 56 --json")
     else:
-        cmd = f"baw token swap {base} USDT {qty}"
+        cmd = (f"baw market-order swap --fromTokenQty {qty} --fromToken {bnb_bsc} "
+               f"--toToken {usdt_bsc} --binanceChainId 56 --json")
     try:
         res = baw_run(cmd)
     except Exception as e:
         return {"error": str(e)[:300]}
     if res.get("status") == "ok":
-        return {"orderId": "WALLET", "symbol": symbol, "status": "TRADE_SUBMITTED",
-                "command": cmd, "output": (res.get("stdout") or res.get("stderr") or "")[-1200:]}
+        out = (res.get("stdout") or res.get("stderr") or "")
+        # v1.5.12：orderId 只是「已提交」不是「已成交」——按 SKILL.md 轮询到终态再报告，
+        # 避免把链上 FAILED（滑点/流动性）当成功。最多 3 次 × 8s，超时按 PENDING 如实报告。
+        import json as _json, re as _re, time as _time
+        oid = ""
+        try:
+            oid = str(((_json.loads(out).get("data") or {}).get("orderId"))) if out.strip().startswith("{") else ""
+        except Exception:
+            oid = ""
+        if not oid:
+            m = _re.search(r'"orderId"\s*:\s*"?(\w+)', out)
+            oid = m.group(1) if m else ""
+        final, status = out[-800:], "PENDING"
+        if oid:
+            for _ in range(3):
+                _time.sleep(8)
+                try:
+                    chk = baw_run(f"baw market-order list --orderId {oid} --json")
+                    body = chk.get("stdout") or ""
+                    if chk.get("status") == "ok" and body:
+                        final = body[-800:]
+                        if '"FAILED"' in body or "'FAILED'" in body:
+                            return {"error": f"链上兑换失败（orderId={oid}）：{body[:240]}"}
+                        if '"FINISHED"' in body or "'FINISHED'" in body:
+                            status = "FINISHED"
+                            break
+                except Exception:
+                    break
+        return {"orderId": oid or "WALLET", "symbol": symbol, "status": f"TRADE_{status}",
+                "command": cmd, "output": final}
     err = (res.get("stderr") or res.get("detail") or res.get("stdout") or "钱包下单失败").strip()[:300]
     return {"error": err}
 
@@ -146,6 +185,8 @@ def confirm_and_place(signal: dict, confirm: bool = False) -> dict:
         "stop_loss": signal.get("stop_loss"),
         "take_profit": signal.get("take_profit"),
         "max_loss_usdt": signal.get("max_loss_usdt"),
+        "margin_usdt": signal.get("margin_usdt"),
+        "leverage": signal.get("leverage"),
         "route": signal.get("route", "exchange"),
     }
     if not confirm:

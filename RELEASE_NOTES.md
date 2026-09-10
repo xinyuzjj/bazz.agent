@@ -1,6 +1,32 @@
-# BAZZ.AGENT v1.5.11
+# BAZZ.AGENT v1.5.12
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.12 更新要点（下单链路修复 · 审批卡片补全 · 推理泄漏修复）
+
+### 1. 下单执行链路（P0/P1 修复）
+- **交易所精度规则**：下单前按 exchangeInfo 的 stepSize/tickSize 用 Decimal 取整（1h 缓存），根治 LOT_SIZE/PRICE_FILTER -1013 拒单；数量不足最小下单单位时明确报错
+- **钱包命令修正**：`baw token swap`（不存在的命令 → `unknown command 'token'`）改为 `baw market-order swap --fromTokenQty ... --fromToken <合约地址> --toToken <合约地址> --binanceChainId 56 --json`
+- **钱包通道护栏**：DEX 链上仅 BNB/USDT 有已知合约地址，其他币种给明确指引连 CEX，不再发必败命令
+- **swap 终态轮询**：orderId 仅代表已提交，轮询 market-order list 3×8s 到终态——FAILED 如实报错、FINISHED 报成功、超时报 PENDING，不再把链上失败当成功
+- **错误文案按通道路由**：钱包通道失败不再误报「交易所连接问题」
+
+### 2. 审批卡片补全
+- 新增「本金」「杠杆」两行；propose_trade 支持 margin_usdt / leverage 参数（默认 50U / 1×）；方案文本同步展示名义价值
+- 卡片金额兜底计算（quantity×price），中英文案补齐
+
+### 3. Agent 推理泄漏修复
+- `<thinking>` 块提取改为**全部闭合块**合并 + 二次剥离未闭合尾巴（模型多块推演、末块被截断时不再漏进正文）
+- 沙箱白名单报错区分「路径不存在」与「可执行名未命中白名单」，便于定位打包环境问题
+
+### 4. 妖币追踪
+- 修复历史战绩「日期」列时间戳按毫秒解析显示 1970 年的问题（后端为秒制）
+
+## 历史
+
+---
+
+# BAZZ.AGENT v1.5.11
 
 ## 🆕 v1.5.11 更新要点（portable.zip 退役 · setup.exe 成为唯一全量包）
 

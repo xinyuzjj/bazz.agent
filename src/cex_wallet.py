@@ -28,6 +28,47 @@ BASE_URL = "https://api.binance.com"
 _SUM_CACHE = {"ts": 0.0, "data": None}
 _SUM_LOCK = threading.Lock()
 
+# 交易规则缓存（exchangeInfo 的 LOT_SIZE.stepSize / PRICE_FILTER.tickSize，1h TTL）。
+# v1.5.12 修复：place_order 原样下发 quantity/price，TRUMP 等币种精度不符会被
+# LOT_SIZE / PRICE_FILTER 直接拒单（-1013）。
+_LOT_CACHE: dict = {}
+
+
+def _lot_filters(symbol: str) -> dict:
+    """{step: stepSize, tick: tickSize}，失败返回 {}（下单退回原值，由交易所报错兜底）。"""
+    key = str(symbol).upper()
+    now = time.time()
+    c = _LOT_CACHE.get(key)
+    if c and now - c[0] < 3600:
+        return c[1]
+    out: dict = {}
+    try:
+        r = requests.get(f"{BASE_URL}/api/v3/exchangeInfo", params={"symbol": key}, timeout=10)
+        for x in ((r.json().get("symbols") or [{}])[0].get("filters") or []):
+            if x.get("filterType") == "LOT_SIZE":
+                out["step"] = float(x.get("stepSize") or 0)
+            elif x.get("filterType") == "PRICE_FILTER":
+                out["tick"] = float(x.get("tickSize") or 0)
+    except Exception:
+        out = {}
+    _LOT_CACHE[key] = (now, out)
+    return out
+
+
+def _round_to_step(value, step: float) -> str:
+    """把数量/价格向下取整到 step/tick 的整数倍，返回交易所认可的字符串（无浮点尾差）。"""
+    try:
+        from decimal import Decimal
+        v, s = Decimal(str(value)), Decimal(str(step or 0))
+        if s <= 0:
+            return str(value)
+        q = (v // s) * s
+        q = q.normalize()
+        # normalize 会把 100 变 1E+2，转回普通表示
+        return format(q, "f")
+    except Exception:
+        return str(value)
+
 
 # ---------------- 密钥存取 ----------------
 
@@ -126,13 +167,24 @@ def place_order(symbol: str, side: str, quantity: str, price: str,
     if not api_key or not secret:
         return {"status": "error", "code": "not_configured",
                 "message": "尚未配置 Binance API Key / Secret（请到交易所页绑定）。"}
+    # v1.5.12：按交易规则取整数量/价格（LOT_SIZE.stepSize / PRICE_FILTER.tickSize），
+    # 避免精度不符被 -1013 拒单；取整后数量 <=0 说明本金不足一个最小下单单位，直接报错。
+    flt = _lot_filters(symbol)
+    qty_s = _round_to_step(quantity, flt.get("step", 0))
+    price_s = _round_to_step(price, flt.get("tick", 0))
+    try:
+        if flt.get("step") and float(qty_s) <= 0:
+            return {"status": "error", "code": "lot_size",
+                    "message": f"数量 {quantity} 不足 {symbol} 最小下单单位（stepSize={flt.get('step')}），请加大本金。"}
+    except Exception:
+        pass
     params = _sign({
         "symbol": str(symbol).upper(),
         "side": str(side).upper(),
         "type": "LIMIT",
         "timeInForce": time_in_force,
-        "quantity": str(quantity),
-        "price": str(price),
+        "quantity": qty_s,
+        "price": price_s,
     }, secret)
     try:
         req = requests.post(f"{BASE_URL}/api/v3/order?{params}",

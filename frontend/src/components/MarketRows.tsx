@@ -88,10 +88,10 @@ export const trackPnl = (direction: string | undefined, found: number, px: numbe
   const roi = (direction === "SHORT" ? -chg : chg) * 10;
   return Math.max(-100, roi);
 };
-// 关单日期（历史战绩列）：MM-DD HH:mm
+// 关单日期（历史战绩列）：MM-DD HH:mm（后端时间戳为秒）
 export const fmtCloseDate = (ts: number | null) => {
   if (!ts) return "—";
-  const d = new Date(ts);
+  const d = new Date(ts * 1000);
   const p = (n: number) => String(n).padStart(2, "0");
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };
@@ -500,7 +500,7 @@ export const TrackLine = memo(function TrackLine({ r, variant, onDetail }: {
           {curChg == null ? "—" : `${curChg >= 0 ? "+" : ""}${curChg.toFixed(1)}%`}
         </div>
       ) : (
-        <div className="font-mono tabular text-ink-dim text-[12.5px]" title={new Date(r.closed_at || r.updated_at).toLocaleString()}>
+        <div className="font-mono tabular text-ink-dim text-[12.5px]" title={new Date((r.closed_at || r.updated_at) * 1000).toLocaleString()}>
           {fmtCloseDate(r.closed_at || r.updated_at)}
         </div>
       )}
