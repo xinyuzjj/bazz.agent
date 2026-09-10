@@ -10,6 +10,8 @@ import {
   PosBar, useFlash, VolHeatRow, LsLine,
   SpotRow, FutRow, EquityCard, RadarLine, TrackLine, SignalRow,
 } from "../components/MarketRows";
+import { Sparkline } from "../components/Sparkline";
+import { CoinDetail } from "../components/CoinDetail";
 
 /* 行情 · MARKETS —— 全市场交易对浏览（不再固定 20 币）
  * 数据源 /api/market：
@@ -52,14 +54,15 @@ function HeroCoin({ base }: { base: Ticker }) {
   return (
     <div className="glass p-3 flex flex-col gap-2 min-w-0" style={{ borderRadius: 12 }}>
       <div className="flex items-center justify-between gap-1">
-        <span className="font-mono text-[12.5px] font-semibold text-ink">{baseName(base.symbol)}</span>
-        <span className={`font-mono tabular text-[11.5px] font-semibold px-1.5 py-0.5 rounded ${up ? "text-green bg-green/10" : "text-red bg-red/10"}`}>
+        <span className="font-mono text-[13.5px] font-semibold text-ink">{baseName(base.symbol)}</span>
+        <span className={`font-mono tabular text-[13px] font-semibold px-1.5 py-0.5 rounded ${up ? "text-green bg-green/10" : "text-red bg-red/10"}`}>
           {up ? "+" : ""}{chg.toFixed(2)}%
         </span>
       </div>
-      <div className={`font-mono tabular text-[18px] font-semibold text-ink leading-none px-1 -mx-1 ${flash}`}>{fmtPrice(price)}</div>
+      <div className={`font-mono tabular text-[20px] font-semibold text-ink leading-none px-1 -mx-1 ${flash}`}>{fmtPrice(price)}</div>
+      <Sparkline symbol={base.symbol} market="spot" className="h-7" />
       <PosBar low={low} high={high} price={price} />
-      <div className="flex items-center justify-between font-mono text-[9.5px] text-ink-mute">
+      <div className="flex items-center justify-between font-mono text-[11px] text-ink-mute">
         <span>{t("markets.hero.vol24")} {fmtVol(qv)}</span>
         <span className="hidden md:inline tabular">{fmtPrice(low)} — {fmtPrice(high)}</span>
       </div>
@@ -123,6 +126,12 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
 
   // —— v1.5.3 重设计：Hero 大盘卡基准数据 + 侧栏资金费率面板 Tab ——
   const [fundTab, setFundTab] = useState<"ext" | "crowd">("ext");
+  // —— v1.5.4 增强：详情浮层 / 合约 OI / 恐惧贪婪 / 爆仓流按币筛选 ——
+  const [detail, setDetail] = useState<{ symbol: string; market: "spot" | "futures"; base?: any } | null>(null);
+  const openDetail = (market: "spot" | "futures") => (symbol: string, base?: any) => setDetail({ symbol, market, base });
+  const [oiMap, setOiMap] = useState<Record<string, { oi: number | null; notional: number | null }>>({});
+  const [fng, setFng] = useState<any>(null);
+  const [liqFilter, setLiqFilter] = useState("");
   const heroBase = useMemo(
     () => HERO_COINS.map((s) => (data?.all ?? []).find((x) => x.symbol === s)).filter(Boolean) as Ticker[],
     [data],
@@ -182,6 +191,13 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
     const t = setInterval(() => loadTracks(), 60_000);
     return () => clearInterval(t);
   }, []);
+  // v1.5.4：恐惧贪婪指数（10min 后端缓存，前端 5min 轮询）
+  useEffect(() => {
+    const pull = async () => { try { setFng(await api.marketFNG()); } catch { /* noop */ } };
+    pull();
+    const t = setInterval(pull, 300_000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     load(); loadOverview(); loadFutures();
@@ -237,6 +253,26 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
     return { up, down, crowded, total: fs.length, liq };
   }, [fd]);
   const equityRows: EquityRow[] = useMemo(() => fd?.equity ?? [], [fd]);
+  // v1.5.4：合约维度可见行 OI 批量拉取（后端 5min 缓存，60s 刷新；futuresRows 定义于此之后才可用）
+  const oiKey = useMemo(() => (dim === "futures" ? futuresRows.map((r) => r.symbol).join(",") : ""), [dim, futuresRows]);
+  useEffect(() => {
+    if (!oiKey) return;
+    let alive = true;
+    const syms = oiKey.split(",");
+    const pull = async () => {
+      try {
+        const d: any = await api.marketOI(syms);
+        if (alive && d?.items?.length) {
+          const m: Record<string, { oi: number | null; notional: number | null }> = {};
+          for (const it of d.items) m[it.symbol] = { oi: it.oi, notional: it.notional };
+          setOiMap((prev) => ({ ...prev, ...m }));
+        }
+      } catch { /* noop */ }
+    };
+    pull();
+    const t = setInterval(pull, 60_000);
+    return () => { alive = false; clearInterval(t); };
+  }, [oiKey]);
   const equityMovers = useMemo(() => {
     const e = fd?.equity ?? [];
     const sorted = [...e].sort((a, b) => b.change_pct - a.change_pct);
@@ -301,7 +337,7 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
           </span>
         </div>
         <span className="prefix ml-auto">{t("markets.autoRefreshPrefix")} <span className="text-ink-dim tabular"><UpdatedAgo updatedAt={data?.updated_at} /></span></span>
-        <button onClick={() => { load(); loadOverview(); loadFutures(); }} className="btn-ghost py-1 px-2.5 text-[12px]"><I.Refresh size={11} /> {t("markets.refresh")}</button>
+        <button onClick={() => { load(); loadOverview(); loadFutures(); }} className="btn-ghost py-1 px-2.5 text-[13px]"><I.Refresh size={11} /> {t("markets.refresh")}</button>
       </div>
 
       {/* 维度切换：现货 / 合约 / 股票化代币合约（sticky：滚动时固定） */}
@@ -313,7 +349,7 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
             ["equity", t("markets.dimEquity"), I.Star],
           ] as const).map(([key, label, Icon]) => (
             <button key={key} onClick={() => setDim(key)}
-              className={`px-4 py-1.5 rounded-md font-mono text-[12px] tracking-wide transition-colors border flex items-center gap-1.5
+              className={`px-4 py-1.5 rounded-md font-mono text-[13px] tracking-wide transition-colors border flex items-center gap-1.5
                 ${dim === key ? "bg-gold text-canvas border-gold font-semibold shadow-sm" : "border-transparent text-ink-dim hover:text-ink hover:bg-line/30"}`}>
               <Icon size={13} /> {label}
             </button>
@@ -327,17 +363,17 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
           <div className="glass p-4" style={{ borderRadius: 12 }}>
             <div className="flex items-center gap-2 mb-1">
               <I.Star size={14} className="text-gold" />
-              <span className="font-mono text-[13px] tracking-wider text-ink">{t("markets.equityTitle")}</span>
-              <span className="pill pill-dim text-[10px]">{fd?.total_equity ?? 0} · {t("markets.equityTag")}</span>
+              <span className="font-mono text-[14px] tracking-wider text-ink">{t("markets.equityTitle")}</span>
+              <span className="pill pill-dim text-[11.5px]">{fd?.total_equity ?? 0} · {t("markets.equityTag")}</span>
             </div>
-            <p className="text-[11px] text-ink-dim font-mono leading-relaxed">{t("markets.equityHint")}</p>
-            {fErr && <div className="rounded-md border border-red/40 bg-red/5 px-3 py-1.5 text-[11.5px] text-red font-mono mt-2">{fErr}</div>}
+            <p className="text-[12.5px] text-ink-dim font-mono leading-relaxed">{t("markets.equityHint")}</p>
+            {fErr && <div className="rounded-md border border-red/40 bg-red/5 px-3 py-1.5 text-[13px] text-red font-mono mt-2">{fErr}</div>}
             <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-3">
               {equityRows.length === 0 && (
-                <div className="col-span-full p-6 text-center text-ink-dim text-[12.5px] font-mono">{t("markets.noData")}</div>
+                <div className="col-span-full p-6 text-center text-ink-dim text-[13.5px] font-mono">{t("markets.noData")}</div>
               )}
               {equityRows.map((e) => (
-                <EquityCard key={e.symbol} e={e} onTrade={onTrade} />
+                <EquityCard key={e.symbol} e={e} onDetail={openDetail("futures")} />
               ))}
             </div>
           </div>
@@ -350,12 +386,12 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
                 if (!list.length) return null;
                 return (
                   <div key={s} className="glass p-3 flex gap-2 items-center">
-                    <span className={`font-mono text-[10px] tracking-wider px-2 py-1 rounded-md ${s === "gainers" ? "text-green bg-green/10" : "text-red bg-red/10"}`}>
+                    <span className={`font-mono text-[11.5px] tracking-wider px-2 py-1 rounded-md ${s === "gainers" ? "text-green bg-green/10" : "text-red bg-red/10"}`}>
                       {s === "gainers" ? t("markets.dimEquityGain") : t("markets.dimEquityLoss")}
                     </span>
                     <div className="flex-1 flex gap-3 overflow-hidden">
                       {list.map((e, i) => (
-                        <button key={e.symbol} onClick={() => onTrade?.(e.symbol)} className="flex items-center gap-1 font-mono text-[11.5px] hover:text-gold">
+                        <button key={e.symbol} onClick={() => onTrade?.(e.symbol)} className="flex items-center gap-1 font-mono text-[13px] hover:text-gold">
                           <span className="text-ink">{baseName(e.symbol)}</span>
                           <span className={s === "gainers" ? "up" : "down"}>{e.change_pct >= 0 ? "+" : ""}{e.change_pct.toFixed(1)}%</span>
                         </button>
@@ -375,19 +411,19 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
           {/* 合约大盘速览 */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div className="glass p-3 flex flex-col justify-center" style={{ borderRadius: 12 }}>
-              <span className="font-mono text-[10px] tracking-wider text-ink-mute">{t("markets.futTotal")}</span>
+              <span className="font-mono text-[11.5px] tracking-wider text-ink-mute">{t("markets.futTotal")}</span>
               <span className="font-mono text-[22px] text-ink font-semibold mt-0.5">{futuresBreadth.total}</span>
             </div>
             <div className="glass p-3 flex flex-col justify-center" style={{ borderRadius: 12 }}>
-              <span className="font-mono text-[10px] tracking-wider text-ink-mute">{t("markets.futUp")}</span>
+              <span className="font-mono text-[11.5px] tracking-wider text-ink-mute">{t("markets.futUp")}</span>
               <span className="font-mono text-[22px] up font-semibold mt-0.5">{futuresBreadth.up}</span>
             </div>
             <div className="glass p-3 flex flex-col justify-center" style={{ borderRadius: 12 }}>
-              <span className="font-mono text-[10px] tracking-wider text-ink-mute">{t("markets.futDown")}</span>
+              <span className="font-mono text-[11.5px] tracking-wider text-ink-mute">{t("markets.futDown")}</span>
               <span className="font-mono text-[22px] down font-semibold mt-0.5">{futuresBreadth.down}</span>
             </div>
             <div className="glass p-3 flex flex-col justify-center" style={{ borderRadius: 12 }}>
-              <span className="font-mono text-[10px] tracking-wider text-ink-mute">{t("markets.futCrowded")}</span>
+              <span className="font-mono text-[11.5px] tracking-wider text-ink-mute">{t("markets.futCrowded")}</span>
               <span className="font-mono text-[22px] text-gold font-semibold mt-0.5">{futuresBreadth.crowded}</span>
             </div>
           </div>
@@ -395,13 +431,13 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
           <div className="glass overflow-hidden" style={{ borderRadius: 12 }}>
             <div className="flex items-center gap-2 px-4 pt-3 pb-1 flex-wrap">
               <I.Bolt size={13} className="text-gold" />
-              <span className="font-mono text-[12px] tracking-wider text-ink">{t("markets.futuresBoard")}</span>
-              <span className="pill pill-dim text-[10px]">USDT-M · {t("markets.futPerp")}</span>
-              {fErr && <span className="pill pill-red text-[10px]">{fErr}</span>}
+              <span className="font-mono text-[13px] tracking-wider text-ink">{t("markets.futuresBoard")}</span>
+              <span className="pill pill-dim text-[11.5px]">USDT-M · {t("markets.futPerp")}</span>
+              {fErr && <span className="pill pill-red text-[11.5px]">{fErr}</span>}
               <div className="ml-auto flex items-center gap-1.5">
                 {([["all", t("markets.futAll")], ["gain", t("markets.futGain")], ["loser", t("markets.futLoser")], ["funding", t("markets.futFunding")]] as const).map(([k, label]) => (
                   <button key={k} onClick={() => { setFMode(k); setFLimit(60); }}
-                    className={`px-2.5 py-1 rounded-md font-mono text-[10.5px] tracking-wider transition-colors border
+                    className={`px-2.5 py-1 rounded-md font-mono text-[12px] tracking-wider transition-colors border
                       ${fMode === k ? "bg-elevated text-gold border-line" : "border-transparent text-ink-dim hover:text-ink"}`}>
                     {label}
                   </button>
@@ -414,18 +450,18 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
               </div>
             </div>
             {/* 表头 */}
-            <div className="grid items-center px-4 py-2 mt-1.5 border-b border-line text-[10px] font-mono tracking-[0.08em] text-ink-dim"
-              style={{ gridTemplateColumns: "1.6fr 1fr 1fr 1.2fr 1fr 1.3fr" }}>
-              <div>{t("markets.h.symbol")}</div><div>{t("markets.h.price")}</div><div>{t("markets.h.change")}</div><div>{t("markets.h.quotevol")}</div><div>{t("markets.h.funding")}</div><div>{t("markets.h.range")}</div>
+            <div className="grid items-center px-4 py-2 mt-1.5 border-b border-line text-[11.5px] font-mono tracking-[0.08em] text-ink-dim"
+              style={{ gridTemplateColumns: "1.5fr 1fr 1fr 1.1fr 0.9fr 1.1fr 1.2fr" }}>
+              <div>{t("markets.h.symbol")}</div><div>{t("markets.h.price")}</div><div>{t("markets.h.change")}</div><div>{t("markets.h.quotevol")}</div><div>{t("markets.h.funding")}</div><div>{t("markets.futH.oi")}</div><div>{t("markets.h.range")}</div>
             </div>
             {futuresRows.length === 0 ? (
-              <div className="p-8 text-center text-ink-dim text-[12.5px] font-mono">{t("markets.noData")}</div>
+              <div className="p-8 text-center text-ink-dim text-[13.5px] font-mono">{t("markets.noData")}</div>
             ) : futuresRows.map((r) => (
-              <FutRow key={r.symbol} r={r} onTrade={onTrade} onAnalyze={onAnalyze} />
+              <FutRow key={r.symbol} r={r} oi={oiMap[r.symbol]} onDetail={openDetail("futures")} onAnalyze={onAnalyze} />
             ))}
             {(fd?.futures?.length ?? 0) > fLimit && (
               <div className="px-4 py-2 border-t border-line text-center">
-                <button onClick={() => setFLimit((n) => n + 60)} className="text-gold font-mono text-[11px] hover:underline">
+                <button onClick={() => setFLimit((n) => n + 60)} className="text-gold font-mono text-[12.5px] hover:underline">
                   {t("markets.loadMore", { n: 60 })}
                 </button>
               </div>
@@ -437,32 +473,58 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
       {/* v1.5.3 现货行情：Hero 速览 + 双栏终端布局 */}
       {dim === "spot" && (
       <div className="space-y-4">
-      {/* Hero 大盘速览条：4 大币实时卡 + 全市场宽度 */}
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
+      {/* Hero 大盘速览条：4 大币实时卡（含迷你走势）+ 全市场宽度 + 恐惧贪婪 */}
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
         {heroBase.map((b) => <HeroCoin key={b.symbol} base={b} />)}
         <div className="glass p-3 flex flex-col gap-2 min-w-0" style={{ borderRadius: 12 }}>
           <div className="flex items-center justify-between gap-1">
-            <span className="font-mono text-[10px] tracking-wider text-ink-mute">{t("markets.hero.breadth")}</span>
-            <span className="pill pill-dim text-[9px]">{t("markets.breadthTotal", { n: ov?.breadth?.total ?? 0 })}</span>
+            <span className="font-mono text-[11.5px] tracking-wider text-ink-mute">{t("markets.hero.breadth")}</span>
+            <span className="pill pill-dim text-[10.5px]">{t("markets.breadthTotal", { n: ov?.breadth?.total ?? 0 })}</span>
           </div>
           {ov?.breadth ? (
             <>
               <div className="flex items-baseline gap-1.5">
-                <span className="font-mono tabular text-[22px] font-semibold text-ink leading-none">{(ov.breadth.up_ratio * 100).toFixed(0)}%</span>
-                <span className="font-mono text-[10px] text-ink-mute">{t("markets.breadthUpRatio")}</span>
+                <span className="font-mono tabular text-[24px] font-semibold text-ink leading-none">{(ov.breadth.up_ratio * 100).toFixed(0)}%</span>
+                <span className="font-mono text-[11.5px] text-ink-mute">{t("markets.breadthUpRatio")}</span>
               </div>
               <div className="flex h-2 rounded overflow-hidden bg-line">
                 <div className="bg-green" style={{ flex: Math.max(0.0001, ov.breadth.up_ratio) }} />
                 <div className="bg-red/70" style={{ flex: Math.max(0.0001, 1 - ov.breadth.up_ratio) }} />
               </div>
-              <div className="flex items-center justify-between font-mono text-[9.5px]">
+              <div className="flex items-center justify-between font-mono text-[11px]">
                 <span className="text-green">{ov.breadth.advancers} {t("markets.breadthUp")}</span>
                 <span className={ov.breadth.extreme_count > 0 ? "text-gold font-semibold" : "text-ink-mute"}
                   title={t("markets.breadthExtremeTitle")}>{t("markets.breadthExtreme")} ×{ov.breadth.extreme_count}</span>
                 <span className="text-red">{ov.breadth.decliners} {t("markets.breadthDown")}</span>
               </div>
             </>
-          ) : <div className="text-[11px] text-ink-dim font-mono">{t("markets.noData")}</div>}
+          ) : <div className="text-[12.5px] text-ink-dim font-mono">{t("markets.noData")}</div>}
+        </div>
+        {/* v1.5.4 恐惧贪婪指数卡（alternative.me，10min 后端缓存） */}
+        <div className="glass p-3 flex flex-col gap-2 min-w-0" style={{ borderRadius: 12 }}>
+          <div className="flex items-center justify-between gap-1">
+            <span className="font-mono text-[11.5px] tracking-wider text-ink-mute">{t("markets.fng.title")}</span>
+            <span className="pill pill-dim text-[10.5px]">alt.me</span>
+          </div>
+          {fng?.value != null ? (() => {
+            const v = Number(fng.value);
+            const txt = v <= 24 ? "text-red" : v <= 44 ? "text-gold" : v <= 55 ? "text-ink-dim" : "text-green";
+            const label = t(v <= 24 ? "markets.fng.z1" : v <= 44 ? "markets.fng.z2" : v <= 55 ? "markets.fng.z3" : v <= 75 ? "markets.fng.z4" : "markets.fng.z5");
+            return (
+              <>
+                <div className="flex items-baseline gap-2">
+                  <span className={`font-mono tabular text-[24px] font-semibold leading-none ${txt}`}>{v}</span>
+                  <span className={`font-mono text-[12px] ${txt}`}>{label}</span>
+                </div>
+                <div className="flex items-end gap-0.5 h-6" title={(fng.history ?? []).map((p: any) => p.value).join(" · ")}>
+                  {(fng.history ?? []).slice(-8).map((p: any, i: number) => (
+                    <div key={i} className={`flex-1 rounded-sm ${p.value <= 24 ? "bg-red/60" : p.value <= 44 ? "bg-gold/50" : p.value <= 55 ? "bg-ink-mute/40" : "bg-green/60"}`}
+                      style={{ height: `${Math.max(10, p.value)}%` }} />
+                  ))}
+                </div>
+              </>
+            );
+          })() : <div className="text-[12.5px] text-ink-dim font-mono">—</div>}
         </div>
       </div>
 
@@ -473,22 +535,22 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
         <div className="px-4 pt-3.5 pb-2.5 space-y-2">
           <div className="flex items-center gap-2 flex-wrap">
             <I.Flame className="text-gold" size={16} />
-            <span className="font-mono text-[13px] font-semibold tracking-wider text-ink">{t("markets.radarTitle")}</span>
-            {env && <span className="pill pill-gold text-[10px]" title={t("markets.envTitle")}>{t("markets.env", { env })}</span>}
-            {engine && <span className="pill pill-dim text-[9px]">engine v{engine.replace(/^v/, "")}</span>}
+            <span className="font-mono text-[14px] font-semibold tracking-wider text-ink">{t("markets.radarTitle")}</span>
+            {env && <span className="pill pill-gold text-[11.5px]" title={t("markets.envTitle")}>{t("markets.env", { env })}</span>}
+            {engine && <span className="pill pill-dim text-[10.5px]">engine v{engine.replace(/^v/, "")}</span>}
             {/* 语义层阶段计数 */}
             {(["ACCUMULATION", "IGNITION", "VERTICAL", "DISTRIBUTION", "CRASH", "DORMANT", "ACTIVE"] as const).map((st) => {
               const n = stageCounts[st] ?? 0;
               if (!n) return null;
               return (
-                <span key={st} className={`pill ${STAGE_META[st]?.cls ?? "pill-dim"} text-[9.5px]`}>
+                <span key={st} className={`pill ${STAGE_META[st]?.cls ?? "pill-dim"} text-[11px]`}>
                   {t(`markets.stage.${st}`)} ×{n}
                 </span>
               );
             })}
             <div className="ml-auto flex items-center gap-2">
-              <span className="pill pill-dim text-[10px]">{t("markets.radarCounts", { ign: ign.length, tk: tk.length })}</span>
-              <button onClick={() => fetchRadar(true)} disabled={mLoading} className="btn-ghost py-1 px-2.5 text-[11px]">
+              <span className="pill pill-dim text-[11.5px]">{t("markets.radarCounts", { ign: ign.length, tk: tk.length })}</span>
+              <button onClick={() => fetchRadar(true)} disabled={mLoading} className="btn-ghost py-1 px-2.5 text-[12.5px]">
                 <I.Refresh size={11} className={mLoading ? "animate-spin" : ""} /> {mLoading ? t("markets.scanning") : t("markets.forceRescan")}
               </button>
             </div>
@@ -496,12 +558,12 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
           {/* 模式切换 + 方向过滤（完整说明收进 tooltip） */}
           <div className="flex items-center gap-1.5 flex-wrap">
             <button onClick={() => { setMode("ignition"); setMSide("ALL"); setMLimit(24); }}
-              className={`px-3.5 py-1.5 rounded-md font-mono text-[12px] tracking-wide border transition-colors
+              className={`px-3.5 py-1.5 rounded-md font-mono text-[13px] tracking-wide border transition-colors
                 ${mode === "ignition" ? "bg-gold text-canvas border-gold font-semibold" : "border-transparent text-ink-dim hover:text-ink"}`}>
               {t("markets.modeIgnition")} <span className="ml-0.5 opacity-70">({ign.length})</span>
             </button>
             <button onClick={() => { setMode("takeoff"); setMSide("ALL"); setMLimit(24); }}
-              className={`px-3.5 py-1.5 rounded-md font-mono text-[12px] tracking-wide border transition-colors
+              className={`px-3.5 py-1.5 rounded-md font-mono text-[13px] tracking-wide border transition-colors
                 ${mode === "takeoff" ? "bg-gold text-canvas border-gold font-semibold" : "border-transparent text-ink-dim hover:text-ink"}`}>
               {t("markets.modeTakeoff")} <span className="ml-0.5 opacity-70">({tk.length})</span>
             </button>
@@ -510,7 +572,7 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
               .filter((k) => k === "ALL" || radarRows.some((m) => m.side === k))
               .map((k) => (
                 <button key={k} onClick={() => { setMSide(k); setMLimit(24); }}
-                  className={`px-2.5 py-1 rounded-md font-mono text-[11px] tracking-wider transition-colors border
+                  className={`px-2.5 py-1 rounded-md font-mono text-[12.5px] tracking-wider transition-colors border
                     ${mSide === k ? "bg-elevated text-gold border-line" : "border-transparent text-ink-dim hover:text-ink"}`}>
                   {k === "ALL" ? t("markets.all", { n: radarRows.length }) : t(SIDE_META[k].label)}
                 </button>
@@ -519,11 +581,11 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
               {mode === "ignition" ? t("markets.ignHint") : t("markets.takeoffHint")}
             </span>
           </div>
-          {mErr && <div className="rounded-md border border-red/40 bg-red/5 px-3 py-1.5 text-[11.5px] text-red font-mono">{mErr}</div>}
+          {mErr && <div className="rounded-md border border-red/40 bg-red/5 px-3 py-1.5 text-[13px] text-red font-mono">{mErr}</div>}
         </div>
 
         {/* 表头 */}
-        <div className="grid items-center px-4 py-2 border-t border-b border-line text-[10px] font-mono tracking-[0.08em] text-ink-dim"
+        <div className="grid items-center px-4 py-2 border-t border-b border-line text-[11.5px] font-mono tracking-[0.08em] text-ink-dim"
           style={{ gridTemplateColumns: RADAR_COLS[mode].tpl }}>
           {RADAR_COLS[mode].head.map((h) => <div key={h}>{t(h)}</div>)}
         </div>
@@ -531,19 +593,19 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
         {mLoading && radarRows.length === 0 ? (
           <div className="p-4 space-y-2">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="shimmer h-9" />)}</div>
         ) : mRows.length === 0 ? (
-          <div className="p-8 text-center text-ink-dim text-[12.5px] font-mono">
+          <div className="p-8 text-center text-ink-dim text-[13.5px] font-mono">
             {mLoading ? t("markets.scanningCold")
               : mode === "ignition" ? t("markets.emptyIgn")
                 : t("markets.emptyTakeoff")}
           </div>
         ) : (
           mRows.map((m) => (
-            <RadarLine key={m.symbol} m={m} mode={mode} onTrade={onTrade} onOrder={onOrder} onAnalyze={onAnalyze} />
+            <RadarLine key={m.symbol} m={m} mode={mode} onTrade={onTrade} onOrder={onOrder} onAnalyze={onAnalyze} onDetail={openDetail("spot")} />
           ))
         )}
         {radarRows.length > mLimit && (
           <div className="px-4 py-2 border-t border-line text-center">
-            <button onClick={() => setMLimit((n) => n + 24)} className="text-gold font-mono text-[11px] hover:underline">
+            <button onClick={() => setMLimit((n) => n + 24)} className="text-gold font-mono text-[12.5px] hover:underline">
               {t("markets.loadMoreHidden", { n: radarRows.length - mLimit })}
             </button>
           </div>
@@ -556,9 +618,9 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
           <div className="px-4 pt-3.5 pb-1">
             <div className="flex items-center gap-2 flex-wrap">
               <I.Target className="text-gold" size={15} />
-              <span className="font-mono text-[13px] tracking-wider text-ink">{t("markets.trackTitle")}</span>
+              <span className="font-mono text-[14px] tracking-wider text-ink">{t("markets.trackTitle")}</span>
               {tracks.stats && (
-                <span className="pill pill-dim text-[10px]">
+                <span className="pill pill-dim text-[11.5px]">
                   {t("markets.trackStats", {
                     p: tracks.stats.pending ?? 0, moon: tracks.stats.moon ?? 0,
                     dump: tracks.stats.dump ?? 0, expired: tracks.stats.expired ?? 0,
@@ -566,33 +628,61 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
                 </span>
               )}
             </div>
-            <p className="text-[11px] text-ink-dim mt-1.5 leading-relaxed font-mono">{t("markets.trackSub")}</p>
+            <p className="text-[12.5px] text-ink-dim mt-1.5 leading-relaxed font-mono">{t("markets.trackSub")}</p>
           </div>
+
+          {/* v1.5.4 战绩可视化：胜率 + 结局占比堆叠条 */}
+          {(() => {
+            const st = tracks.stats ?? {};
+            const moon = st.moon ?? 0, dump = st.dump ?? 0, expired = st.expired ?? 0;
+            const closed = moon + dump + expired;
+            if (closed <= 0) return null;
+            const win = (moon / closed) * 100;
+            return (
+              <div className="px-4 pb-3 pt-1 flex items-center gap-3 flex-wrap">
+                <div className="flex items-baseline gap-1.5 shrink-0">
+                  <span className={`font-mono tabular text-[20px] font-semibold leading-none ${win >= 50 ? "text-green" : "text-ink"}`}>{win.toFixed(0)}%</span>
+                  <span className="font-mono text-[11px] text-ink-mute">{t("markets.trackWin")}</span>
+                </div>
+                <div className="flex-1 min-w-[140px] flex h-2 rounded overflow-hidden bg-line"
+                  title={`${t("markets.outcomeMoon")} ${moon} · ${t("markets.outcomeDump")} ${dump} · ${t("markets.outcomeExpired")} ${expired}`}>
+                  <div className="bg-green" style={{ flex: Math.max(0.0001, moon) }} />
+                  <div className="bg-red/80" style={{ flex: Math.max(0.0001, dump) }} />
+                  <div className="bg-ink-mute/40" style={{ flex: Math.max(0.0001, expired) }} />
+                </div>
+                <div className="flex items-center gap-2 font-mono text-[11px] shrink-0">
+                  <span className="text-green">● {t("markets.outcomeMoon")} {moon}</span>
+                  <span className="text-red">● {t("markets.outcomeDump")} {dump}</span>
+                  <span className="text-ink-mute">● {t("markets.outcomeExpired")} {expired}</span>
+                </div>
+              </div>
+            );
+          })()}
 
           {(tracks.pending?.length ?? 0) > 0 && (
             <>
-              <div className="grid items-center px-4 py-2 border-t border-b border-line text-[10px] font-mono tracking-[0.08em] text-ink-dim"
+              <div className="grid items-center px-4 py-2 border-t border-b border-line text-[11.5px] font-mono tracking-[0.08em] text-ink-dim"
                 style={{ gridTemplateColumns: TRACK_COLS.pending.tpl }}>
                 {TRACK_COLS.pending.head.map((h) => <div key={h}>{t(h)}</div>)}
               </div>
               {tracks.pending.map((r) => (
-                <TrackLine key={r.id} r={r} variant="pending" onTrade={onTrade} />
+                <TrackLine key={r.id} r={r} variant="pending" onDetail={openDetail("spot")} />
               ))}
             </>
           )}
 
           {(tracks.history?.length ?? 0) > 0 && (
             <>
-              <div className="px-4 pt-3 pb-1 text-[10px] font-mono tracking-[0.08em] text-ink-dim">{t("markets.trackHistory")}</div>
-              <div className="grid items-center px-4 py-2 border-t border-b border-line text-[10px] font-mono tracking-[0.08em] text-ink-dim"
+              <div className="px-4 pt-3 pb-1 text-[11.5px] font-mono tracking-[0.08em] text-ink-dim">{t("markets.trackHistory")}</div>
+              <div className="grid items-center px-4 py-2 border-t border-b border-line text-[11.5px] font-mono tracking-[0.08em] text-ink-dim"
                 style={{ gridTemplateColumns: TRACK_COLS.history.tpl }}>
                 {TRACK_COLS.history.head.map((h) => <div key={h}>{t(h)}</div>)}
               </div>
               {tracks.history.slice(0, 8).map((r) => (
-                <TrackLine key={r.id} r={r} variant="history" onTrade={onTrade} />
+                <TrackLine key={r.id} r={r} variant="history" onDetail={openDetail("spot")} />
               ))}
               {tracks.history.length > 8 && (
-                <div className="px-4 py-2 border-t border-line text-center text-ink-dim font-mono text-[10.5px]">
+                <div className="px-4 py-2 border-t border-line text-center text-ink-dim font-mono text-[12px]">
                   {t("markets.trackMore", { n: tracks.history.length - 8 })}
                 </div>
               )}
@@ -606,16 +696,16 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
         <div className="glass overflow-hidden" style={{ borderRadius: 12 }}>
           <div className="flex items-center gap-2 px-4 pt-3 pb-1">
             <I.Bolt size={13} className="text-gold" />
-            <span className="font-mono text-[12px] tracking-wider text-ink">{t("markets.smartScan")}</span>
-            <span className="pill pill-dim text-[10px]">{t("markets.scanPill")}</span>
-            <span className="pill pill-gold ml-auto text-[10px]">{t("markets.signalCount", { n: data.signals.length })}</span>
+            <span className="font-mono text-[13px] tracking-wider text-ink">{t("markets.smartScan")}</span>
+            <span className="pill pill-dim text-[11.5px]">{t("markets.scanPill")}</span>
+            <span className="pill pill-gold ml-auto text-[11.5px]">{t("markets.signalCount", { n: data.signals.length })}</span>
           </div>
-          <div className="grid items-center px-4 py-2 mt-1.5 border-b border-line text-[10px] font-mono tracking-[0.08em] text-ink-dim"
+          <div className="grid items-center px-4 py-2 mt-1.5 border-b border-line text-[11.5px] font-mono tracking-[0.08em] text-ink-dim"
             style={{ gridTemplateColumns: "1.4fr 1fr 1fr 1.1fr 1fr 0.9fr 1.9fr 0.8fr" }}>
             <div>{t("markets.h.symbol")}</div><div>{t("markets.h.price")}</div><div>{t("markets.h.change")}</div><div>{t("markets.h.quotevol")}</div><div>{t("markets.h.funding")}</div><div>{t("markets.h.direction")}</div><div>{t("markets.h.reason")}</div><div>{t("markets.h.strength")}</div>
           </div>
           {data.signals.map((r) => (
-            <SignalRow key={r.symbol} r={r} onTrade={onTrade} onAnalyze={onAnalyze} />
+            <SignalRow key={r.symbol} r={r} onDetail={openDetail("spot")} onAnalyze={onAnalyze} />
           ))}
         </div>
       )}
@@ -627,7 +717,7 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
           <div className="flex items-center gap-1.5">
             {([["all", t("markets.all", { n: data?.total ?? 0 })], ["gainers", t("markets.gainers")], ["losers", t("markets.losers")]] as const).map(([key, label]) => (
               <button key={key} onClick={() => switchTab(key)}
-                className={`px-3 py-1.5 rounded-md font-mono text-[11.5px] tracking-wider transition-colors border
+                className={`px-3 py-1.5 rounded-md font-mono text-[13px] tracking-wider transition-colors border
                   ${tab === key ? "bg-elevated text-gold border-line" : "border-transparent text-ink-dim hover:text-ink"}`}>
                 {label}
               </button>
@@ -641,7 +731,7 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
         </div>
 
         {/* Table head */}
-        <div className="grid items-center px-4 py-2.5 border-b border-line text-[10px] font-mono tracking-[0.08em] text-ink-dim select-none"
+        <div className="grid items-center px-4 py-2.5 border-b border-line text-[11.5px] font-mono tracking-[0.08em] text-ink-dim select-none"
           style={{ gridTemplateColumns: "1.7fr 1fr 1.1fr 1.2fr 1.4fr" }}>
           <div>{t("markets.h.symbol")}</div>
           <button onClick={() => toggleSort("price")} className="text-left hover:text-gold">{t("markets.h.price")} <Arrow on={sort.key === "price"} /></button>
@@ -653,16 +743,16 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
         {loading && rows.length === 0 ? (
           <div className="p-4 space-y-2">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="shimmer h-9" />)}</div>
         ) : rows.length === 0 ? (
-          <div className="p-10 text-center text-ink-dim text-[13px]">
+          <div className="p-10 text-center text-ink-dim text-[14px]">
             {q ? t("markets.searchEmpty", { total, q }) : t("markets.noData")}
           </div>
         ) : (
           visible.map((r) => (
-            <SpotRow key={r.symbol} r={r} onTrade={onTrade} onAnalyze={onAnalyze} />
+            <SpotRow key={r.symbol} r={r} onDetail={openDetail("spot")} onAnalyze={onAnalyze} />
           ))
         )}
 
-        <div className="px-4 py-2.5 flex items-center justify-between font-mono text-[10.5px] text-ink-mute">
+        <div className="px-4 py-2.5 flex items-center justify-between font-mono text-[12px] text-ink-mute">
           <span>{t("markets.sortPrefix")} {t(SORT_META[sort.key])} {sort.dir === -1 ? t("markets.sort.desc") : t("markets.sort.asc")} · {t("markets.sort.hint")}</span>
           <div className="flex items-center gap-3">
             <span>{t("markets.showing", { v: visible.length, r: rows.length, total, quote: data?.quote ?? "USDT" })}</span>
@@ -681,11 +771,11 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
           <div className="glass p-4" style={{ borderRadius: 12 }}>
             <div className="flex items-center gap-2 mb-2.5">
               <I.Bolt size={14} className="text-gold" />
-              <span className="font-mono text-[12px] font-semibold tracking-wider text-ink">{t("markets.funding")}</span>
+              <span className="font-mono text-[13px] font-semibold tracking-wider text-ink">{t("markets.funding")}</span>
               <div className="ml-auto flex items-center gap-1">
                 {([["ext", t("markets.fundTab.ext")], ["crowd", t("markets.fundTab.crowd")]] as const).map(([k, label]) => (
                   <button key={k} onClick={() => setFundTab(k)}
-                    className={`px-2 py-0.5 rounded font-mono text-[10px] tracking-wider border transition-colors
+                    className={`px-2 py-0.5 rounded font-mono text-[11.5px] tracking-wider border transition-colors
                       ${fundTab === k ? "bg-elevated text-gold border-line" : "border-transparent text-ink-dim hover:text-ink"}`}>
                     {label}
                   </button>
@@ -695,7 +785,7 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
             {(ov?.funding?.flips ?? []).length > 0 && (
               <div className="flex items-center gap-1.5 mb-2 flex-wrap" title={t("markets.fundFlipTitle")}>
                 {ov!.funding!.flips!.slice(0, 4).map((fl) => (
-                  <span key={fl.symbol} className="pill pill-gold text-[9px]" title={`${fmtRate(fl.prev)} → ${fmtRate(fl.last)}`}>
+                  <span key={fl.symbol} className="pill pill-gold text-[10.5px]" title={`${fmtRate(fl.prev)} → ${fmtRate(fl.last)}`}>
                     {baseName(fl.symbol)} {t("markets.fundFlipTo", { to: fl.to })}
                   </span>
                 ))}
@@ -705,46 +795,46 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
               <div className="space-y-1">
                 {(ov?.funding?.extremes ?? []).slice(0, 12).map((f, i) => (
                   <button key={i} onClick={() => onTrade?.(f.symbol)}
-                    className="w-full flex items-center gap-2 font-mono text-[10.5px] hover:bg-elevated/40 rounded px-1 py-0.5 transition-colors">
+                    className="w-full flex items-center gap-2 font-mono text-[12px] hover:bg-elevated/40 rounded px-1 py-0.5 transition-colors">
                     <span className="text-ink flex-1 text-left truncate">{baseName(f.symbol)}</span>
                     <span className={`tabular ${f.funding_rate > 0 ? "text-red" : "text-green"}`}>
                       {f.funding_rate > 0 ? "+" : ""}{(f.funding_rate * 100).toFixed(3)}%
                     </span>
-                    <span className={`text-[9.5px] ${f.funding_rate > 0 ? "text-red" : "text-green"}`}>
+                    <span className={`text-[11px] ${f.funding_rate > 0 ? "text-red" : "text-green"}`}>
                       {t(f.funding_rate > 0 ? "markets.fundLongSide" : "markets.fundShortSide")}
                     </span>
                   </button>
                 ))}
                 {(ov?.funding?.extremes ?? []).length === 0 && (
-                  <div className="text-[10.5px] text-ink-mute font-mono py-2">{t("markets.noData")}</div>
+                  <div className="text-[12px] text-ink-mute font-mono py-2">{t("markets.noData")}</div>
                 )}
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <div className="font-mono text-[10px] tracking-wider text-green mb-1.5">{t("markets.longCrowded")}</div>
+                  <div className="font-mono text-[11.5px] tracking-wider text-green mb-1.5">{t("markets.longCrowded")}</div>
                   <div className="space-y-1">
                     {(ov?.funding?.long_crowded ?? []).map((f, i) => (
                       <button key={i} onClick={() => onTrade?.(f.symbol)}
-                        className="w-full flex items-center gap-1.5 text-[11px] font-mono hover:bg-elevated/40 rounded px-1 py-0.5 transition-colors">
+                        className="w-full flex items-center gap-1.5 text-[12.5px] font-mono hover:bg-elevated/40 rounded px-1 py-0.5 transition-colors">
                         <span className="flex-1 text-ink truncate text-left">{baseName(f.symbol)}</span>
                         <span className={`tabular ${f.crowded ? "text-gold font-semibold" : "text-green"}`}>+{(f.funding_rate * 100).toFixed(3)}%</span>
                       </button>
                     ))}
-                    {(ov?.funding?.long_crowded ?? []).length === 0 && <div className="text-[10px] text-ink-mute font-mono">{t("markets.noData")}</div>}
+                    {(ov?.funding?.long_crowded ?? []).length === 0 && <div className="text-[11.5px] text-ink-mute font-mono">{t("markets.noData")}</div>}
                   </div>
                 </div>
                 <div>
-                  <div className="font-mono text-[10px] tracking-wider text-red mb-1.5">{t("markets.shortCrowded")}</div>
+                  <div className="font-mono text-[11.5px] tracking-wider text-red mb-1.5">{t("markets.shortCrowded")}</div>
                   <div className="space-y-1">
                     {(ov?.funding?.short_crowded ?? []).map((f, i) => (
                       <button key={i} onClick={() => onTrade?.(f.symbol)}
-                        className="w-full flex items-center gap-1.5 text-[11px] font-mono hover:bg-elevated/40 rounded px-1 py-0.5 transition-colors">
+                        className="w-full flex items-center gap-1.5 text-[12.5px] font-mono hover:bg-elevated/40 rounded px-1 py-0.5 transition-colors">
                         <span className="flex-1 text-ink truncate text-left">{baseName(f.symbol)}</span>
                         <span className={`tabular ${f.crowded ? "text-gold font-semibold" : "text-red"}`}>{((f.funding_rate ?? 0) * 100).toFixed(3)}%</span>
                       </button>
                     ))}
-                    {(ov?.funding?.short_crowded ?? []).length === 0 && <div className="text-[10px] text-ink-mute font-mono">{t("markets.noData")}</div>}
+                    {(ov?.funding?.short_crowded ?? []).length === 0 && <div className="text-[11.5px] text-ink-mute font-mono">{t("markets.noData")}</div>}
                   </div>
                 </div>
               </div>
@@ -755,37 +845,63 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
           <div className="glass p-4" style={{ borderRadius: 12 }}>
             <div className="flex items-center gap-2 mb-2.5">
               <I.Zap size={14} className="text-gold" />
-              <span className="font-mono text-[12px] font-semibold tracking-wider text-ink">{t("markets.liqTitle")}</span>
-              <span className={`pill ml-auto text-[9.5px] ${liq?.ws?.connected ? "pill-green" : "pill-dim"}`}>
+              <span className="font-mono text-[13px] font-semibold tracking-wider text-ink">{t("markets.liqTitle")}</span>
+              <span className={`pill ml-auto text-[11px] ${liq?.ws?.connected ? "pill-green" : "pill-dim"}`}>
                 {liq?.ws?.connected ? t("markets.liqOn") : t("markets.liqWait")}
               </span>
+            </div>
+            {/* v1.5.4 按币筛选 + 大单图例（≥$100K 金框高亮） */}
+            <div className="flex items-center gap-1.5 mb-2">
+              <div className="relative flex-1 min-w-0">
+                <I.Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-mute" />
+                <input value={liqFilter} onChange={(e) => setLiqFilter(e.target.value)}
+                  placeholder={t("markets.liqSearch")} className="field pl-6 w-full py-0.5 text-[12px]" />
+              </div>
+              {liqFilter && (
+                <button onClick={() => setLiqFilter("")} className="text-ink-mute hover:text-ink text-[12px] shrink-0"><I.X size={12} /></button>
+              )}
+              <span className="pill pill-gold text-[10px] shrink-0" title={t("markets.liqBigTitle")}>{t("markets.liqBig")}</span>
             </div>
             {liq?.stats && (
               <div className="grid grid-cols-2 gap-2 mb-2.5">
                 <div className="rounded-md border border-red/40 bg-red/5 px-2 py-1.5 text-center">
-                  <div className="font-mono tabular text-[13px] text-red font-semibold">${((liq.stats.long_quote ?? 0) / 1e6).toFixed(2)}M</div>
-                  <div className="font-mono text-[9px] text-ink-mute">{t("markets.liqLong5m", { n: liq.stats.long_count ?? 0 })}</div>
+                  <div className="font-mono tabular text-[14px] text-red font-semibold">${((liq.stats.long_quote ?? 0) / 1e6).toFixed(2)}M</div>
+                  <div className="font-mono text-[10.5px] text-ink-mute">{t("markets.liqLong5m", { n: liq.stats.long_count ?? 0 })}</div>
                 </div>
                 <div className="rounded-md border border-green/40 bg-green/5 px-2 py-1.5 text-center">
-                  <div className="font-mono tabular text-[13px] text-green font-semibold">${((liq.stats.short_quote ?? 0) / 1e6).toFixed(2)}M</div>
-                  <div className="font-mono text-[9px] text-ink-mute">{t("markets.liqShort5m", { n: liq.stats.short_count ?? 0 })}</div>
+                  <div className="font-mono tabular text-[14px] text-green font-semibold">${((liq.stats.short_quote ?? 0) / 1e6).toFixed(2)}M</div>
+                  <div className="font-mono text-[10.5px] text-ink-mute">{t("markets.liqShort5m", { n: liq.stats.short_count ?? 0 })}</div>
                 </div>
               </div>
             )}
             <div className="space-y-0.5">
-              {(liq?.recent ?? []).slice(0, 14).map((r, i) => (
-                <button key={i} onClick={() => onTrade?.(r.symbol)}
-                  className="w-full flex items-center gap-2 font-mono text-[10.5px] hover:bg-elevated/40 rounded px-1 py-0.5 transition-colors">
-                  <span className={`w-9 text-center rounded ${r.kind === "long" ? "text-red bg-red/10" : "text-green bg-green/10"}`}>
-                    {r.kind === "long" ? t("markets.liqLong") : t("markets.liqShort")}
-                  </span>
-                  <span className="text-ink flex-1 text-left truncate">{baseName(r.symbol)}</span>
-                  <span className="text-ink-dim tabular">{fmtPrice(r.price)}</span>
-                  <span className="text-gold tabular">${r.quote >= 1e6 ? `${(r.quote / 1e6).toFixed(2)}M` : r.quote >= 1e3 ? `${(r.quote / 1e3).toFixed(0)}K` : r.quote.toFixed(0)}</span>
-                </button>
-              ))}
-              {(liq?.recent ?? []).length === 0 && (
-                <div className="text-[10.5px] text-ink-mute font-mono py-2">{t("markets.liqNone")}</div>
+              {(liq?.recent ?? [])
+                .filter((r) => {
+                  const s = liqFilter.trim().toLowerCase();
+                  return !s || r.symbol.toLowerCase().includes(s) || r.symbol.replace(/USDT$/, "").toLowerCase().includes(s);
+                })
+                .slice(0, 14).map((r, i) => {
+                  const big = r.quote >= 100_000;
+                  return (
+                    <button key={i} onClick={() => onTrade?.(r.symbol)}
+                      className={`w-full flex items-center gap-2 font-mono text-[12px] hover:bg-elevated/40 rounded px-1 py-0.5 transition-colors
+                        ${big ? "bg-gold/10 border border-gold/40" : ""}`}>
+                      <span className={`w-9 text-center rounded ${r.kind === "long" ? "text-red bg-red/10" : "text-green bg-green/10"}`}>
+                        {r.kind === "long" ? t("markets.liqLong") : t("markets.liqShort")}
+                      </span>
+                      <span className={`flex-1 text-left truncate ${big ? "text-gold font-semibold" : "text-ink"}`}>{baseName(r.symbol)}</span>
+                      <span className="text-ink-dim tabular">{fmtPrice(r.price)}</span>
+                      <span className={`tabular ${big ? "text-gold font-semibold" : "text-gold"}`}>
+                        ${r.quote >= 1e6 ? `${(r.quote / 1e6).toFixed(2)}M` : r.quote >= 1e3 ? `${(r.quote / 1e3).toFixed(0)}K` : r.quote.toFixed(0)}
+                      </span>
+                    </button>
+                  );
+                })}
+              {(liq?.recent ?? []).filter((r) => {
+                const s = liqFilter.trim().toLowerCase();
+                return !s || r.symbol.toLowerCase().includes(s) || r.symbol.replace(/USDT$/, "").toLowerCase().includes(s);
+              }).length === 0 && (
+                <div className="text-[12px] text-ink-mute font-mono py-2">{t("markets.liqNone")}</div>
               )}
             </div>
           </div>
@@ -794,14 +910,14 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
           <div className="glass p-4" style={{ borderRadius: 12 }}>
             <div className="flex items-center gap-2 mb-2">
               <I.Bolt size={14} className="text-gold" />
-              <span className="font-mono text-[12px] font-semibold tracking-wider text-ink">{t("markets.lsTitle")}</span>
-              <span className="pill pill-dim ml-auto text-[9.5px]">1h</span>
+              <span className="font-mono text-[13px] font-semibold tracking-wider text-ink">{t("markets.lsTitle")}</span>
+              <span className="pill pill-dim ml-auto text-[11px]">1h</span>
             </div>
             <div className="space-y-0.5">
               {ls.slice(0, 12).map((r) => (
                 <LsLine key={r.symbol} r={r} onTrade={onTrade} />
               ))}
-              {ls.length === 0 && <div className="text-[10.5px] text-ink-mute font-mono py-2">{t("markets.noData")}</div>}
+              {ls.length === 0 && <div className="text-[12px] text-ink-mute font-mono py-2">{t("markets.noData")}</div>}
             </div>
           </div>
 
@@ -809,14 +925,14 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
           <div className="glass p-4" style={{ borderRadius: 12 }}>
             <div className="flex items-center gap-2 mb-2">
               <I.Arrow size={14} className="text-gold" />
-              <span className="font-mono text-[12px] font-semibold tracking-wider text-ink">{t("markets.volumeTitle")}</span>
-              <span className="pill pill-dim ml-auto text-[10px]">24h</span>
+              <span className="font-mono text-[13px] font-semibold tracking-wider text-ink">{t("markets.volumeTitle")}</span>
+              <span className="pill pill-dim ml-auto text-[11.5px]">24h</span>
             </div>
             <div className="space-y-1.5">
               {(ov?.volume_top ?? []).map((v, i) => (
                 <VolHeatRow key={v.symbol} v={v} rank={i} maxVol={volMax} onTrade={onTrade} onAnalyze={onAnalyze} />
               ))}
-              {(ov?.volume_top ?? []).length === 0 && <div className="text-[11px] text-ink-dim font-mono">{t("markets.noData")}</div>}
+              {(ov?.volume_top ?? []).length === 0 && <div className="text-[12.5px] text-ink-dim font-mono">{t("markets.noData")}</div>}
             </div>
           </div>
         </div>
@@ -825,10 +941,17 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
       )}
 
       {/* Data freshness hint */}
-      <div className="font-mono text-[10.5px] text-ink-mute flex items-center justify-between px-1">
+      <div className="font-mono text-[12px] text-ink-mute flex items-center justify-between px-1">
         <span>{t("markets.dataSource")}</span>
         <span className="tabular">updated_at: <UpdatedAgo updatedAt={data?.updated_at} /></span>
       </div>
+
+      {/* v1.5.4 币种详情浮层（Esc / 点击遮罩关闭） */}
+      {detail && (
+        <CoinDetail symbol={detail.symbol} market={detail.market} base={detail.base}
+          onClose={() => setDetail(null)}
+          onTrade={onTrade} onOrder={onOrder} onAnalyze={onAnalyze} />
+      )}
     </div>
   );
 }

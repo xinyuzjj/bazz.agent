@@ -42,6 +42,11 @@ export const api = {
   marketIgnition: (force = false) => jget("/market/ignition" + (force ? "?force=1" : "")),
   marketOverview: () => jget("/market/overview"),
   marketFutures: () => jget("/market/futures"),
+  marketKlines: (symbol: string, interval = "1h", limit = 24, market = "spot") =>
+    jget(`/market/klines?symbol=${encodeURIComponent(symbol)}&interval=${interval}&limit=${limit}&market=${market}`),
+  marketOI: (symbols: string[]) =>
+    jget(`/market/oi?symbols=${encodeURIComponent(symbols.join(","))}`),
+  marketFNG: () => jget("/market/fng"),
   marketRadar: (force = false) => jget("/market/radar" + (force ? "?force=1" : "")),
   marketRadarTracks: () => jget("/market/radar/tracks"),
   marketLongshort: () => jget("/market/longshort"),

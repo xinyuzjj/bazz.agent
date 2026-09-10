@@ -1598,6 +1598,115 @@ SECTORS = {
     "老牌": ["DOTUSDT", "MATICUSDT", "LTCUSDT", "TRXUSDT", "LINKUSDT"],
 }
 
+# ---------------- v1.5.4 行情增强：K 线走势 / 合约 OI / 恐惧贪婪指数 ----------------
+
+_klines_close_cache: dict = {}   # (market, sym, interval, limit) -> (ts, closes)
+
+
+def klines_closes(sym: str, interval: str = "1h", limit: int = 24, market: str = "spot") -> list:
+    """最近 N 根 K 线收盘价（旧→新，含当前未收 bar）。spot→现货 API；futures→U 本位合约 API。
+    5 分钟内存缓存（Hero 卡 / 详情浮层共用）；拉新失败回退旧缓存；完全失败返回 []。"""
+    key = (market, sym, interval, int(limit))
+    now = time.time()
+    hit = _klines_close_cache.get(key)
+    if hit and now - hit[0] < 300:
+        return hit[1]
+    closes: list = []
+    try:
+        if market == "futures":
+            r = _session.get(f"{FAPI}/fapi/v1/klines",
+                             params={"symbol": sym, "interval": interval, "limit": int(limit)}, timeout=10)
+            r.raise_for_status()
+            closes = _ohlcv(r.json() or [])[3]
+        else:
+            closes = _ohlcv(_klines_raw(sym, interval, int(limit)))[3]
+    except Exception:
+        closes = []
+    if closes:
+        _klines_close_cache[key] = (now, closes)
+    elif hit:
+        closes = hit[1]          # 上游临时失败：沿用旧缓存（并顺延有效期防打爆上游）
+        _klines_close_cache[key] = (now, closes)
+    return closes
+
+
+_oi_cache: dict = {}             # sym -> (ts, oi_base, price)
+
+
+def futures_open_interest(symbols: list, workers: int = 8) -> list:
+    """批量查合约持仓量（U 本位永续）：OI（币本位数量）× 最新价 → USD 名义持仓。
+    5 分钟缓存；失败项 oi/price/notional 为 null。返回 [{symbol, oi, price, notional}]（与入参同序）。"""
+    syms = []
+    for s in (symbols or []):
+        s = str(s).strip().upper()
+        if s and s not in syms:
+            syms.append(s)
+    syms = syms[:80]
+    if not syms:
+        return []
+    now = time.time()
+    out: dict = {}
+    need: list = []
+    for s in syms:
+        hit = _oi_cache.get(s)
+        if hit and now - hit[0] < 300:
+            oi, px = hit[1], hit[2]
+            out[s] = {"symbol": s, "oi": oi, "price": px,
+                      "notional": (oi * px) if (oi is not None and px) else None}
+        else:
+            need.append(s)
+
+    def _one(sym: str):
+        try:
+            r = _session.get(f"{FAPI}/fapi/v1/openInterest", params={"symbol": sym}, timeout=6)
+            r.raise_for_status()
+            oi = float(r.json().get("openInterest", 0) or 0)
+            rp = _session.get(f"{FAPI}/fapi/v1/ticker/price", params={"symbol": sym}, timeout=6)
+            rp.raise_for_status()
+            px = float(rp.json().get("price", 0) or 0)
+            return sym, (oi if oi > 0 else None), (px if px > 0 else None)
+        except Exception:
+            return sym, None, None
+
+    if need:
+        with _cf.ThreadPoolExecutor(max_workers=max(2, min(workers, len(need)))) as ex:
+            for sym, oi, px in ex.map(_one, need):
+                if oi is not None and px is not None:
+                    _oi_cache[sym] = (now, oi, px)
+                out[sym] = {"symbol": sym, "oi": oi, "price": px,
+                            "notional": (oi * px) if (oi is not None and px) else None}
+    return [out[s] for s in syms if s in out]
+
+
+_fng_cache: dict = {"ts": 0.0, "data": None}
+
+
+def fear_greed_index() -> dict:
+    """恐惧贪婪指数（alternative.me，免费无 Key，8 天历史）。10 分钟缓存；失败不缓存并返回 error。"""
+    now = time.time()
+    if _fng_cache["data"] and now - _fng_cache["ts"] < 600:
+        return _fng_cache["data"]
+    try:
+        r = _session.get("https://api.alternative.me/fng/", params={"limit": 8}, timeout=8)
+        r.raise_for_status()
+        data = r.json().get("data") or []
+        hist = []
+        for x in data:
+            try:
+                hist.append({"ts": int(x["timestamp"]), "value": int(x["value"])})
+            except (KeyError, TypeError, ValueError):
+                continue
+        hist.reverse()   # 旧→新
+        cur = hist[-1] if hist else None
+        payload = {"value": cur["value"] if cur else None,
+                   "classification": (data[0].get("value_classification") if data else None),
+                   "history": hist, "updated_at": int(now)}
+        _fng_cache["ts"] = now
+        _fng_cache["data"] = payload
+        return payload
+    except Exception as e:
+        return {"value": None, "classification": None, "history": [], "error": str(e)}
+
 
 
 if __name__ == "__main__":

@@ -16,11 +16,11 @@
   --canvas-rgb: 11 14 17;
   --card-rgb: 24 26 32;
   --elevated-rgb: 30 35 41;
-  --line-rgb: 43 49 58;
+  --line-rgb: 51 58 68;
   --active-rgb: 71 77 87;
   --ink-rgb: 234 236 239;
-  --ink-dim-rgb: 154 164 178;
-  --ink-mute-rgb: 110 122 138;
+  --ink-dim-rgb: 194 202 212;
+  --ink-mute-rgb: 165 175 188;
   --gold-rgb: 240 185 11;
   --gold-soft-rgb: 252 213 53;
   --green-rgb: 14 203 129;
@@ -30,11 +30,11 @@
   --canvas: #0b0e11;
   --card: #181a20;
   --elevated: #1e2329;
-  --line: #2b313a;
+  --line: #333a44;
   --active: #474d57;
   --ink: #eaecef;
-  --ink-dim: #9aa4b2;      /* 提亮：次级文字更清晰（原 #848e9c） */
-  --ink-mute: #6e7a8a;     /* 提亮：辅助文字更可读（原 #5e6673） */
+  --ink-dim: #c2cad4;      /* 提亮：次级文字更清晰（原 #848e9c → #9aa4b2 → #abb5c3 → #c2cad4） */
+  --ink-mute: #a5afbc;     /* 提亮：辅助文字更可读（原 #5e6673 → #6e7a8a → #8b96a5 → #a5afbc） */
   --gold: #f0b90b;
   --gold-soft: #fcd535;
   --gold-deep: #ffd87f;
@@ -94,7 +94,7 @@ body {
 .pill {
   display: inline-flex; align-items: center; gap: 6px;
   font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 11px; font-weight: 500;
+  font-size: 12px; font-weight: 500;
   padding: 3px 9px; border-radius: 4px;
   letter-spacing: 0.04em;
 }
@@ -115,7 +115,7 @@ body {
 /* Mono prefix label */
 .prefix {
   font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ink-dim);
   letter-spacing: 0.04em;
 }

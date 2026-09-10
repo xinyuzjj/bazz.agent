@@ -251,6 +251,43 @@ def api_market_liquidations(limit: int = 60, window: int = 300):
 
 
 
+# ---------------- v1.5.4 行情增强：K 线走势 / 合约 OI / 恐惧贪婪指数 ----------------
+
+@app.get("/api/market/klines")
+def api_market_klines(symbol: str, interval: str = "1h", limit: int = 24, market: str = "spot"):
+    """迷你走势图：最近 N 根 K 线收盘价（旧→新，后端 5 分钟缓存）。market=spot|futures。"""
+    from scanner import klines_closes
+    sym = (symbol or "").strip().upper()
+    try:
+        closes = klines_closes(sym, interval, limit,
+                               market if market in ("spot", "futures") else "spot")
+        return {"symbol": sym, "interval": interval, "closes": closes, "ts": int(time.time())}
+    except Exception as e:
+        return {"symbol": sym, "closes": [], "error": str(e)}
+
+
+@app.get("/api/market/oi")
+def api_market_oi(symbols: str):
+    """合约持仓量批量查询：OI（币本位）× 最新价 → USD 名义持仓（5 分钟缓存）。symbols=逗号分隔。"""
+    from scanner import futures_open_interest
+    try:
+        syms = [s for s in (symbols or "").split(",") if s.strip()]
+        return {"items": futures_open_interest(syms), "ts": int(time.time())}
+    except Exception as e:
+        return {"items": [], "error": str(e)}
+
+
+@app.get("/api/market/fng")
+def api_market_fng():
+    """恐惧贪婪指数（Crypto Fear & Greed，10 分钟缓存，含 8 天历史）。"""
+    from scanner import fear_greed_index
+    try:
+        return fear_greed_index()
+    except Exception as e:
+        return {"value": None, "classification": None, "history": [], "error": str(e)}
+
+
+
 # ---------------- v1.4.0 行情实时流（币安 WS → 后端缓存 → 前端推送） ----------------
 
 @app.get("/api/market/tickers")
