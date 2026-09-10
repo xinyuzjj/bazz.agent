@@ -682,8 +682,13 @@ TOOLS: List[Dict[str, Any]] = [
                             "- 带本地脚本的（scripts/cli.mjs）或 binance-agentic-wallet：真实运行（需用户确认）\n"
                             "- 纯指引类（HTTP/扩展型）：直接返回 SKILL.md 说明\n"
                             "用法：skill_name=技能名，args='<子命令> <JSON参数>'，例如 search '{\"keyword\":\"BNB\"}' 或 meme-rush '{\"chainId\":\"CT_501\",\"rankType\":10}'。\n"
+                            "**本机内置技能速查（分析代币必用，数据走本机行情网关，稳定可达）：**\n"
+                            "- coin-report：args='report <SYMBOL>'（如 report KATUSDT）——一键全维度研报：90日K线/动量/区间分位/费率/OI/大户多空比/恐惧贪婪/战绩，Markdown 落盘\n"
+                            "- market-data：args='<子命令> <JSON>'，子命令 klines{\"symbol\":\"BTCUSDT\",\"interval\":\"1d\",\"limit\":90,\"market\":\"futures\"} / funding{\"symbol\":...} / oi{...} / longshort{\"symbol\":...} / fng / overview / liquidations\n"
+                            "- track-monitor：args='check 15'——妖币追踪复查\n"
                             "需要先看用法说明时，先 cat .agents/skills/<name>/SKILL.md（已被允许）。\n"
                             "用户要求『跑技能/用技能/执行XX skill/查meme/查聪明钱/扫链上数据/审计代币/查地址持仓/扫市场榜/发币安广场』时调用。\n"
+                            "**分析/研究某币（走势/K线/费率/OI/研报）时必须优先本工具调 coin-report 或 market-data——禁止用 run_command 跑 python/node 直连币安 API（受限地区必失败），禁止 fetch_url 抓 api.binance.com**。\n"
                             "**发币安广场（square-post）：** args 直接拼 `node scripts/cli.mjs <子命令> <JSON>`，常用子命令 text(短文)、article(长文 + 标题)、image(图文,<=4 张)、video(视频)。前置 BINANCE_SQUARE_OPENAPI_KEY，缺时去创作者中心 https://www.binance.com/square/creator-center/home 生成。\n"
                             "⚠️ 不要用 run_command 直接调 .agents/skills/X/scripts/cli.mjs——这是已装技能的入口，应当走本 run_skill 工具（它会代你处理 token 化/确认/路径/超时）。\n"
                             "⚠️ **不要把发广场映射成 mcp_call**：MCP binance 网关不含发广场端点；发广场只走本 run_skill。"),

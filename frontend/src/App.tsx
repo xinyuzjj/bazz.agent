@@ -100,8 +100,8 @@ function AppInner() {
   const goAnalyze = useCallback((symbol: string) => {
     const isEn = curLocale === "en";
     const msg = isEn
-      ? `Analyze ${symbol} for me: using the current price, recent price action, volume and funding rate shown on the Markets page, give the trend direction, where the price sits in its 90-day range, the key risk warnings, and an entry plan with clear invalidation conditions. Clearly separate facts from speculation.`
-      : `帮我分析 ${symbol}：结合行情页当前价位 / 近期走势 / 成交量 / 资金费率，给出趋势方向、当前价位在 90 日区间的位置、关键风险提示，以及入场计划（含失效条件）。请明确区分事实与推测。`;
+      ? `Analyze ${symbol}: FIRST call run_skill with skill_name="coin-report" (args="report ${symbol}") to pull the full local dataset (90d klines, momentum, range percentile, funding, OI, top-trader long/short, fear & greed), then combine with market_quote if needed. Give trend direction, where price sits in its 90-day range, key risk warnings, and an entry plan with clear invalidation conditions. Clearly separate facts from speculation. Do NOT call Binance REST directly.`
+      : `帮我分析 ${symbol}：请先用 run_skill 调用 coin-report 技能（args="report ${symbol}"）获取本机全维度数据（90日K线、动量、区间分位、资金费率、OI、大户多空比、恐惧贪婪），需要补项时再用 market-data 技能。基于真实数据给出趋势方向、当前价位在 90 日区间的位置、关键风险提示，以及入场计划（含失效条件）。请明确区分事实与推测。不要用 run_command 直连币安 API。`;
     setPendingChatMsg(msg);
     setTradeSymbol(undefined);
     setTradeMode(undefined);

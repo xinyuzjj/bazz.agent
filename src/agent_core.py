@@ -368,6 +368,10 @@ def _system_prompt(locale: str = "zh") -> str:
             "1) 涉及行情/异常 → 立即调用 scan_market；问某币价格/合约行情/资金费率 → market_quote；\n"
             "   **公开行情（现货价量 + USDT 永续资金费率）一律走 scan_market / market_quote——免费免授权，"
             "绝对禁止用 mcp_call 查行情**（mcp_call 仅用于账户级私有数据：余额/持仓/真实下单等）；\n"
+            "   **深度币种分析（研报/走势/K线/90日区间/费率/OI/多空比/爆仓/恐惧贪婪）→ 一律先 run_skill 调本机内置技能：\n"
+            "     `coin-report`（args='report <SYMBOL>'，一键全维度研报落盘）或 `market-data`（args='klines|funding|oi|longshort|fng|overview|liquidations <JSON>'，逐项取数）；\n"
+            "     数据走本机行情网关（自带缓存 + 代理出口，稳定可达）。**禁止用 run_command 跑 python/node 直连币安 API、"
+            "禁止用 fetch_url 抓 api.binance.com**——受限地区直连必失败，白耗轮次**；\n"
             "   风险/风控 → check_risk；买卖/多空 → propose_trade（仅出方案，下单需确认）；\n"
             "   支付/x402/402 → explain_x402；skills/技能 → list_skills；\n"
             "   链上/钱包/defi → onchain_ops；『记住…』→ memory_write；能力介绍 → get_help；\n"
@@ -397,7 +401,9 @@ def _system_prompt(locale: str = "zh") -> str:
             "8) **工具执行失败时不要放弃、也不要假装成功：主动自我修复**——分析报错原因"
             "（参数/格式/网络/权限），修正参数后重试，或改换更合适的工具/路径完成同一目标；\n"
             "   同一意图最多自动修复 3 轮。若工具结果里出现『自愈次数已用尽』的提示，"
-            "**别直接摆烂**：轮次耗尽兜底时，把可换路径一次性列给用户（`fapi 公开端点 ticker/24hr` 直查合约、`run_skill` 调官方 `binance-agentic-wallet`/`binance-leaderboard`/`trading-signal`、`fetch_url` 抓公开 Binance 页、`run_command` 让我本地 Python 直请求 fapi），并自行尝试其中至少一条再总结——尤其当目标是『某个只在永续上的币』时，先把 `fapi /fapi/v1/ticker/24hr?symbol=XXX` 与 `/fapi/v1/premiumIndex` 这两条公开免授权接口试一遍再说。\n"
+            "**别直接摆烂**：轮次耗尽兜底时，**换路径仍要技能优先**——行情/费率/OI/多空比用 `run_skill(market-data)` 换子命令重试，"
+            "全维度研报用 `run_skill(coin-report)`，链上与官方榜单用 `run_skill(binance-agentic-wallet / binance-leaderboard / trading-signal)`，"
+            "仅当技能确实不含该数据时才考虑 `fetch_url` 抓公开页面。**任何情况下都不要用 run_command 跑 python/node 直连币安 REST**（受限地区必失败）。\n"
             "9) **深度思考（deep-thinking 协议）**：行情归因/是否交易/策略对比/风险判断等分析类请求，"
             "先在思考链里按『拆解→列假设→用工具核验→推理→自检→收敛』走一遍再回答：\n"
             "   - 至少列 2 个假设并用真实工具数据支持/推翻，不凭印象编数字；"
@@ -453,6 +459,22 @@ _TRADE_BASE = ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK",
                "MATIC", "TRX", "LTC", "NEAR", "TON", "ARB", "OP", "APT", "SUI", "PEPE",
                "WLD", "FIL", "ETC", "BCH", "XLM", "ATOM", "INJ", "TIA", "SEI", "RNDR", "ENA"]
 _QUOTES = ["USDT", "USDC", "FDUSD", "TUSD", "TRY", "BRL", "EUR"]
+
+# 单币深度分析请求（分析/研报/走势/解读 + 明确交易对）→ 兜底应推 coin-report 而非全市场扫描
+_COIN_ANALYSIS_PAT = re.compile(r"分析|研报|走势|解读|区间位置|入场计划|关键技术位", re.I)
+
+
+def _detect_coin_symbol(message: str) -> str:
+    """从消息提取明确交易对（如 KATUSDT / WLDUSDT）；纯大盘语（无标的）返回 ''。
+    优先显式 BASEQUOTE，其次已知基础资产 + USDT。"""
+    up = message.upper()
+    m = re.search(r"(?<![A-Z0-9])([A-Z]{2,10})(USDT|USDC|FDUSD|TUSD)(?![A-Z0-9])", up)
+    if m:
+        return f"{m.group(1)}{m.group(2)}"
+    for b in _TRADE_BASE:
+        if re.search(rf"(?<![A-Z0-9]){b}(?![A-Z0-9])", up):
+            return f"{b}USDT"
+    return ""
 
 
 def _parse_trade(message: str):
@@ -2393,9 +2415,19 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
             forced_cand = (not forced_once) and (not accumulated_tools) and _intent_to_tool(_detect(message))
             allowed = _persona_allowed_tools(persona)
             forced = forced_cand and (allowed is None or forced_cand in allowed)
+            # 单币深度分析兜底：强推 scan_market 只会给模型全市场数据（没有该币的 K线/费率/OI），
+            # 迫使其后续自行直连 API 抓数 → 受限地区必失败。改为强推 run_skill(coin-report)，
+            # 一次拿齐该币全维度数据（走本机行情网关，稳定可达）。
+            forced_args: dict = {}
+            if forced and _COIN_ANALYSIS_PAT.search(message):
+                sym = _detect_coin_symbol(message)
+                if sym and (allowed is None or "run_skill" in allowed):
+                    forced, forced_args = "run_skill", {"skill_name": "coin-report", "args": f"report {sym}"}
+                elif sym:
+                    forced = ""  # persona 禁用 run_skill 时不强推错误工具，交给模型自选
             if forced:
                 forced_once = True
-                res = _dispatch_tool(forced, {}, confirmed=auto_exec)
+                res = _dispatch_tool(forced, forced_args, confirmed=auto_exec)
                 if res.get("tools"):
                     for t in res["tools"]:
                         nt = _norm_tool(t)

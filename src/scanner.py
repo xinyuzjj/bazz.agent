@@ -1132,6 +1132,13 @@ def _stage_of(d: dict) -> tuple:
             or ((d.get("flow", 0) or 0) >= 1000 and chg24 >= 10.0):
         return ("VERTICAL", "垂直拉升", "起飞 · 垂直拉升", "LONG",
                 "短时暴力拉升 + 放量（留意 funding 过热与点差扩大）；追高风险大，仅持仓者带移动止损")
+    # 3.5) 做空埋伏：高位滞涨 + 拥挤过热（费率/大户） + 买盘衰竭 → 崩跌前预警（吸筹的镜像）
+    sam = (pos >= 0.75 and (chg30 >= 30.0 or chg3 >= 15.0) and chg24 <= 5.0 and chg1h <= 1.0)
+    sam_sig = (fund_pk >= 0.003 and tr <= 1.10) or tdrop \
+        or (top >= 2.0 and tr <= 1.20) or (oi24 <= -3.0 and chg24 >= 0.0)
+    if sam and sam_sig:
+        return ("SHORT_AMBUSH", "做空埋伏", "做空 · 崩跌前", "WATCH_SHORT",
+                "高位滞涨 + 费率/大户拥挤过热 + taker 买盘衰竭 = 拉升衰竭嫌疑；做空仅小仓试错、创新高即走，现货持有者逢反弹减仓")
     # 4) 点火：破位放量 / OI 脉冲 / taker 买比飙升
     if (d.get("breakout20") and (d.get("rvol_d", 0) or 0) >= 2.0) \
             or (oi15 >= 5.0 and chg24 >= 3.0) \
@@ -1405,7 +1412,7 @@ def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_F
         stage_counts[stage] = stage_counts.get(stage, 0) + 1
 
     rows.sort(key=lambda x: x["score"], reverse=True)
-    rows_ign = [r for r in rows if r["stage"] in ("ACCUMULATION", "IGNITION")]
+    rows_ign = [r for r in rows if r["stage"] in ("ACCUMULATION", "IGNITION", "SHORT_AMBUSH")]
     rows_tk = [r for r in rows if r["stage"] in ("VERTICAL", "DISTRIBUTION", "CRASH")]
     rows_tk += [r for r in rows if r["stage"] == "DORMANT"
                 and (r.get("change30d_pct") or 0) >= 30.0]

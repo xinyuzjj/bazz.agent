@@ -8,7 +8,7 @@
 
 import process from "node:process";
 
-const TIMEOUT_MS = 8_000;
+const TIMEOUT_MS = 15_000;
 const UA = { "User-Agent": "Mozilla/5.0 (BAZZ-AGENT news-sentiment)" };
 
 async function raw(url) {

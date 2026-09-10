@@ -2,7 +2,7 @@
 
 覆盖：
 1. record_from_radar：只登记 ignition 组合法行 + 重复调用幂等
-2. _tick 结局判定：moon（+25%）/ dump（-20%）/ expired（7 天超时）
+2. _tick 结局判定（10x 合约口径）：moon（顺向 +25%）/ dump（逆向 ≥10%≈强平线）/ expired（7 天超时）
 3. radar_track_progress：max_gain/max_drop 累计
 4. tracks_view / radar_tracks_stats 对账
 5. 关单后不再跟踪（终态幂等）
@@ -84,31 +84,74 @@ def _restore_env():
 
 
 def test_moon():
+    """v1.5.8 持有模式：达标 +25% 不直接关单 → 判无反转因子 → 持有；峰值回撤 ≥12% → moon 落袋。"""
     tid = state.radar_track_add("MOONUSDT", "IGNITION", 1.0)
-    _patch_env({"MOONUSDT": 1.3})                       # +30% ≥ 25%
+    _patch_env({"MOONUSDT": 1.3})                       # +30% ≥ 25% 达标 → 持有（无雷达缓存=无反转因子）
     _events.clear()
     try:
         radar_tracker._tick()
     finally:
         _restore_env()
+    row = next(r for r in state.radar_tracks_list("pending") if r["symbol"] == "MOONUSDT")
+    check("hold: 达标不关单转持有", row["status"] == "pending" and row["holding"] == 1)
+    hold_ev = [e for e in _events if e.get("outcome") == "hold"]
+    check("hold: radar_hold 事件恰好 1 条", len(hold_ev) == 1, str(_events))
+
+    _patch_env({"MOONUSDT": 1.5})                       # 持有期新高 → hold_ext=1.5
+    try:
+        radar_tracker._tick()
+    finally:
+        _restore_env()
+
+    _patch_env({"MOONUSDT": 1.30})                      # 回撤 (1.5-1.3)/1.5=13.3% ≥12% → moon 落袋
+    try:
+        radar_tracker._tick()
+    finally:
+        _restore_env()
     row = next(r for r in state.radar_tracks_list("closed") if r["symbol"] == "MOONUSDT")
-    check("moon: 结局=moon", row["outcome"] == "moon")
-    check("moon: 关单价/最大涨幅落库", row["outcome_price"] == 1.3 and row["max_gain_pct"] >= 25.0)
-    check("moon: radar_outcome 事件恰好 1 条", len(_events) == 1 and _events[0].get("kind") == "radar_outcome",
+    check("moon: 移动止盈结局=moon", row["outcome"] == "moon")
+    check("moon: 关单价/最大涨幅落库", abs(row["outcome_price"] - 1.30) < 1e-9 and row["max_gain_pct"] >= 50.0)
+    check("moon: radar_outcome 事件恰好 2 条(hold+moon)", len([e for e in _events if e.get("outcome") in ("hold", "moon")]) == 2,
           str(_events))
-    check("moon: 事件字段齐", _events and _events[0].get("symbol") == "MOONUSDT"
-          and _events[0].get("found_price") == 1.0 and _events[0].get("outcome") == "moon")
+    check("moon: 事件字段齐", _events and _events[-1].get("symbol") == "MOONUSDT"
+          and abs(_events[-1].get("found_price", 0) - 1.0) < 1e-9 and _events[-1].get("outcome") == "moon")
 
 
 def test_dump():
     state.radar_track_add("DUMPUSDT", "ACCUMULATION", 1.0)
-    _patch_env({"DUMPUSDT": 0.75})                      # -25% ≥ 20%
+    _patch_env({"DUMPUSDT": 0.88})                      # -12% ≥ FAIL_HIT 10%（10x 近强平）
     try:
         radar_tracker._tick()
     finally:
         _restore_env()
     row = next(r for r in state.radar_tracks_list("closed") if r["symbol"] == "DUMPUSDT")
-    check("dump: 结局=dump", row["outcome"] == "dump" and row["max_drop_pct"] >= 20.0)
+    check("dump: 结局=dump（做多逆向 ≥10%）", row["outcome"] == "dump" and row["max_drop_pct"] >= 10.0)
+    check("dump: 失败复盘已生成入库", bool(row.get("review")) and "失败路径" in row["review"], row.get("review", "")[:80])
+
+
+def test_dump_short():
+    state.radar_track_add("SHRTUSDT", "SHORT_AMBUSH", 1.0, direction="SHORT")
+    _patch_env({"SHRTUSDT": 1.12})                      # 做空逆向 +12% ≥ FAIL_HIT 10% → dump
+    try:
+        radar_tracker._tick()
+    finally:
+        _restore_env()
+    row = next(r for r in state.radar_tracks_list("closed") if r["symbol"] == "SHRTUSDT")
+    check("dump_short: 做空逆向涨 ≥10% → dump", row["outcome"] == "dump" and row["max_gain_pct"] >= 10.0)
+
+    state.radar_track_add("SHRT2USDT", "SHORT_AMBUSH", 1.0, direction="SHORT")
+    _patch_env({"SHRT2USDT": 0.70})                     # 做空顺向跌 -30% ≥25% 达标 → 持有（hold_ext=0.70）
+    try:
+        radar_tracker._tick()
+    finally:
+        _restore_env()
+    _patch_env({"SHRT2USDT": 0.85})                     # 自极值反弹 (0.85-0.70)/0.70=21.4% ≥12% → moon 落袋
+    try:
+        radar_tracker._tick()
+    finally:
+        _restore_env()
+    row2 = next(r for r in state.radar_tracks_list("closed") if r["symbol"] == "SHRT2USDT")
+    check("dump_short: 做空达标持有后反弹 ≥12% → moon", row2["outcome"] == "moon" and row2["max_drop_pct"] >= 25.0)
 
 
 def test_progress_max_accumulate():
@@ -154,7 +197,7 @@ def test_view_and_stats():
           st["total"] == st["pending"] + st["moon"] + st["dump"] + st["expired"], str(st))
     check("stats: moon/dump/expired 各 ≥1", st["moon"] >= 1 and st["dump"] >= 1 and st["expired"] >= 1)
     check("view: 结构完整", set(v) == {"pending", "history", "stats", "ts"}
-          and len(v["history"]) == 4 and len(v["pending"]) == 2, str(st))
+          and len(v["history"]) == 6 and len(v["pending"]) == 2, str(st))
     check("view: history 按 closed_at 降序",
           all(v["history"][i]["closed_at"] >= v["history"][i + 1]["closed_at"]
               for i in range(len(v["history"]) - 1)))
@@ -164,6 +207,7 @@ if __name__ == "__main__":
     test_record()
     test_moon()
     test_dump()
+    test_dump_short()
     test_progress_max_accumulate()
     test_expired()
     test_closed_not_tracked()

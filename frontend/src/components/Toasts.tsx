@@ -90,6 +90,18 @@ export default function Toasts() {
         // v1.5.2：妖币追踪结局（启动前发现 → 暴涨/暴跌兑现 / 到期）
         if (kind === "radar_outcome") {
           const oc = String(e.outcome ?? "");
+          if (oc === "hold") {
+            // v1.5.8：达标（+25%）但动能未反转 → 转持有模式移动止盈
+            const title = t("alert.radarHold");
+            const body = t("alert.radarHoldBody", {
+              found: e.found_price != null ? fmtPrice(Number(e.found_price)) : "—",
+              price: px,
+              pnl: e.pnl_usdt != null ? `${Number(e.pnl_usdt) >= 0 ? "+" : ""}${Number(e.pnl_usdt).toFixed(0)}U` : "—",
+            });
+            pushToast(title, `${sym} · ${body}`, "info");
+            systemNotify(title, `${sym} · ${body}`);
+            return;
+          }
           const title = t(oc === "moon" ? "alert.radarMoon" : oc === "dump" ? "alert.radarDump" : "alert.radarExpired");
           const body = t("alert.radarBody", {
             found: e.found_price != null ? fmtPrice(Number(e.found_price)) : "—",
@@ -97,8 +109,9 @@ export default function Toasts() {
             gain: Number(e.max_gain_pct ?? 0).toFixed(1),
             drop: Number(e.max_drop_pct ?? 0).toFixed(1),
           });
-          pushToast(title, `${sym} · ${body}`, oc === "moon" ? "ok" : oc === "dump" ? "bad" : "info");
-          systemNotify(title, `${sym} · ${body}`);
+          const pnlTxt = e.pnl_usdt != null ? ` · ${Number(e.pnl_usdt) >= 0 ? "+" : ""}${Number(e.pnl_usdt).toFixed(0)}U` : "";
+          pushToast(title, `${sym} · ${body}${pnlTxt}`, oc === "moon" ? "ok" : oc === "dump" ? "bad" : "info");
+          systemNotify(title, `${sym} · ${body}${pnlTxt}`);
           return;
         }
         const isHit = kind.endsWith("_hit");

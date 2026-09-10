@@ -135,6 +135,9 @@ def _init():
         trough_price REAL DEFAULT 0,
         last_price REAL DEFAULT 0,
         outcome_price REAL DEFAULT 0,
+        review TEXT DEFAULT '',
+        holding INTEGER DEFAULT 0,
+        hold_ext REAL DEFAULT 0,
         found_at REAL NOT NULL,
         closed_at REAL,
         updated_at REAL NOT NULL
@@ -153,6 +156,17 @@ def _init():
     rtcols = {r[1] for r in c.execute("PRAGMA table_info(radar_tracks)").fetchall()}
     if rtcols and "direction" not in rtcols:
         c.execute("ALTER TABLE radar_tracks ADD COLUMN direction TEXT DEFAULT 'LONG'")
+        c.commit()
+    # v1.5.8：radar_tracks 缺 review 列时补上（失败复盘记录）
+    if rtcols and "review" not in rtcols:
+        c.execute("ALTER TABLE radar_tracks ADD COLUMN review TEXT DEFAULT ''")
+        c.commit()
+    # v1.5.8：radar_tracks 缺 holding/hold_ext 列时补上（达标继续持有 + 移动止盈）
+    if rtcols and "holding" not in rtcols:
+        c.execute("ALTER TABLE radar_tracks ADD COLUMN holding INTEGER DEFAULT 0")
+        c.commit()
+    if rtcols and "hold_ext" not in rtcols:
+        c.execute("ALTER TABLE radar_tracks ADD COLUMN hold_ext REAL DEFAULT 0")
         c.commit()
     ccols = {r[1] for r in c.execute("PRAGMA table_info(conversations)").fetchall()}
     if ccols and "persona" not in ccols:
@@ -812,10 +826,11 @@ def radar_track_add(symbol: str, stage: str, found_price: float, found_score: in
 
 @_serialized
 def radar_track_progress(tid: str, price: float):
-    """跟踪线程每轮更新：last/peak/trough 与自发现价最大涨跌幅（正数 %）。返回本轮判定上下文。"""
+    """跟踪线程每轮更新：last/peak/trough 与自发现价最大涨跌幅（正数 %）。
+    v1.5.8 持有模式：holding=1 时同步维护 hold_ext（做多=持有期最高价 / 做空=最低价）。返回本轮判定上下文。"""
     now = time.time()
     row = _conn_get().execute(
-        "SELECT found_price, found_at, max_gain_pct, max_drop_pct, peak_price, trough_price "
+        "SELECT direction, holding, hold_ext, found_price, found_at, max_gain_pct, max_drop_pct, peak_price, trough_price "
         "FROM radar_tracks WHERE id=? AND status='pending'", (tid,)).fetchone()
     if not row or price <= 0:
         return None
@@ -828,24 +843,55 @@ def radar_track_progress(tid: str, price: float):
     md = max(float(row["max_drop_pct"] or 0), drop)
     peak = max(float(row["peak_price"] or 0), price)
     trough = price if float(row["trough_price"] or 0) <= 0 else min(float(row["trough_price"]), price)
-    _conn_get().execute(
-        "UPDATE radar_tracks SET last_price=?, peak_price=?, trough_price=?, "
-        "max_gain_pct=?, max_drop_pct=?, updated_at=? WHERE id=?",
-        (price, peak, trough, mg, md, now, tid))
+    holding = int(row["holding"] or 0)
+    hold_ext = float(row["hold_ext"] or 0)
+    if holding:
+        if (row["direction"] or "LONG") == "SHORT":
+            hold_ext = price if hold_ext <= 0 else min(hold_ext, price)
+        else:
+            hold_ext = max(hold_ext, price)
+        _conn_get().execute(
+            "UPDATE radar_tracks SET last_price=?, peak_price=?, trough_price=?, "
+            "max_gain_pct=?, max_drop_pct=?, hold_ext=?, updated_at=? WHERE id=?",
+            (price, peak, trough, mg, md, hold_ext, now, tid))
+    else:
+        _conn_get().execute(
+            "UPDATE radar_tracks SET last_price=?, peak_price=?, trough_price=?, "
+            "max_gain_pct=?, max_drop_pct=?, updated_at=? WHERE id=?",
+            (price, peak, trough, mg, md, now, tid))
     _conn_get().commit()
     return {"gain": gain, "drop": drop, "max_gain": mg, "max_drop": md,
-            "found": found, "found_at": row["found_at"]}
+            "found": found, "found_at": row["found_at"],
+            "holding": holding, "hold_ext": hold_ext}
 
 
 @_serialized
-def radar_track_close(tid: str, outcome: str, price: float) -> bool:
-    """终态关单：moon|dump|expired。关单后不再被跟踪。"""
+def radar_track_hold_start(tid: str, price: float) -> None:
+    """v1.5.8：达标后判定继续持有 → 进入移动止盈模式（hold_ext 记持有期极值）。"""
+    _conn_get().execute(
+        "UPDATE radar_tracks SET holding=1, hold_ext=?, updated_at=? WHERE id=? AND status='pending'",
+        (float(price or 0), time.time(), tid))
+    _conn_get().commit()
+
+
+@_serialized
+def radar_track_close(tid: str, outcome: str, price: float, review: str = "") -> bool:
+    """终态关单：moon|dump|expired。关单后不再被跟踪。review=失败复盘（v1.5.8，dump 时写入）。"""
     now = time.time()
     cur = _conn_get().execute(
-        "UPDATE radar_tracks SET status='closed', outcome=?, outcome_price=?, closed_at=?, updated_at=? "
-        "WHERE id=? AND status='pending'", (outcome, float(price or 0), now, now, tid))
+        "UPDATE radar_tracks SET status='closed', outcome=?, outcome_price=?, review=?, closed_at=?, updated_at=? "
+        "WHERE id=? AND status='pending'",
+        (outcome, float(price or 0), str(review or ""), now, now, tid))
     _conn_get().commit()
     return cur.rowcount > 0
+
+
+@_serialized
+def radar_track_set_review(tid: str, review: str) -> None:
+    """v1.5.8：写入/更新失败复盘文本（dump 关单后调用）。"""
+    _conn_get().execute("UPDATE radar_tracks SET review=? WHERE id=?",
+                        (str(review or ""), tid))
+    _conn_get().commit()
 
 
 def radar_tracks_list(status: str = "") -> list:

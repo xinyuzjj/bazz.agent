@@ -41,6 +41,7 @@ export type OrderMode = "spot-long" | "futures-long" | "futures-short";
 export const STAGE_META: Record<string, { cls: string }> = {
   ACCUMULATION: { cls: "pill-green" },
   IGNITION:     { cls: "pill-green" },
+  SHORT_AMBUSH: { cls: "pill-red" },
   VERTICAL:     { cls: "pill-gold" },
   DISTRIBUTION: { cls: "pill-red" },
   CRASH:        { cls: "pill-red" },
@@ -54,8 +55,8 @@ export const SIDE_META: Record<RadarRow["side"], { label: string; cls: string }>
   WATCH: { label: "markets.sideWatch", cls: "pill-dim" },
 };
 export const RADAR_COLS = {
-  ignition: { tpl: "2.2fr 0.9fr 0.9fr 0.9fr 1fr 0.9fr 1fr 2.3fr", head: ["markets.col.symbol", "markets.h.price", "3D", "30D", "markets.col.pos90", "markets.col.volratio", "markets.col.verdict", "markets.col.action"] },
-  takeoff:  { tpl: "2fr 0.9fr 0.9fr 0.9fr 0.9fr 1.1fr 0.8fr 1fr 2.2fr", head: ["markets.col.symbol", "markets.h.price", "7D", "30D", "markets.col.fromhigh", "markets.h.quotevol", "markets.col.surge", "markets.col.verdict", "markets.col.action"] },
+  ignition: { tpl: "2fr 0.9fr 0.9fr 0.9fr 1fr 0.9fr 1fr 2.9fr", head: ["markets.col.symbol", "markets.h.price", "3D", "30D", "markets.col.pos90", "markets.col.volratio", "markets.col.verdict", "markets.col.action"] },
+  takeoff:  { tpl: "1.9fr 0.9fr 0.9fr 0.9fr 0.9fr 1fr 0.8fr 1fr 2.9fr", head: ["markets.col.symbol", "markets.h.price", "7D", "30D", "markets.col.fromhigh", "markets.h.quotevol", "markets.col.surge", "markets.col.verdict", "markets.col.action"] },
 } as const;
 
 // v1.5.2 妖币追踪：启动前发现 → 后续暴涨/暴跌结局验证（v1.5.7 增加方向 + 当前涨跌幅）
@@ -67,6 +68,7 @@ export type TrackRow = {
   max_gain_pct: number; max_drop_pct: number;
   peak_price: number; trough_price: number;
   last_price: number; outcome_price: number;
+  review?: string; holding?: number;
   found_at: number; closed_at: number | null; updated_at: number;
 };
 export type TracksData = { pending: TrackRow[]; history: TrackRow[]; stats?: { total?: number; pending?: number; moon?: number; dump?: number; expired?: number }; ts?: number; error?: string };
@@ -76,9 +78,16 @@ export const OUTCOME_META: Record<string, { label: string; cls: string }> = {
   expired: { label: "markets.outcomeExpired", cls: "pill-dim" },
 };
 export const TRACK_COLS = {
-  pending: { tpl: "2.2fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr 1fr", head: ["markets.col.symbol", "markets.trackFoundPrice", "markets.trackNowPrice", "markets.trackChg", "markets.trackMaxGain", "markets.trackMaxDrop", "markets.trackFoundAt"] },
-  history: { tpl: "2.2fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr 1fr", head: ["markets.col.symbol", "markets.trackFoundPrice", "markets.trackOutcomePrice", "markets.trackChg", "markets.trackMaxGain", "markets.trackMaxDrop", "markets.trackDuration"] },
+  pending: { tpl: "1.9fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.9fr", head: ["markets.col.symbol", "markets.trackFoundPrice", "markets.trackNowPrice", "markets.trackChg", "markets.trackMaxGain", "markets.trackMaxDrop", "markets.trackPnl", "markets.trackFoundAt"] },
+  history: { tpl: "1.9fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.9fr", head: ["markets.col.symbol", "markets.trackFoundPrice", "markets.trackOutcomePrice", "markets.trackChg", "markets.trackMaxGain", "markets.trackMaxDrop", "markets.trackPnl", "markets.trackDuration"] },
 } as const;
+// 仓位模拟（与后端 radar_tracker 一致）：100U 本金 × 10x 合约，爆仓封底 -100U
+export const trackPnl = (direction: string | undefined, found: number, px: number) => {
+  if (!found || !px) return null;
+  const chg = (px / found - 1) * 100;
+  const roi = (direction === "SHORT" ? -chg : chg) * 10;
+  return Math.max(-100, roi);
+};
 // 相对时间：60s→"xm"、1h→"x.xh"、更长→"x.xd"（列头文案区分"发现于/持续"）
 export const fmtAgo = (ts: number, now: number = Date.now() / 1000) => {
   const s = Math.max(0, now - ts);
@@ -168,12 +177,19 @@ export const LsLine = memo(function LsLine({ r, onTrade }: {
   const t = useT();
   const ratio = r.top_ratio ?? 0;
   const longPct = ratio > 0 ? Math.min(0.95, Math.max(0.05, ratio / (1 + ratio))) : 0.5;
+  // 背离方向跟随大户（smart money）：大户比>1 = 主力净多 → 偏多；<1 = 主力净空 → 偏空
+  const divergeLong = (r.top_ratio ?? 1) >= 1;
   return (
     <button onClick={() => onTrade?.(r.symbol)}
       className="w-full rounded-md px-1.5 py-1 hover:bg-elevated/40 transition-colors">
       <div className="flex items-center gap-2 font-mono text-[12px]">
         <span className="text-ink flex-1 text-left truncate">{baseName(r.symbol)}</span>
-        {r.divergence && <span className="pill pill-gold text-[10px]">{t("markets.lsDiverge")}</span>}
+        {r.divergence && (
+          <span className={`pill text-[10px] ${divergeLong ? "pill-green" : "pill-red"}`}
+            title={t("markets.lsDivergeTip")}>
+            {t(divergeLong ? "markets.lsDivergeLong" : "markets.lsDivergeShort")}
+          </span>
+        )}
         <span className="text-ink-dim tabular" title={t("markets.lsTop")}>
           {t("markets.lsTopShort")} {r.top_ratio != null ? r.top_ratio.toFixed(2) : "—"}
         </span>
@@ -354,7 +370,8 @@ export const RadarLine = memo(function RadarLine({ m, mode, onTrade, onOrder, on
   const stageCls = m.stage ? STAGE_META[m.stage]?.cls ?? "pill-dim" : "pill-dim";
   return (
     <div onClick={() => onDetail?.(m.symbol, m)} title={t("markets.detail.open")}
-      className="grid items-center px-4 py-2.5 border-b border-line/60 last:border-0 hover:bg-elevated/40 transition-colors cursor-pointer group"
+      className={`grid items-center px-4 py-2.5 border-b border-line/60 last:border-0 transition-colors cursor-pointer group
+        ${m.side === "LONG" ? "bg-green/5 hover:bg-green/10" : m.side === "WATCH_SHORT" ? "bg-red/5 hover:bg-red/10" : "hover:bg-elevated/40"}`}
       style={{ gridTemplateColumns: RADAR_COLS[mode].tpl }}>
       <div className="min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
@@ -391,7 +408,7 @@ export const RadarLine = memo(function RadarLine({ m, mode, onTrade, onOrder, on
 
       <div className="font-mono tabular text-[13px] text-ink">{m.vol_ratio >= 1 ? "+" : ""}{m.vol_ratio.toFixed(1)}x</div>
       <div><span className={`pill ${side.cls} text-[11.5px]`}>{t(side.label)}</span></div>
-      <div className="flex items-center gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
         <button onClick={(e) => { e.stopPropagation(); onAnalyze?.(m.symbol); }}
           className="btn-ghost text-[12px] py-1" title={t("markets.analyze")}><I.Search size={10} /> {t("markets.analyze")}</button>
         {m.side === "LONG" && (
@@ -429,13 +446,19 @@ export const TrackLine = memo(function TrackLine({ r, variant, onDetail }: {
   const gain = r.max_gain_pct ?? 0;
   const drop = r.max_drop_pct ?? 0;
   const isShort = r.direction === "SHORT";
+  // v1.5.8：失败复盘展开（dump 行）
+  const [revOpen, setRevOpen] = useState(false);
   // 当前涨跌幅：pending=现价 vs 发现价；history=结局价 vs 发现价
   const refPx = r.found_price || 0;
   const curPx = isP ? (r.last_price || 0) : (r.outcome_price || r.last_price || 0);
   const curChg = refPx > 0 && curPx > 0 ? (curPx / refPx - 1) * 100 : null;
   return (
     <div onClick={() => onDetail?.(r.symbol, r)} title={t("markets.detail.open")}
-      className="grid items-center px-4 py-2.5 border-b border-line/60 last:border-0 hover:bg-elevated/40 transition-colors cursor-pointer group"
+      className={`grid items-center px-4 py-2.5 border-b border-line/60 last:border-0 transition-colors cursor-pointer group
+        ${isP
+          ? (isShort ? "bg-red/5 hover:bg-red/10" : "bg-green/5 hover:bg-green/10")
+          : r.outcome === "moon" ? "bg-green/5 hover:bg-green/10"
+            : r.outcome === "dump" ? "bg-red/5 hover:bg-red/10" : "hover:bg-elevated/40"}`}
       style={{ gridTemplateColumns: TRACK_COLS[variant].tpl }}>
       <div className="min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
@@ -446,7 +469,18 @@ export const TrackLine = memo(function TrackLine({ r, variant, onDetail }: {
             {isShort ? t("markets.short") : t("markets.long")}
           </span>
           <span className={`pill ${stageCls} text-[10.5px]`}>{t(`markets.stage.${r.stage}`)}</span>
+          {isP && !!r.holding && (
+            <span className="pill pill-gold text-[10.5px]" title={t("markets.holdingTip")}>{t("markets.holding")}</span>
+          )}
           {!isP && oc && <span className={`pill ${oc.cls} text-[10.5px]`}>{t(oc.label)}</span>}
+          {/* 失败复盘：点击展开（阻止冒泡，不触发详情浮层） */}
+          {!isP && r.outcome === "dump" && !!r.review && (
+            <button onClick={(e) => { e.stopPropagation(); setRevOpen((v) => !v); }}
+              className={`pill text-[10.5px] ${revOpen ? "pill-red" : "border border-red/50 text-red hover:bg-red/10"}`}
+              title={t("markets.reviewTip")}>
+              {t("markets.reviewPill")}
+            </button>
+          )}
         </div>
         {(r.reasons?.length ?? 0) > 0 && (
           <div className="font-mono text-[11px] text-ink-mute truncate mt-0.5">{r.reasons!.slice(0, 3).join(" · ")}</div>
@@ -459,9 +493,26 @@ export const TrackLine = memo(function TrackLine({ r, variant, onDetail }: {
       </div>
       <div className={`font-mono tabular text-[13px] ${gain > 0 ? "up" : "text-ink-mute"}`}>+{gain.toFixed(1)}%</div>
       <div className={`font-mono tabular text-[13px] ${drop > 0 ? "down" : "text-ink-mute"}`}>-{drop.toFixed(1)}%</div>
-      <div className="font-mono tabular text-ink-dim text-[12.5px]">
+      {/* 仓位模拟：100U 本金 × 10x 合约（爆仓封底 -100U） */}
+      {(() => {
+        const roi = trackPnl(r.direction, refPx, curPx);
+        return (
+          <div className={`font-mono tabular text-[13px] font-medium ${roi == null ? "text-ink-mute" : roi >= 0 ? "up" : "down"}`}
+            title={t("markets.trackPnlTip")}>
+            {roi == null ? "—" : `${roi >= 0 ? "+$" : "-$"}${Math.abs(roi).toFixed(0)}`}
+          </div>
+        );
+      })()}
+      <div className="font-mono text-ink-dim text-[12.5px]">
         {isP ? fmtAgo(r.found_at) : fmtAgo(r.closed_at || r.updated_at, r.found_at)}
       </div>
+      {revOpen && !!r.review && (
+        <div onClick={(e) => e.stopPropagation()} style={{ gridColumn: "1 / -1" }}
+          className="whitespace-pre-wrap rounded-md border border-red/30 bg-red/5 px-3 py-2 mt-1 font-mono text-[11.5px] leading-relaxed text-ink-dim">
+          <div className="text-red font-semibold mb-1">{t("markets.reviewPill")}</div>
+          {r.review}
+        </div>
+      )}
     </div>
   );
 });

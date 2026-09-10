@@ -143,6 +143,7 @@ body {
   background: transparent; color: var(--ink);
   border: 1px solid var(--active); border-radius: 6px;
   font-size: 13px; padding: 7px 12px; cursor: pointer;
+  white-space: nowrap; /* 禁止按钮内文字折行（如「分/析」），空间不足时由外层容器整体换行 */
   transition: all 120ms ease;
 }
 .btn-ghost:hover { background: var(--elevated); border-color: var(--gold); }

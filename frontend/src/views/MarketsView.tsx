@@ -7,8 +7,8 @@ import {
   type Ticker, type Signal, type FutureRow, type EquityRow, type RadarRow, type OrderMode,
   type TracksData,
   SIDE_META, RADAR_COLS, STAGE_META, TRACK_COLS, fmtPrice, fmtVol, fmtRate, fmtAgo, baseName, UpdatedAgo,
-  PosBar, useFlash, VolHeatRow, LsLine,
-  SpotRow, FutRow, EquityCard, RadarLine, TrackLine, SignalRow,
+  PosBar, useFlash, LsLine,
+  FutRow, EquityCard, RadarLine, TrackLine, SignalRow,
 } from "../components/MarketRows";
 import { Sparkline } from "../components/Sparkline";
 import { CoinDetail } from "../components/CoinDetail";
@@ -25,7 +25,6 @@ import { CoinDetail } from "../components/CoinDetail";
 
 const PAGE = 120; // 每批展示行数（"加载更多"）
 type SortKey = "price" | "change_pct" | "quote_volume";
-const SORT_META: Record<SortKey, string> = { price: "markets.h.price", change_pct: "markets.h.change", quote_volume: "markets.h.quotevol" };
 
 type MinTicker = { symbol: string; price: number; change_pct: number };
 type MarketData = {
@@ -101,7 +100,7 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
   type FutureRow = { symbol: string; price: number; change_pct: number; quote_volume: number; high: number; low: number; funding_rate: number };
   type EquityRow = FutureRow & { name?: string; leverage?: string };
   type FuturesData = { futures: FutureRow[]; equity: EquityRow[]; total_futures?: number; total_equity?: number; updated_at?: number; error?: string };
-  const [dim, setDim] = useState<"spot" | "futures" | "equity">("spot");
+  const [dim, setDim] = useState<"spot" | "futures" | "equity" | "radar">("spot");
   const [fd, setFd] = useState<FuturesData | null>(null);
   const [fErr, setFErr] = useState("");
   const [fq, setFq] = useState("");
@@ -139,11 +138,6 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
   const radarDesc = mode === "ignition"
     ? `${t("markets.ignDesc1")}${t("markets.buySellSpot")}${t("markets.ignDesc2")}`
     : `${t("markets.takeoffDesc1")}${t("markets.buySellSpot")}${t("markets.takeoffDesc2")}`;
-  // 成交额热度：用于 bar 归一化
-  const volMax = useMemo(
-    () => (ov?.volume_top ?? []).reduce((m, v) => Math.max(m, v.quote_volume), 0),
-    [ov],
-  );
 
   const load = async () => {
     try { const d = await api.market(); setData(d); } finally { setLoading(false); }
@@ -293,24 +287,6 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
     return subscribeTicks("futures", eqSubKey.split(","));
   }, [eqSubKey]);
 
-  const switchTab = (t: "all" | "gainers" | "losers") => {
-    setTab(t);
-    setLimit(PAGE);
-    setSort(t === "all" ? { key: "quote_volume", dir: -1 }
-      : t === "gainers" ? { key: "change_pct", dir: -1 }
-      : { key: "change_pct", dir: 1 });
-  };
-  const toggleSort = (key: SortKey) => {
-    setTab("all");
-    setSort((s) => ({ key, dir: s.key === key ? (s.dir === 1 ? -1 : 1) : key === "quote_volume" ? -1 : 1 }));
-  };
-
-  const Arrow = ({ on }: { on: boolean }) => (
-    <span className={`inline-block ml-0.5 align-middle ${on ? "text-gold" : "text-ink-mute opacity-30"}`}>
-      {sort.key === "price" || sort.key === "quote_volume" || sort.key === "change_pct" ? (sort.dir === -1 ? "▼" : "▲") : "▼"}
-    </span>
-  );
-
   return (
     <div className="p-5 space-y-4">
       {/* Header */}
@@ -326,7 +302,9 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
               ? `${fd?.total_equity ?? 0} ${t("markets.dimEquityTag")}`
               : dim === "futures"
                 ? `${fd?.total_futures ?? 0} ${t("markets.futPerp")}`
-                : `${data?.quote ?? "USDT"} ${t("markets.spotPairs", { total })}`}
+                : dim === "radar"
+                  ? t("markets.radarCounts", { ign: ign.length, tk: tk.length })
+                  : `${data?.quote ?? "USDT"} ${t("markets.spotPairs", { total })}`}
           </span>
         </div>
         <span className="prefix ml-auto">{t("markets.autoRefreshPrefix")} <span className="text-ink-dim tabular"><UpdatedAgo updatedAt={data?.updated_at} /></span></span>
@@ -340,6 +318,7 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
             ["spot", t("markets.dimSpot"), I.Market],
             ["futures", t("markets.dimFutures"), I.Bolt],
             ["equity", t("markets.dimEquity"), I.Star],
+            ["radar", t("markets.dimRadar"), I.Flame],
           ] as const).map(([key, label, Icon]) => (
             <button key={key} onClick={() => setDim(key)}
               className={`px-4 py-1.5 rounded-md font-mono text-[13px] tracking-wide transition-colors border flex items-center gap-1.5
@@ -463,67 +442,9 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
         </div>
       )}
 
-      {/* v1.5.3 现货行情：Hero 速览 + 双栏终端布局 */}
-      {dim === "spot" && (
+      {/* 妖币雷达独立维度页（v1.5.8：顶部单独 Tab，全宽展示，不再挤在现货双栏里） */}
+      {dim === "radar" && (
       <div className="space-y-4">
-      {/* Hero 大盘速览条：4 大币实时卡（含迷你走势）+ 全市场宽度 + 恐惧贪婪 */}
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-        {heroBase.map((b) => <HeroCoin key={b.symbol} base={b} />)}
-        <div className="glass p-3 flex flex-col gap-2 min-w-0" style={{ borderRadius: 12 }}>
-          <div className="flex items-center justify-between gap-1">
-            <span className="font-mono text-[11.5px] tracking-wider text-ink-mute">{t("markets.hero.breadth")}</span>
-            <span className="pill pill-dim text-[10.5px]">{t("markets.breadthTotal", { n: ov?.breadth?.total ?? 0 })}</span>
-          </div>
-          {ov?.breadth ? (
-            <>
-              <div className="flex items-baseline gap-1.5">
-                <span className="font-mono tabular text-[24px] font-semibold text-ink leading-none">{(ov.breadth.up_ratio * 100).toFixed(0)}%</span>
-                <span className="font-mono text-[11.5px] text-ink-mute">{t("markets.breadthUpRatio")}</span>
-              </div>
-              <div className="flex h-2 rounded overflow-hidden bg-line">
-                <div className="bg-green" style={{ flex: Math.max(0.0001, ov.breadth.up_ratio) }} />
-                <div className="bg-red/70" style={{ flex: Math.max(0.0001, 1 - ov.breadth.up_ratio) }} />
-              </div>
-              <div className="flex items-center justify-between font-mono text-[11px]">
-                <span className="text-green">{ov.breadth.advancers} {t("markets.breadthUp")}</span>
-                <span className={ov.breadth.extreme_count > 0 ? "text-gold font-semibold" : "text-ink-mute"}
-                  title={t("markets.breadthExtremeTitle")}>{t("markets.breadthExtreme")} ×{ov.breadth.extreme_count}</span>
-                <span className="text-red">{ov.breadth.decliners} {t("markets.breadthDown")}</span>
-              </div>
-            </>
-          ) : <div className="text-[12.5px] text-ink-dim font-mono">{t("markets.noData")}</div>}
-        </div>
-        {/* v1.5.4 恐惧贪婪指数卡（alternative.me，10min 后端缓存） */}
-        <div className="glass p-3 flex flex-col gap-2 min-w-0" style={{ borderRadius: 12 }}>
-          <div className="flex items-center justify-between gap-1">
-            <span className="font-mono text-[11.5px] tracking-wider text-ink-mute">{t("markets.fng.title")}</span>
-            <span className="pill pill-dim text-[10.5px]">alt.me</span>
-          </div>
-          {fng?.value != null ? (() => {
-            const v = Number(fng.value);
-            const txt = v <= 24 ? "text-red" : v <= 44 ? "text-gold" : v <= 55 ? "text-ink-dim" : "text-green";
-            const label = t(v <= 24 ? "markets.fng.z1" : v <= 44 ? "markets.fng.z2" : v <= 55 ? "markets.fng.z3" : v <= 75 ? "markets.fng.z4" : "markets.fng.z5");
-            return (
-              <>
-                <div className="flex items-baseline gap-2">
-                  <span className={`font-mono tabular text-[24px] font-semibold leading-none ${txt}`}>{v}</span>
-                  <span className={`font-mono text-[12px] ${txt}`}>{label}</span>
-                </div>
-                <div className="flex items-end gap-0.5 h-6" title={(fng.history ?? []).map((p: any) => p.value).join(" · ")}>
-                  {(fng.history ?? []).slice(-8).map((p: any, i: number) => (
-                    <div key={i} className={`flex-1 rounded-sm ${p.value <= 24 ? "bg-red/60" : p.value <= 44 ? "bg-gold/50" : p.value <= 55 ? "bg-ink-mute/40" : "bg-green/60"}`}
-                      style={{ height: `${Math.max(10, p.value)}%` }} />
-                  ))}
-                </div>
-              </>
-            );
-          })() : <div className="text-[12.5px] text-ink-dim font-mono">—</div>}
-        </div>
-      </div>
-
-      {/* v1.5.3 双栏终端布局：主区（雷达/追踪/异动/全市场） + 侧栏（费率/爆仓/多空/热度） */}
-      <div className="flex flex-col xl:flex-row gap-4 items-start w-full">
-        <div className="flex-1 min-w-0 space-y-4 w-full">
       <div className="glass overflow-hidden" style={{ borderRadius: 12 }}>
         <div className="px-4 pt-3.5 pb-2.5 space-y-2">
           <div className="flex items-center gap-2 flex-wrap">
@@ -605,7 +526,7 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
         )}
       </div>
 
-      {/* v1.5.2 妖币追踪：启动前发现 → 后续暴涨/暴跌结局验证 */}
+      {/* v1.5.2 妖币追踪：随雷达一起移入独立 Tab（启动前发现 → 后续暴涨/暴跌结局验证） */}
       {tracks && ((tracks.pending?.length ?? 0) + (tracks.history?.length ?? 0) > 0) && (
         <div className="glass overflow-hidden" style={{ borderRadius: 12 }}>
           <div className="px-4 pt-3.5 pb-1">
@@ -683,7 +604,70 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
           )}
         </div>
       )}
+      </div>
+      )}
 
+      {/* v1.5.3 现货行情：Hero 速览 + 双栏终端布局 */}
+      {dim === "spot" && (
+      <div className="space-y-4">
+      {/* Hero 大盘速览条：4 大币实时卡（含迷你走势）+ 全市场宽度 + 恐惧贪婪 */}
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+        {heroBase.map((b) => <HeroCoin key={b.symbol} base={b} />)}
+        <div className="glass p-3 flex flex-col gap-2 min-w-0" style={{ borderRadius: 12 }}>
+          <div className="flex items-center justify-between gap-1">
+            <span className="font-mono text-[11.5px] tracking-wider text-ink-mute">{t("markets.hero.breadth")}</span>
+            <span className="pill pill-dim text-[10.5px]">{t("markets.breadthTotal", { n: ov?.breadth?.total ?? 0 })}</span>
+          </div>
+          {ov?.breadth ? (
+            <>
+              <div className="flex items-baseline gap-1.5">
+                <span className="font-mono tabular text-[24px] font-semibold text-ink leading-none">{(ov.breadth.up_ratio * 100).toFixed(0)}%</span>
+                <span className="font-mono text-[11.5px] text-ink-mute">{t("markets.breadthUpRatio")}</span>
+              </div>
+              <div className="flex h-2 rounded overflow-hidden bg-line">
+                <div className="bg-green" style={{ flex: Math.max(0.0001, ov.breadth.up_ratio) }} />
+                <div className="bg-red/70" style={{ flex: Math.max(0.0001, 1 - ov.breadth.up_ratio) }} />
+              </div>
+              <div className="flex items-center justify-between font-mono text-[11px]">
+                <span className="text-green">{ov.breadth.advancers} {t("markets.breadthUp")}</span>
+                <span className={ov.breadth.extreme_count > 0 ? "text-gold font-semibold" : "text-ink-mute"}
+                  title={t("markets.breadthExtremeTitle")}>{t("markets.breadthExtreme")} ×{ov.breadth.extreme_count}</span>
+                <span className="text-red">{ov.breadth.decliners} {t("markets.breadthDown")}</span>
+              </div>
+            </>
+          ) : <div className="text-[12.5px] text-ink-dim font-mono">{t("markets.noData")}</div>}
+        </div>
+        {/* v1.5.4 恐惧贪婪指数卡（alternative.me，10min 后端缓存） */}
+        <div className="glass p-3 flex flex-col gap-2 min-w-0" style={{ borderRadius: 12 }}>
+          <div className="flex items-center justify-between gap-1">
+            <span className="font-mono text-[11.5px] tracking-wider text-ink-mute">{t("markets.fng.title")}</span>
+            <span className="pill pill-dim text-[10.5px]">alt.me</span>
+          </div>
+          {fng?.value != null ? (() => {
+            const v = Number(fng.value);
+            const txt = v <= 24 ? "text-red" : v <= 44 ? "text-gold" : v <= 55 ? "text-ink-dim" : "text-green";
+            const label = t(v <= 24 ? "markets.fng.z1" : v <= 44 ? "markets.fng.z2" : v <= 55 ? "markets.fng.z3" : v <= 75 ? "markets.fng.z4" : "markets.fng.z5");
+            return (
+              <>
+                <div className="flex items-baseline gap-2">
+                  <span className={`font-mono tabular text-[24px] font-semibold leading-none ${txt}`}>{v}</span>
+                  <span className={`font-mono text-[12px] ${txt}`}>{label}</span>
+                </div>
+                <div className="flex items-end gap-0.5 h-6" title={(fng.history ?? []).map((p: any) => p.value).join(" · ")}>
+                  {(fng.history ?? []).slice(-8).map((p: any, i: number) => (
+                    <div key={i} className={`flex-1 rounded-sm ${p.value <= 24 ? "bg-red/60" : p.value <= 44 ? "bg-gold/50" : p.value <= 55 ? "bg-ink-mute/40" : "bg-green/60"}`}
+                      style={{ height: `${Math.max(10, p.value)}%` }} />
+                  ))}
+                </div>
+              </>
+            );
+          })() : <div className="text-[12.5px] text-ink-dim font-mono">—</div>}
+        </div>
+      </div>
+
+      {/* v1.5.3 双栏终端布局：主区（异动/全市场） + 侧栏（费率/爆仓/多空/热度）；雷达/追踪已独立成「妖币雷达」Tab */}
+      <div className="flex flex-col xl:flex-row gap-4 items-start w-full">
+        <div className="flex-1 min-w-0 space-y-4 w-full">
       {/* 智能异动信号（全市场扫描） */}
       {data && data.signals && data.signals.length > 0 && (
         <div className="glass overflow-hidden" style={{ borderRadius: 12 }}>
@@ -703,58 +687,7 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
         </div>
       )}
 
-      {/* 全市场交易对表 */}
-      <div className="glass overflow-hidden" style={{ borderRadius: 12 }}>
-        {/* Toolbar */}
-        <div className="flex items-center gap-3 flex-wrap px-4 py-2.5 border-b border-line">
-          <div className="flex items-center gap-1.5">
-            {([["all", t("markets.all", { n: data?.total ?? 0 })], ["gainers", t("markets.gainers")], ["losers", t("markets.losers")]] as const).map(([key, label]) => (
-              <button key={key} onClick={() => switchTab(key)}
-                className={`px-3 py-1.5 rounded-md font-mono text-[13px] tracking-wider transition-colors border
-                  ${tab === key ? "bg-elevated text-gold border-line" : "border-transparent text-ink-dim hover:text-ink"}`}>
-                {label}
-              </button>
-            ))}
-          </div>
-          <div className="ml-auto relative">
-            <I.Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-mute" />
-            <input value={q} onChange={(e) => { setQ(e.target.value); setLimit(PAGE); }} placeholder={t("markets.searchPlaceholder")}
-              className="field pl-8 w-64 py-1.5" />
-          </div>
-        </div>
-
-        {/* Table head */}
-        <div className="grid items-center px-4 py-2.5 border-b border-line text-[11.5px] font-mono tracking-[0.08em] text-ink-dim select-none"
-          style={{ gridTemplateColumns: "1.7fr 1fr 1.1fr 1.2fr 1.4fr" }}>
-          <div>{t("markets.h.symbol")}</div>
-          <button onClick={() => toggleSort("price")} className="text-left hover:text-gold">{t("markets.h.price")} <Arrow on={sort.key === "price"} /></button>
-          <button onClick={() => toggleSort("change_pct")} className="text-left hover:text-gold">{t("markets.h.change")} <Arrow on={sort.key === "change_pct"} /></button>
-          <button onClick={() => toggleSort("quote_volume")} className="text-left hover:text-gold">{t("markets.h.quotevol")} <Arrow on={sort.key === "quote_volume"} /></button>
-          <div>{t("markets.h.range")}</div>
-        </div>
-
-        {loading && rows.length === 0 ? (
-          <div className="p-4 space-y-2">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="shimmer h-9" />)}</div>
-        ) : rows.length === 0 ? (
-          <div className="p-10 text-center text-ink-dim text-[14px]">
-            {q ? t("markets.searchEmpty", { total, q }) : t("markets.noData")}
-          </div>
-        ) : (
-          visible.map((r) => (
-            <SpotRow key={r.symbol} r={r} onDetail={openDetail("spot")} onAnalyze={onAnalyze} />
-          ))
-        )}
-
-        <div className="px-4 py-2.5 flex items-center justify-between font-mono text-[12px] text-ink-mute">
-          <span>{t("markets.sortPrefix")} {t(SORT_META[sort.key])} {sort.dir === -1 ? t("markets.sort.desc") : t("markets.sort.asc")} · {t("markets.sort.hint")}</span>
-          <div className="flex items-center gap-3">
-            <span>{t("markets.showing", { v: visible.length, r: rows.length, total, quote: data?.quote ?? "USDT" })}</span>
-            {visible.length < rows.length && (
-              <button onClick={() => setLimit((n) => n + PAGE)} className="text-gold hover:underline">{t("markets.loadMore", { n: PAGE })}</button>
-            )}
-          </div>
-        </div>
-      </div>
+      {/* v1.5.8 全市场交易对表已按需求移除（数据由雷达/异动/合约页承载） */}
 
         </div>
         {/* —— 主区结束 / 侧栏信息流 —— */}
@@ -851,20 +784,7 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
             </div>
           </div>
 
-          {/* 24h 成交额热度（bar 可视化） */}
-          <div className="glass p-4" style={{ borderRadius: 12 }}>
-            <div className="flex items-center gap-2 mb-2">
-              <I.Arrow size={14} className="text-gold" />
-              <span className="font-mono text-[13px] font-semibold tracking-wider text-ink">{t("markets.volumeTitle")}</span>
-              <span className="pill pill-dim ml-auto text-[11.5px]">24h</span>
-            </div>
-            <div className="space-y-1.5">
-              {(ov?.volume_top ?? []).map((v, i) => (
-                <VolHeatRow key={v.symbol} v={v} rank={i} maxVol={volMax} onTrade={onTrade} onAnalyze={onAnalyze} />
-              ))}
-              {(ov?.volume_top ?? []).length === 0 && <div className="text-[12.5px] text-ink-dim font-mono">{t("markets.noData")}</div>}
-            </div>
-          </div>
+          {/* 24h 成交额热度榜已按需求移除（v1.5.8） */}
         </div>
       </div>
       </div>

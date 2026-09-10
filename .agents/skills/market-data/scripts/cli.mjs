@@ -25,11 +25,11 @@ async function jget(path) {
     try {
       const res = await fetch(`http://127.0.0.1:${port}/api${path}`, { headers: H, signal: ctrl.signal });
       clearTimeout(timer);
-      if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`), { exitCode: 1 });
-      return await res.json();
+      if (res.ok) return await res.json();
+      // 非 200（401/404/5xx）也可能是「该端口被别的带鉴权服务占用」——换下一端口再试
+      lastErr = new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 160)}`);
     } catch (e) {
       clearTimeout(timer);
-      if (e?.exitCode === 1) throw e; // 后端在但业务错，不换端口
       lastErr = e;
     }
   }
