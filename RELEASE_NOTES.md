@@ -1,3 +1,26 @@
+# BAZZ.AGENT v1.5.11
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.11 更新要点（portable.zip 退役 · setup.exe 成为唯一全量包）
+
+### 1. Release 精简
+- portable.zip 不再生成/发布：Release 资产只剩 **setup.exe + delta-<ver>.zip + SHA256SUMS + MANIFEST.json**
+- 增量差分（delta）不受影响——它的基线是上一版 MANIFEST.json 清单对比，从来不依赖上一版 zip
+
+### 2. 应用内自更新回退路径切换
+- delta 被跳过时（版本跨太大/变化超 60%/超 120MB），全量回退从「下载 portable.zip 整目录替换」改为「**下载 setup.exe 静默安装**」：
+  - `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOCANCEL /DIR=<当前安装根>` 原地覆盖
+  - 安装器无 [InstallDelete]、workspace 不在 [Files] 清单 → **用户数据天然保留**，无需备份/还原
+  - 安装完成自动校验新 exe 并重启；SHA256SUMS 强校验不变
+- 静默安装先等应用退出并释放文件锁；setup.exe 会先挪出安装根，避免边读边写
+
+### 3. 兼容性说明
+- 从 v1.5.10 及更早版本升级到本版：走 delta（正常）或旧逻辑整包替换（最后一次用 portable.zip）均不受影响；**此后**的更新全部走新链路
+- 便携解压目录（无注册表安装记录）更新时 /DIR 强制指回当前目录，不会装到默认路径
+
+---
+
 # BAZZ.AGENT v1.5.10
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**

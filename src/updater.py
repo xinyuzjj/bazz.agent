@@ -3,7 +3,7 @@
 版本源：
   · 本地：<APP_DIR>/BAZZ_VERSION.txt（打包时 build-desktop.js 写入；冻结态 = ScoutBackend 目录）
           dev 回退到 <APP_DIR>/package.json 的 version 字段
-  · 远端：GitHub Releases latest（xinyuzjj/bazz.agent，资产含 win32-x64-portable.zip）
+  · 远端：GitHub Releases latest（xinyuzjj/bazz.agent，资产含 v<版本>-setup.exe 全量包 + delta 差分包）
 
 v1.2.13 设计要点（吸取 v1.2.10「完全无效」教训）：
   1. 修复替换路径：旧代码把 root（应用目录本身）当成父目录，`root/BAZZ.AGENT-win32-x64`
@@ -44,9 +44,12 @@ import workspace
 GITHUB_REPO = "xinyuzjj/bazz.agent"
 GITHUB_API = os.environ.get("BAZZ_GH_API") or "https://api.github.com"
 RELEASE_URL = f"{GITHUB_API}/repos/{GITHUB_REPO}/releases/latest"
-FOLDER_NAME = "BAZZ.AGENT-win32-x64"      # zip 顶层目录 + 替换后新应用目录名（build-desktop.js 契约）
+FOLDER_NAME = "BAZZ.AGENT-win32-x64"      # delta 重建 zip 的顶层目录名（build-desktop.js 契约）
 EXE_NAME = "BAZZ.AGENT.exe"
-ASSET_HINT = "win32-x64-portable.zip"
+# v1.5.11：Release 全量包只发 setup.exe（portable.zip 退役）。更新器全量回退 = 静默安装：
+# 下载 setup.exe → SHA256 校验 → /VERYSILENT /DIR=<当前安装根> 原地覆盖（workspace 不在安装器
+# 内容清单里，[InstallDelete] 不存在 → 用户数据天然保留）→ 重启。
+ASSET_SUFFIX = "-setup.exe"
 CHECKSUM_ASSET = "SHA256SUMS"
 MANIFEST_ASSET = "MANIFEST.json"        # 全量文件清单（path -> {s, h}），更新完整性校验的真相源
 DELTA_ASSET_PREFIX = "delta-"           # 差分包资产前缀：delta-<ver>.zip（相对上一版的变化文件）
@@ -164,9 +167,10 @@ def fetch_latest(timeout: float = 12.0) -> dict:
 
 
 def _pick_asset(rel: dict) -> dict:
+    """全量包资产：v1.5.11 起只认 setup.exe（portable.zip 已退役）。"""
     for a in rel.get("assets", []) or []:
-        name = a.get("name", "")
-        if ASSET_HINT in name and name.lower().endswith(".zip"):
+        name = (a.get("name", "") or "").lower()
+        if name.endswith(ASSET_SUFFIX):
             return a
     return {}
 
@@ -298,7 +302,11 @@ def _diff_worker(rel: dict, dest: str, url: str):
          app_root 未变文件——边写边算 sha256 与清单比对，任一不符即失败。
       4. 结构校验通过 → 替换为最终 zip，标记 ready 并记入 _PATCH_BUILT。
       任一环节失败 → 抛 _DiffFallback / 对应元数据缺失 → 由调用方回退整包。
+    v1.5.11：全量资产已改为 setup.exe（dest 以 .exe 结尾），差分重建产物仍必须是
+    zip（apply 按扩展名分流）—— 产物名从 <name>.exe 改写为 <name>.zip。
     """
+    if dest.lower().endswith(".exe"):
+        dest = dest[:-4] + ".zip"
     tmp = dest + ".part"
     try:
         _PATCH_BUILT.discard(dest)
@@ -573,7 +581,9 @@ def _download_worker(url: str, dest: str):
             if requests is None:
                 raise RuntimeError("缺少 requests 依赖，无法下载。")
             _download_once(url, dest, tmp)
-            if not _zip_layout_ok(tmp):
+            # v1.5.11：全量包可能是 setup.exe（无 zip 顶层结构，大小校验已在 _download_once 做）；
+            # zip 包才做顶层结构校验。exe 的完整性由 apply 阶段 SHA256 强校验兜底。
+            if dest.lower().endswith(".zip") and not _zip_layout_ok(tmp):
                 # 完整但结构坏：不能续传，清掉让下一轮重头下
                 try:
                     os.remove(tmp)
@@ -797,6 +807,79 @@ def _path_inside(child: str, parent: str) -> bool:
         return False
 
 
+def _write_installer_script(setup_path: str, wait_pid: int, backend_pid: int) -> str:
+    """生成 setup.exe 静默安装更新脚本（v1.5.11，portable.zip 退役后的全量回退路径）。
+
+    逻辑：等 Electron 退出 → 杀残留后端 → setup.exe 挪出安装根（防边读边写）→
+    /VERYSILENT /DIR=<当前安装根> 原地覆盖（installer.iss 无 [InstallDelete]、workspace
+    不在 [Files] 清单 → 用户数据不动）→ 校验新 exe → 清理 → 重启。
+    """
+    root = app_root()
+    parent = os.path.dirname(root)
+    exe = os.path.join(root, EXE_NAME)
+    # 安装器边读 setup.exe 边往安装根写文件，setup 在 update-cache（安装根内）时先挪到父目录
+    setup_bak = setup_path if not _path_inside(setup_path, root) else \
+        os.path.join(parent, ".bazz-setup-tmp.exe")
+    log = _log_path()
+    log_cmd = ("Add-Content -Path '{log}' -Value ('[' + (Get-Date -Format o) + '] ' + $msg) "
+               "-Encoding UTF8").replace("{log}", _ps1_quote(log))
+
+    script = """$ErrorActionPreference = 'Continue'
+function L($msg) {{ {L_BODY} }}
+$oldRoot = '{root}'
+$newExe  = '{newExe}'
+$setup   = '{setup}'
+$setupBak = '{setupBak}'
+$waitPid = {wait}
+$backendPid = {backend}
+L '--- installer updater start ---'
+# 1) 等 Electron 主进程退出（安装器 CloseApplications 也会兜底关闭）
+if ($waitPid -gt 0) {{
+  $gone = $false
+  for ($i = 0; $i -lt 90; $i++) {{
+    if (-not (Get-Process -Id $waitPid -ErrorAction SilentlyContinue)) {{ $gone = $true; break }}
+    Start-Sleep -Seconds 2
+  }}
+  if (-not $gone) {{ L 'ERR wait-electron-timeout'; exit 3 }}
+}}
+# 2) 杀残留后端 / 双开实例（释放文件锁）
+if ($backendPid -gt 0) {{ Stop-Process -Id $backendPid -Force -ErrorAction SilentlyContinue }}
+Get-Process -Name 'BAZZ.AGENT','ScoutBackend' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 1
+# 3) 前置校验 + 挪出安装根
+if (-not (Test-Path -LiteralPath $setup)) {{ L 'ERR setup-missing'; exit 4 }}
+if ($setupBak -ne $setup) {{
+  try {{ Move-Item -LiteralPath $setup -Destination $setupBak -Force -ErrorAction Stop; $setup = $setupBak; L 'setup relocated out of root' }}
+  catch {{ L ('ERR setup-relocate: ' + $_.Exception.Message) }}
+}}
+# 4) 静默安装：原地覆盖（/DIR 固定当前安装根，防便携解压目录无注册表记录时跑到默认路径）
+L 'silent install start'
+$dirArg = '/DIR="' + $oldRoot + '"'
+$p = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCANCEL',$dirArg -Wait -PassThru
+L ('installer exit code: ' + $p.ExitCode)
+if ($p.ExitCode -ne 0) {{ L 'ERR install-failed'; exit 6 }}
+if (-not (Test-Path -LiteralPath $newExe)) {{ L 'ERR new-exe-missing'; exit 7 }}
+L 'install ok'
+# 5) 清理安装包与更新缓存
+try {{
+  Remove-Item -LiteralPath $setup -Force -ErrorAction SilentlyContinue
+  Get-ChildItem -Path (Join-Path $oldRoot 'update-cache') -Include *.zip,*.exe -Recurse -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+}} catch {{}}
+# 6) 重启新版本
+try {{
+  Start-Process -FilePath $newExe -WorkingDirectory $oldRoot
+  L 'relaunch ok'
+}} catch {{ L ('ERR relaunch: ' + $_.Exception.Message); exit 8 }}
+""".format(L_BODY=log_cmd,
+           root=_ps1_quote(root), newExe=_ps1_quote(exe),
+           setup=_ps1_quote(setup_path), setupBak=_ps1_quote(setup_bak),
+           wait=int(wait_pid), backend=int(backend_pid))
+    ps1 = os.path.join(update_cache_dir(), "apply-update-setup.ps1")
+    with open(ps1, "w", encoding="utf-8-sig") as f:
+        f.write(script)
+    return ps1
+
+
 def apply(zip_path: str, wait_pid: int = 0) -> dict:
     """生成脚本并以 DETACHED 进程启动。仅打包态允许。"""
     if not is_packaged():
@@ -812,15 +895,17 @@ def apply(zip_path: str, wait_pid: int = 0) -> dict:
         return {"ok": False, "error": "更新包不存在，请先完成下载。", "log": _log_path()}
     root = app_root()
     log = _log_path()
+    is_setup = zip_path.lower().endswith(".exe")   # v1.5.11：全量回退包 = setup.exe 静默安装
     try:
-        # 应用前再确认一次包结构，避免解压到一半才发现包坏
-        if not _zip_layout_ok(zip_path):
+        # 应用前再确认一次包结构（仅 zip；exe 的完整性由下方 SHA256 强校验兜底），
+        # 避免解压到一半才发现包坏
+        if not is_setup and not _zip_layout_ok(zip_path):
             return {"ok": False, "error": "更新包结构异常（未找到 BAZZ.AGENT-win32-x64 顶层目录），请重新下载。",
                     "log": log}
         # SHA256 校验（防下载包被篡改/损坏）：
         #   · 本地「增量差分」构建的 zip → 构建时已逐文件校验清单 sha，整包 blob 与官方不同，
         #     直接跳过整包比对。
-        #   · 官方整包下载 → 能从官 release 拿到校验和就强校验，不符即中止。
+        #   · 官方整包（zip / setup.exe）→ 能从官 release 拿到校验和就强校验，不符即中止。
         #   拿不到（网络抖动 / 旧 release 未挂 SHA256SUMS）则仅忽略，不阻塞正常更新。
         if os.path.abspath(zip_path) in _PATCH_BUILT:
             print(f"[updater] 本地增量构建包，跳过整包 SHA256（逐文件校验已通过）：{zip_path}")
@@ -837,7 +922,8 @@ def apply(zip_path: str, wait_pid: int = 0) -> dict:
                     print(f"[updater] SHA256 校验通过：{zip_path}")
             except Exception as e:
                 print(f"[updater] 校验和获取失败，跳过校验：{e}")
-        ps1 = _write_updater_script(zip_path, int(wait_pid or 0), os.getpid())
+        ps1 = (_write_installer_script(zip_path, int(wait_pid or 0), os.getpid()) if is_setup
+               else _write_updater_script(zip_path, int(wait_pid or 0), os.getpid()))
     except Exception as e:
         return {"ok": False, "error": f"生成更新脚本失败：{e}", "log": log}
     flags = 0x00000008 | 0x00000200 | 0x08000000   # DETACHED_PROCESS|CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW

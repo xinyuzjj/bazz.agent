@@ -1,11 +1,13 @@
 # ============================================================
-# BAZZ.AGENT — Windows 便携版自动打包 & Release 发布
+# BAZZ.AGENT — Windows 安装包自动打包 & Release 发布
 #   触发：
 #     · push tag v*        （推荐：git tag v1.2.3 && git push origin v1.2.3）
 #     · workflow_dispatch  （手动，可填版本号，默认 1.2.3）
-#   产物：BAZZ.AGENT-v<版本>-win32-x64-portable.zip → 同名 Release（Latest）
+#   产物：BAZZ.AGENT-v<版本>-setup.exe（全量，唯一分发/更新包）
+#         + delta-<ver>.zip（增量）+ SHA256SUMS + MANIFEST.json → 同名 Release（Latest）
+#   v1.5.11：portable.zip 退役（更新器全量回退改为 setup.exe 静默安装）
 # ============================================================
-name: release-portable
+name: release-setup
 
 on:
   push:
@@ -31,7 +33,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: 计算版本 / tag / zip 路径
+      - name: 计算版本 / tag / 包路径
         shell: pwsh
         run: |
           $raw = ""
@@ -44,9 +46,9 @@ jobs:
           $v = $raw.TrimStart('v')
           Add-Content -Path $env:GITHUB_ENV -Value "BAZZ_VERSION=$v"
           Add-Content -Path $env:GITHUB_ENV -Value "BAZZ_TAG=v$v"
-          Add-Content -Path $env:GITHUB_ENV -Value "BAZZ_ZIP=$env:BAZZ_STAGE/BAZZ.AGENT-v$v-win32-x64-portable.zip"
+          Add-Content -Path $env:GITHUB_ENV -Value "BAZZ_SETUP=$env:BAZZ_STAGE/dist_desktop/BAZZ.AGENT-v$v-setup.exe"
           Write-Host "BAZZ_VERSION=$v  BAZZ_TAG=v$v"
-          Write-Host "BAZZ_ZIP=$env:BAZZ_STAGE/BAZZ.AGENT-v$v-win32-x64-portable.zip"
+          Write-Host "BAZZ_SETUP=$env:BAZZ_STAGE/dist_desktop/BAZZ.AGENT-v$v-setup.exe"
 
       - name: Setup Python 3.11
         uses: actions/setup-python@v6
@@ -121,11 +123,12 @@ jobs:
         run: |
           npm install --no-save --no-package-lock @electron/packager@20.3.0
 
-      - name: 组装桌面便携版并打 zip
+      - name: 组装桌面应用目录（setup.exe 输入源）
         shell: pwsh
         run: |
           node build-desktop.js
-          if (-not (Test-Path $env:BAZZ_ZIP)) { throw "便携 zip 未生成: $env:BAZZ_ZIP" }
+          $dir = "$env:BAZZ_STAGE/dist_desktop/BAZZ.AGENT-win32-x64"
+          if (-not (Test-Path "$dir/BAZZ.AGENT.exe")) { throw "打包目录未生成: $dir" }
 
       - name: 安装 Inno Setup 6
         shell: pwsh
@@ -147,12 +150,11 @@ jobs:
       - name: 生成 SHA256SUMS 校验和
         shell: pwsh
         run: |
-          $zip = $env:BAZZ_ZIP
-          $setup = "$env:BAZZ_STAGE/dist_desktop/BAZZ.AGENT-v$env:BAZZ_VERSION-setup.exe"
-          $dir = Split-Path $zip -Parent
+          $setup = $env:BAZZ_SETUP
+          $dir = Split-Path $setup -Parent
           $sums = Join-Path $dir "SHA256SUMS"
           if (Test-Path $sums) { Remove-Item $sums -Force }
-          Get-FileHash -Algorithm SHA256 -LiteralPath $zip, $setup | ForEach-Object {
+          Get-FileHash -Algorithm SHA256 -LiteralPath $setup | ForEach-Object {
             "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf)
           } | Set-Content -LiteralPath $sums -Encoding ascii
           Write-Host "=== SHA256SUMS ==="
@@ -246,10 +248,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $tag = $env:BAZZ_TAG
-          $zip = $env:BAZZ_ZIP
-          $setup = "$env:BAZZ_STAGE/dist_desktop/BAZZ.AGENT-v$env:BAZZ_VERSION-setup.exe"
-          $sums = Join-Path (Split-Path $env:BAZZ_ZIP -Parent) "SHA256SUMS"
-          $assets = @($zip, $setup, $sums, "$env:BAZZ_STAGE/dist_desktop/MANIFEST.json")
+          $setup = $env:BAZZ_SETUP
+          $sums = Join-Path (Split-Path $setup -Parent) "SHA256SUMS"
+          $assets = @($setup, $sums, "$env:BAZZ_STAGE/dist_desktop/MANIFEST.json")
           $delta = "$env:BAZZ_STAGE/dist_desktop/delta-$env:BAZZ_VERSION.zip"
           if (Test-Path $delta) { $assets += $delta }
           # 介绍只放「当前版本」的更新内容：从 RELEASE_NOTES.md 截取 ## 标题含 v<版本> 的小节
