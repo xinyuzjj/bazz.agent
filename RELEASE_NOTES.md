@@ -1,3 +1,21 @@
+# BAZZ.AGENT v1.5.10
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.10 更新要点（Agent ↔ 技能链路健壮性）
+
+### 1. run_skill 超时与截断放宽
+- 超时 90s → **180s**：coin-report 一次拉 90 日 K 线 + 费率 + OI + 多空比 + 恐惧贪婪 + 战绩，后端冷缓存 / 慢代理时 90 秒跑不完会超时失败（表现即「分析失败」）
+- 输出截断 6000 → **12000** 字符：market-data `klines limit=90` 的 JSON 约 8KB，旧上限会截断导致模型拿残缺数据硬分析
+
+### 2. 直跑技能 CLI 的报错指引
+- 模型绕过 run_skill 用 run_command 直跑 `.agents/skills/*/scripts/cli.mjs` 时，报错从「命令不在白名单」改为明确指引「已安装技能请用 run_skill 工具执行」——减少无效重试轮次
+
+### 3. 审计确认（无改动）
+- 技能 CLI 落盘位置（妖币/复盘 目录）经沙箱 cwd 锚定 workspace，正确；雷达价格纯 WS 快照零外呼；追踪状态机除零/爆仓优先/过期守卫齐全
+
+---
+
 # BAZZ.AGENT v1.5.9
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**

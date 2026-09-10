@@ -771,6 +771,10 @@ def _run_one(command: str, timeout: int, max_out: int) -> dict:
     toks = _tokenize(command)
     exe0, exe_abs = _resolve_exe0(toks[0])
     if exe0 is None:
+        low = toks[0].lower()
+        if "skills" in low and low.endswith("cli.mjs"):
+            # 模型绕过 run_skill 直跑技能 CLI：给出可执行的正确姿势，减少无效重试轮次
+            raise SandboxError(f"已安装技能请用 run_skill 工具执行（skill_name=技能名, args=参数串），不要用 run_command 直跑: {toks[0]}")
         raise SandboxError(f"命令不在白名单（{', '.join(sorted(ALLOWED_EXE))}）: {toks[0]}")
     lower = command.lower()
     for pat in FORBIDDEN_PATTERNS:
@@ -858,9 +862,10 @@ def run_command(command: str, timeout: int = DEFAULT_TIMEOUT, max_out: int = DEF
             "cmd": command, "elapsed": round(time.time() - t0, 2)}
 
 
-def run_skill_cmd(skill_name: str, args: str = "", timeout: int = 90, max_out: int = 6000) -> dict:
+def run_skill_cmd(skill_name: str, args: str = "", timeout: int = 180, max_out: int = 12000) -> dict:
     """执行 skill（复用 skills_client 的智能路由：baw 扩展 / launcher 绕 Windows dispatch / 直跑）。
-    超时 90s（baw 冷启动/网络慢）。"""
+    超时 180s（coin-report 一次拉 90d K 线+费率+OI+多空+情绪，后端冷缓存/慢代理时 90s 不够）；
+    max_out 12000（market-data klines 90 根 JSON 约 8KB，6000 会截断）。"""
     import skills_client
     sdir = os.path.join(skills_client.AGENTS_DIR, skill_name)
     cli = os.path.join(sdir, "scripts", "cli.mjs")
