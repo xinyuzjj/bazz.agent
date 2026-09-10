@@ -1,3 +1,27 @@
+# BAZZ.AGENT v1.5.6
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.6 更新要点（技能库完善 + 安装残留根治）
+
+### 1. Agent 技能再添两件（研究侧能力补全）
+- **portfolio-review**：资产快照 + 周期复盘——币安 CEX 非零余额估值、近 N 天真实成交统计（买卖笔数 / 金额 / 净流向 / 分币种）、挂单与订单跟踪，Markdown 周报落盘 `workspace/复盘/`
+- **news-sentiment**：加密新闻抓取 + 关键词情绪统计（零 Key）——中文快讯（PANews）+ 英文头条（CoinDesk / Cointelegraph RSS），latest / coin / sentiment 三命令，可与分析技能组合补消息面
+
+### 2. 技能库「内置技能」分组
+- 6 个随应用分发的本地技能（market-data / coin-report / track-monitor / risk-guard / portfolio-review / news-sentiment）在技能库独立分组展示：金色「内置」标签、预设一键命令、随版本更新、不可移除（后端拦截）
+- 中英文案齐全，总安装计数包含内置技能
+
+### 3. 技能安装/更新残留根治
+- 启动与每次安装/更新后自动清理 skills CLI 异常残留：悬空 junction、指向 `.agents/.agents` 坏商店的联接、嵌套商店本体；好目录与有效联接一律不动
+- junction 检测改用 `os.readlink`（Python 3.11 打包版兼容，原 `os.path.isjunction` 是 3.12 API 会静默失效）
+- 安装命令成功 ≠ 落地：安装后校验 SKILL.md 存在，下载被网络拦截时报错引导检查代理
+
+### 4. 版本号修复
+- 顶栏版本号此前硬编码「v2.4.9」，现从 package.json 构建时注入真实版本（v1.5.6）
+
+---
+
 # BAZZ.AGENT v1.5.4
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
