@@ -8,6 +8,7 @@ Skills Hub: https://www.binance.com/en/skills
   不存在 "npx skills run"（skills CLI 无 run 子命令）！
 """
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -150,6 +151,95 @@ def list_installed() -> list:
     return sorted([d for d in os.listdir(AGENTS_DIR) if os.path.isdir(os.path.join(AGENTS_DIR, d))])
 
 
+# ---------------- v1.5.6：本地内置技能（非官方 catalog）+ 安装残留清理 ----------------
+
+def _md_meta(skill_dir: str) -> tuple:
+    """从 SKILL.md frontmatter 提取 (title, desc)：title 用 name 字段或目录名，desc 用 description 首段。"""
+    name = os.path.basename(skill_dir.rstrip("\\/"))
+    desc = ""
+    md = os.path.join(skill_dir, "SKILL.md")
+    try:
+        txt = open(md, encoding="utf-8", errors="replace").read(4000)
+        mt = re.search(r"^name:\s*(.+?)\s*$", txt, re.M)
+        if mt:
+            name = mt.group(1).strip() or name
+        mdesc = re.search(r"^description:\s*\|?\s*\n((?:[ \t]+.+\n?)+)", txt, re.M)
+        if mdesc:
+            desc = " ".join(ln.strip() for ln in mdesc.group(1).splitlines())
+            desc = re.sub(r"\s+", " ", desc)[:180]
+    except OSError:
+        pass
+    return name, desc
+
+
+# v1.5.6 本地内置技能（随应用打包分发，禁止通过 API 移除）
+BUILTIN_SKILLS = {
+    "market-data", "coin-report", "track-monitor",
+    "risk-guard", "portfolio-review", "news-sentiment",
+}
+
+
+def builtin_skills() -> dict:
+    """本地内置技能：.agents/skills 下有 SKILL.md 但不在官方 SKILL_CATALOG 的目录（随应用打包分发）。"""
+    out = {}
+    for d in list_installed():
+        if d in SKILL_CATALOG or not os.path.isfile(os.path.join(AGENTS_DIR, d, "SKILL.md")):
+            continue
+        title, desc = _md_meta(os.path.join(AGENTS_DIR, d))
+        out[d] = {
+            "group": "builtin", "name": d, "title": title, "desc": desc or f"内置技能 {d}",
+            "url": "", "kind": "builtin",
+        }
+    return out
+
+
+def _cleanup_install_junk() -> None:
+    """清理 skills CLI 安装/更新异常残留（v1.5.6）：
+    1) .agents/skills 下的悬空 junction（更新时 skills CLI 把旧目录挪进 .agents/.agents/skills/
+       再建 junction 指过去，下载失败（无代理）→ 商店为空、junction 悬空，git /打包读不到）
+    2) 指向 .agents/.agents 嵌套商店的有效 junction（路径拼接 bug 产物）
+    3) .agents/.agents 嵌套商店本体
+    好目录 / 指向有效目标的普通 junction 一律不动。
+    注意：junction 检测用 os.readlink（3.8+ 支持 junction，且目标缺失也能读出），
+    不用 os.path.isjunction（3.12 才有，Python 3.11 打包版会静默失效）。"""
+    def _islink(p: str) -> bool:
+        try:
+            os.readlink(p)
+            return True
+        except OSError:
+            return False
+
+    def _link_target(p: str) -> str:
+        try:
+            t = os.readlink(p)
+        except OSError:
+            return ""
+        # junction 目标可能是相对路径（skills CLI 产物）→ 锚定父目录解析
+        return t if os.path.isabs(t) else os.path.normpath(os.path.join(os.path.dirname(p), t))
+
+    nested = os.path.join(os.path.dirname(AGENTS_DIR), ".agents")
+    try:
+        if os.path.isdir(nested):
+            shutil.rmtree(nested, ignore_errors=True)   # 嵌套坏商店先清掉 → 指向它的 junction 全部悬空
+        if not os.path.isdir(AGENTS_DIR):
+            return
+        for name in os.listdir(AGENTS_DIR):
+            p = os.path.join(AGENTS_DIR, name)
+            try:
+                if not _islink(p):
+                    continue                             # 正常目录/文件不动
+                tgt = _link_target(p)
+                if not tgt or not os.path.exists(tgt):
+                    os.rmdir(p)                          # 悬空 junction → 只摘联接本身
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
+_cleanup_install_junk()   # 应用每次启动（import）顺带清扫一次
+
+
 def get_skill_info(skill_name: str) -> dict:
     info = dict(SKILL_CATALOG.get(skill_name, {}))
     info["installed"] = skill_name in list_installed()
@@ -227,6 +317,12 @@ def get_catalog() -> dict:
         entry["installed"] = k in installed
         entry["wallet_skill"] = k in WALLET_SKILLS
         catalog[k] = entry
+    # v1.5.6：本地内置技能（market-data / coin-report / track-monitor / risk-guard / portfolio-review / news-sentiment …）
+    for k, v in builtin_skills().items():
+        entry = dict(v)
+        entry["installed"] = True
+        entry["wallet_skill"] = False
+        catalog[k] = entry
     return catalog
 
 
@@ -242,17 +338,26 @@ def install_skill(skill_key: str) -> dict:
     try:
         # cwd 锚定 .agents 的父目录：打包态 AGENTS_DIR 在 _internal/.agents，若跟随进程
         # cwd（ScoutBackend/）会把技能装到后端读不到的位置（v1.3.9 修复）
+        _cleanup_install_junk()   # 先清残留，避免旧 junction 干扰安装
         proc = subprocess.run(
             _npx_cmd() + ["skills", "add", url, "-y"],
             capture_output=True, text=True, timeout=240,
             cwd=os.path.dirname(os.path.abspath(AGENTS_DIR)),
         )
-        return {
+        r = {
             "status": "ok" if proc.returncode == 0 else "error",
             "skill": skill_key,
             "stdout": proc.stdout[-1500:],
             "stderr": proc.stderr[-1500:],
         }
+        _cleanup_install_junk()   # 更新流程先删旧目录再下载，失败会留悬空 junction / 嵌套商店
+        # v1.5.6：命令成功 ≠ 真实落地 —— 校验 SKILL.md 存在，否则报错引导检查网络/代理
+        target = os.path.join(AGENTS_DIR, skill_key, "SKILL.md")
+        if r["status"] == "ok" and not os.path.isfile(target):
+            r = {"status": "error", "skill": skill_key,
+                 "detail": "安装命令成功但技能目录未落地（常见原因：下载被网络拦截 / 更新中断）。"
+                           "请检查代理池后重试；技能库会在下次启动时自动清理残留。"}
+        return r
     except Exception as e:
         return {"status": "error", "detail": str(e)}
 
@@ -359,6 +464,8 @@ def remove_skill(skill_key: str) -> dict:
     key = (skill_key or "").strip()
     if not key or "/" in key or ".." in key or "\\" in key:
         return {"status": "error", "detail": "非法的 skill 名称"}
+    if key in BUILTIN_SKILLS:
+        return {"status": "error", "detail": f"{key} 是随应用分发的内置技能，不可移除"}
     target = os.path.join(AGENTS_DIR, key)
     if not os.path.isdir(target):
         return {"status": "error", "detail": f"未安装：{key}"}

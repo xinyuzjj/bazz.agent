@@ -12,10 +12,11 @@ import { useT } from "../i18n/i18n";
  * 不存在 npx skills run —— 那是错误用法。
  */
 
-type Skill = { name: string; title: string; desc: string; group: string; installed: boolean; wallet_skill?: boolean; url?: string };
+type Skill = { name: string; title: string; desc: string; group: string; installed: boolean; wallet_skill?: boolean; url?: string; kind?: string };
 
-const GROUP_ORDER = ["binance-web3", "binance"];
+const GROUP_ORDER = ["builtin", "binance-web3", "binance"];
 const GROUP_TITLES: Record<string, string> = {
+  "builtin": "skills.group.builtin",
   "binance-web3": "skills.group.binance-web3",
   "binance": "skills.group.binance",
 };
@@ -33,6 +34,40 @@ const NO_CLI: Record<string, string> = {
 
 // 可执行技能：预设真实命令（shell 风格，JSON 紧凑）
 const PRESETS: Record<string, { label: string; cmd: string }[]> = {
+  // v1.5.6 内置技能（本地 cli.mjs，随应用分发）
+  "market-data": [
+    { label: "WLD 一键分析包", cmd: "bundle WLDUSDT" },
+    { label: "BTC 90 天日K", cmd: "klines BTCUSDT 1d 90 spot" },
+    { label: "SOL 4h K 线", cmd: "klines SOLUSDT 4h 48 futures" },
+    { label: "恐惧贪婪指数", cmd: "fng" },
+    { label: "合约持仓量", cmd: "oi BTCUSDT,ETHUSDT,SOLUSDT" },
+    { label: "大户多空比", cmd: "longshort BTCUSDT" },
+    { label: "爆仓流", cmd: "liq" },
+    { label: "市场综述", cmd: "overview" },
+  ],
+  "coin-report": [
+    { label: "WLD 研报", cmd: "WLDUSDT" },
+    { label: "SOL 研报", cmd: "SOLUSDT" },
+    { label: "BTC 研报", cmd: "BTCUSDT" },
+  ],
+  "track-monitor": [
+    { label: "复查全部追踪（±15%）", cmd: "check 15" },
+    { label: "严格预警（±8%）", cmd: "check 8" },
+  ],
+  "risk-guard": [
+    { label: "仓位计算示例", cmd: "plan 1000 1 0.42 0.38 5" },
+    { label: "当前敞口检查", cmd: "check" },
+  ],
+  "portfolio-review": [
+    { label: "资产快照", cmd: "snap" },
+    { label: "近 7 天复盘周报", cmd: "week 7" },
+    { label: "近 30 天复盘", cmd: "week 30" },
+  ],
+  "news-sentiment": [
+    { label: "最新新闻", cmd: "latest 15" },
+    { label: "BTC 相关新闻", cmd: "coin BTC" },
+    { label: "市场情绪统计", cmd: "sentiment 30" },
+  ],
   "binance-agentic-wallet": [
     { label: "账户状态", cmd: "wallet status" },
     { label: "代币余额", cmd: "wallet balance --json" },
@@ -94,6 +129,12 @@ const PRESETS: Record<string, { label: string; cmd: string }[]> = {
 };
 
 const FREE_HINTS: Record<string, string> = {
+  "market-data": "例如 bundle WLDUSDT · klines ETHUSDT 1d 90 spot · oi BTCUSDT · fng",
+  "coin-report": "例如 WLDUSDT（研报落盘 workspace/妖币/）",
+  "track-monitor": "例如 check 15（阈值 %）",
+  "risk-guard": "例如 plan 1000 1 0.42 0.38 5 · check",
+  "portfolio-review": "例如 snap · week 7",
+  "news-sentiment": "例如 latest 15 · coin BTC · sentiment 30",
   "binance-agentic-wallet": "例如 wallet balance --json · prediction market list --json · defi investment-list --investType Earn --json · approvals list --json · contract-call preview --json",
   "meme-rush": "例如 meme-rush '{\"chainId\":\"CT_501\",\"rankType\":10}'",
   "query-token-info": "例如 search '{\"keyword\":\"BNB\"}'",
@@ -141,8 +182,8 @@ export function Web3SkillsView() {
     try {
       const d: any = await api.skills();
       const list: Skill[] = Array.isArray(d) ? d : [];
-      // 只保留官方 catalog（binance / binance-web3），去掉 hermes-ref / 其它
-      setSkills(list.filter((s: any) => (s.group === "binance-web3" || s.group === "binance")));
+      // 官方 catalog（binance / binance-web3）+ 本地内置技能（builtin, v1.5.6）
+      setSkills(list.filter((s: any) => (s.group === "binance-web3" || s.group === "binance" || s.group === "builtin")));
     } catch (e: any) { setErr(e?.message ?? String(e)); }
   };
   useEffect(() => { load(); }, []);
@@ -232,6 +273,7 @@ export function Web3SkillsView() {
                   <I.Grid size={13} className="text-gold" />
                   <span className="font-mono text-[12px] tracking-wider text-ink">{t(GROUP_TITLES[g] ?? g)}</span>
                   <span className="pill pill-dim">{t("skills.installedCount", { n: inst, m: items.length })}</span>
+                  {g === "builtin" && <span className="prefix ml-auto">{t("skills.builtinNote")}</span>}
                   {g === "binance-web3" && <span className="prefix ml-auto">{t("skills.walletSkillNote")}</span>}
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-2.5">
@@ -245,6 +287,7 @@ export function Web3SkillsView() {
                         <div className="text-[11px] text-ink-dim mt-1.5 leading-relaxed min-h-[30px]">{s.desc}</div>
                       </button>
                       <div className="mt-2 flex items-center gap-1.5">
+                        {s.kind === "builtin" && <span className="pill pill-gold text-[9.5px]">{t("skills.builtinTag")}</span>}
                         {s.wallet_skill && <span className="pill pill-gold text-[9.5px]" title={t("skills.walletSkillTitle")}>Wallet Skill</span>}
                         {s.name === "binance-agentic-wallet" && <span className="prefix text-gold text-[10px]">CORE</span>}
                         {NO_CLI[s.name] && <span className="pill pill-dim text-[9.5px]">{t("skills.httpGuide")}</span>}
@@ -252,7 +295,9 @@ export function Web3SkillsView() {
                           {s.installed ? (
                             <>
                               <button onClick={() => open(s)} className="btn-ghost text-[11px] py-1"><I.Play size={11} /> {t("skills.run")}</button>
-                              <button onClick={() => actSkill(s, false)} disabled={busy} className="btn-ghost text-[11px] py-1 text-red/80 hover:text-red" title={t("skills.remove")}><I.Trash size={11} /> {t("skills.remove")}</button>
+                              {s.kind !== "builtin" && (
+                                <button onClick={() => actSkill(s, false)} disabled={busy} className="btn-ghost text-[11px] py-1 text-red/80 hover:text-red" title={t("skills.remove")}><I.Trash size={11} /> {t("skills.remove")}</button>
+                              )}
                             </>
                           ) : (
                             <button onClick={() => actSkill(s, true)} disabled={busy} className="btn-gold text-[11px] py-1"><I.Download size={11} /> {t("skills.install")}</button>
