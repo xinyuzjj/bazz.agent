@@ -9,13 +9,14 @@
 
 - **形态**：Windows 桌面端（Electron 壳）+ FastAPI Python 后端 + TS/Vite 前端
 - **定位**：币安 AI 交易终端 —— Agent 对话、行情（现货/合约/股票化代币）、交易方案卡、CEX 连接、Agentic Wallet、广场发文、Skills Hub
-- **当前版本**：v1.5.0（发版中，见第四节主任务）
+- **当前版本**：v1.5.1（已发布，妖币雷达越界修复）
 - **工作区**：安装目录 `<安装根>/workspace`（state.db / proxies.json / .skill_update.json / 附件 / 日志）
 
 ## 二、近期发布版本
 
 | 版本 | 核心内容 |
 |---|---|
+| **v1.5.1** | 修复：妖币雷达 v2 报「list index out of range」——scanner.py BTC β 残差计算在币种 15m K 线 <96 根时 range 起点为负、c15[i-1] 越界炸掉整个 /api/market/radar（前端红条、雷达空）。修复 = 窗口起点 max(1, len-96) 收敛（数据不足从可用头算，充足行为不变）。实测 force=True 返回 36 币 + 完整阶段分布。发版：commit 040983b + tag v1.5.1 → CI 5m6s 全绿，Release assets 齐全（setup.exe / portable.zip / MANIFEST / SHA256SUMS） |
 | **v1.5.0** | 行情大更新·妖币雷达 v2 四层模型：① scanner 重写核心——触发层（jump_L/flow_price/5m 速度加速度/15m RVOL/振幅 → 0-99 妖币度）、确认层（OI 四象限+15m 脉冲/funding 极值峰值回落/大户持仓比/taker 比/**实时爆仓流消费**）、语义层（六阶段：吸筹→点火→垂直拉升→派发顶→崩跌→沉寂，先到先得）、过滤层（$5M 地板/新币 30 天/刷量假量/BTC β 残差/同阶段 30min 冷却）；get_monster_coins/get_ignition_coins 同源映射 v2（异常回退 v1 日K）；② market_ws 新增 `!forceOrder@arr` 爆仓流（缓冲 800 条+分钟桶，单边 ≥$1.5M/≥5 笔/≥3×20min 基线 → toast+系统通知，同向 10min 冷却；liq_recent/liq_stats/liq_symbol_stats 供确认层与前端）；③ 新路由 /api/market/radar、/api/market/longshort（大户持仓比×散户账户比+背离标记，60s TTL）、/api/market/liquidations；④ funding_board v2（极值 ≥0.30% + 翻转检测 + toast，6h 冷却）；⑤ 前端 MarketsView：雷达 v2 单次全量拉取+阶段计数 chips+行内阶段标签/妖币度/因子摘要，新增爆仓流/多空比/funding 极值三面板，Toasts 消费 liq_burst/funding_extreme/funding_flip；⑥ meme_watch 吃 v2 同源输出（阶段标签+确认因子+触发理由）；⑦ i18n 双语补齐（含 en 缺失的 v1.4.0 alert 段）；tests/test_v150_market.py 隔离单测 20 项全过 + py_compile + tsc + vite build |
 | **v1.4.6** | delegate 并行子代理（学习 Hermes delegate_tool）：① `_run_delegate`——tasks=[{name, prompt}]（≤4，池 3 并发）每个子任务全新 `_run_llm_agent` 真实执行（history=None 新会话），`_filter_tool_schemas` 从 schema 层剔除 delegate 防递归（blocked_tools 参数贯通 _run_llm_agent），子任务停在 approval/clarify 时如实记录说明；② 父级只见每任务摘要（DELEGATE_SUMMARY_BUDGET=2500 截断，中间工具过程不回流）+ 每任务工具卡；DELEGATE_TIMEOUT_TOTAL=420s 总超时（as_completed timeout，超时任务标记失败、线程自然结束不强杀）；③ clarify/delegate 进 _TOOL_UNIVERSAL（Bot 白名单候选同步 +schedule_task/clarify/delegate）；隔离库单测全过（过滤/归一化/并行/blocked 传递/截断/异常/上限裁剪） |
 | **v1.4.5** | 自定义定时盯盘 + 结构化追问 + 工具输出落盘（学习 Hermes）：① schedule_task 升级——`custom_prompt` 自定义任务（prompt=完整指令，到点经 `_run_custom_prompt` 无头跑真 Agent 循环带全部工具，结果写专属会话「定时任务 · <name>」）、`update` 动作（scheduler.update_job 改名/时间/类型/指令并重算 next_run）、failure_deliver 语义（失败也投递，failure_deliver=False 只记 last_error）、无人值守遇审批/追问如实记录说明；② clarify 工具——`_run_clarify` 归一化（≤3 问×4 选项、dict choice 按 label>description>text>title 展平、recommended/recommended_index），流内 `{"type":"clarify"}` 事件 + done `needs_clarify` 收口，ChatView 选择卡（I.Alert、推荐徽标、点选回传 `（追问回答）q → a`），120s 前端超时自动按「最佳判断继续」回流（send 启动即取消定时器）；③ 工具输出落盘——`TOOL_SPILL_THRESHOLD=20KB`，`_tool_msg_from_res` 统一出口（强制路径+常规路径），超限写 `workspace/spill/<ts>_<tool>.txt` 回传截断文本+句柄（read_file 可读，spill 不在 READ_BLACKLIST）。隔离库单测全过 |
