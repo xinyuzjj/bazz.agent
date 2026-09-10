@@ -5,7 +5,7 @@
 
 import process from "node:process";
 
-const TIMEOUT_MS = 10_000;
+const TIMEOUT_MS = 60_000;  // 后端冷缓存首扫可达 30s+
 const PORTS = [process.env.BAZZ_PORT || "8080", "8081"];
 const H = {};
 if (process.env.BAZZ_AUTH_TOKEN) H["X-BAZZ-Token"] = process.env.BAZZ_AUTH_TOKEN;

@@ -123,6 +123,7 @@ def _init():
         id TEXT PRIMARY KEY,
         symbol TEXT NOT NULL,
         stage TEXT NOT NULL,
+        direction TEXT DEFAULT 'LONG',
         found_price REAL NOT NULL,
         found_score INTEGER DEFAULT 0,
         reasons_json TEXT DEFAULT '[]',
@@ -147,6 +148,11 @@ def _init():
     cols = {r[1] for r in c.execute("PRAGMA table_info(agents)").fetchall()}
     if cols and "config" not in cols:
         c.execute("ALTER TABLE agents ADD COLUMN config TEXT DEFAULT '{}'")
+        c.commit()
+    # v1.5.7：radar_tracks 缺 direction 列时补上（旧记录默认 LONG）
+    rtcols = {r[1] for r in c.execute("PRAGMA table_info(radar_tracks)").fetchall()}
+    if rtcols and "direction" not in rtcols:
+        c.execute("ALTER TABLE radar_tracks ADD COLUMN direction TEXT DEFAULT 'LONG'")
         c.commit()
     ccols = {r[1] for r in c.execute("PRAGMA table_info(conversations)").fetchall()}
     if ccols and "persona" not in ccols:
@@ -781,8 +787,9 @@ def _radar_track_out(r):
 
 @_serialized
 def radar_track_add(symbol: str, stage: str, found_price: float, found_score: int = 0,
-                    reasons=None, found_at: float = 0) -> str:
-    """登记一条启动前发现记录；同币已在跟踪中（pending）则幂等返回已有 id。"""
+                    reasons=None, found_at: float = 0, direction: str = "LONG") -> str:
+    """登记一条启动前发现记录；同币已在跟踪中（pending）则幂等返回已有 id。
+    direction: LONG=做多 / SHORT=做空（决定结局语义，见 radar_tracker._judge_outcome）。"""
     now = time.time()
     exist = _conn_get().execute(
         "SELECT id FROM radar_tracks WHERE symbol=? AND status='pending'",
@@ -791,10 +798,12 @@ def radar_track_add(symbol: str, stage: str, found_price: float, found_score: in
         return exist["id"]
     tid = _uid()
     _conn_get().execute(
-        "INSERT INTO radar_tracks (id,symbol,stage,found_price,found_score,reasons_json,"
+        "INSERT INTO radar_tracks (id,symbol,stage,direction,found_price,found_score,reasons_json,"
         "status,outcome,max_gain_pct,max_drop_pct,peak_price,trough_price,last_price,"
-        "outcome_price,found_at,closed_at,updated_at) VALUES (?,?,?,?,?,?, 'pending','',0,0,0,0,0,0,?,NULL,?)",
-        (tid, str(symbol).upper(), stage or "IGNITION", float(found_price or 0),
+        "outcome_price,found_at,closed_at,updated_at) VALUES (?,?,?,?,?,?,?, 'pending','',0,0,0,0,0,0,?,NULL,?)",
+        (tid, str(symbol).upper(), stage or "IGNITION",
+         "SHORT" if str(direction).upper() == "SHORT" else "LONG",
+         float(found_price or 0),
          int(found_score or 0), json.dumps(reasons or [], ensure_ascii=False),
          float(found_at or now), now))
     _conn_get().commit()

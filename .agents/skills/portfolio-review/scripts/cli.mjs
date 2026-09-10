@@ -9,7 +9,7 @@ import process from "node:process";
 import fs from "node:fs";
 import path from "node:path";
 
-const TIMEOUT_MS = 15_000;
+const TIMEOUT_MS = 60_000;  // 后端冷缓存（CEX 快照/成交聚合）可能较慢
 const PORTS = [process.env.BAZZ_PORT || "8080", "8081"];
 const H = {};
 if (process.env.BAZZ_AUTH_TOKEN) H["X-BAZZ-Token"] = process.env.BAZZ_AUTH_TOKEN;

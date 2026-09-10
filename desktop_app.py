@@ -22,6 +22,14 @@ from fastapi import FastAPI, WebSocket
 from fastapi.requests import Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+
+# v1.5.7 修复：Windows 默认 Proactor 事件循环在客户端异常断连（RST，如技能 CLI 超时
+# abort / 页面刷新）时会触发 "Accept failed on a socket"（WinError 64），此后 accept
+# 循环死亡 —— 进程还活着但所有新连接无响应（表现为行情页/技能页全部转圈失败）。
+# Selector 循环无此缺陷；本服务不使用 asyncio 子进程，websockets/requests 均兼容。
+# 必须在事件循环创建前设置（本模块先于 uvicorn.run 执行，覆盖直接运行与 PyInstaller 入口）。
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 from fastapi.staticfiles import StaticFiles
 
 import state
@@ -1765,8 +1773,10 @@ def get_skills():
 
 @app.post("/api/skills/install")
 async def skills_install(req: Request):
+    from starlette.concurrency import run_in_threadpool
     b = await req.json()
-    return install_skill(b.get("key", ""))
+    # npx 安装最长 240s，必须丢线程池 —— 否则阻塞事件循环，期间全部接口无响应
+    return await run_in_threadpool(install_skill, b.get("key", ""))
 
 
 @app.post("/api/skills/install-wallet-skills")
@@ -1774,22 +1784,34 @@ async def skills_install_wallet():
     """一键安装官方 7 个 Wallet Skills（docs/products/wallet-skills/supported-skills）。
     仅安装本机未装的；每个独立子进程，不会因单个失败中断。"""
     from src import skills_client as _sc
+    from starlette.concurrency import run_in_threadpool
     targets = sorted(_sc.WALLET_SKILLS)
     installed_now = set(_sc.list_installed())
     results = []
-    for k in targets:
-        if k in installed_now:
-            results.append({"key": k, "status": "skipped", "detail": "已安装"})
-            continue
-        r = _sc.install_skill(k)
-        results.append({"key": k, "status": r.get("status"), "detail": (r.get("stderr") or r.get("detail") or r.get("stdout") or "")[-200:]})
+
+    def _install_all():
+        out = []
+        for k in targets:
+            if k in installed_now:
+                out.append({"key": k, "status": "skipped", "detail": "已安装"})
+                continue
+            r = _sc.install_skill(k)
+            out.append({"key": k, "status": r.get("status"),
+                        "detail": (r.get("stderr") or r.get("detail") or r.get("stdout") or "")[-200:]})
+        return out
+
+    results = await run_in_threadpool(_install_all)
     return {"status": "ok", "total": len(targets), "results": results}
 
 
 @app.post("/api/skills/run")
 async def skills_run(req: Request):
+    from starlette.concurrency import run_in_threadpool
     b = await req.json()
-    return run_skill(b.get("key", ""), b.get("args", ""))
+    # 技能子进程最长 120s，必须丢线程池 —— 同步等待会阻塞事件循环：
+    # 技能 CLI 回调本后端取行情数据时后端已无法响应 → CLI fetch 挂死到自身超时，
+    # 表现为「技能根本无法使用/永远转圈」（v1.5.7 根因之一）。
+    return await run_in_threadpool(run_skill, b.get("key", ""), b.get("args", ""))
 
 
 @app.post("/api/skills/remove")
@@ -2061,7 +2083,9 @@ def run_serve(preferred_port: int = 8080) -> None:
     if chosen != preferred_port:
         print(f"[BAZZ] 端口 {preferred_port} 已被占用（可能已有一个实例在运行），改用可用端口 {chosen}："
               f"http://127.0.0.1:{chosen}", flush=True)
-    uvicorn.run(app, host="127.0.0.1", port=chosen, log_level="warning")
+    # loop="none"：uvicorn>=0.30 在 win32 默认显式注入 ProactorEventLoop 工厂，
+    # 会无视上面的 set_event_loop_policy；none → loop_factory=None → 回退 policy（Selector）。
+    uvicorn.run(app, host="127.0.0.1", port=chosen, log_level="warning", loop="none")
 
 
 if __name__ == "__main__":

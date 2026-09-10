@@ -126,12 +126,11 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
 
   // —— v1.5.3 重设计：Hero 大盘卡基准数据 + 侧栏资金费率面板 Tab ——
   const [fundTab, setFundTab] = useState<"ext" | "crowd">("ext");
-  // —— v1.5.4 增强：详情浮层 / 合约 OI / 恐惧贪婪 / 爆仓流按币筛选 ——
+  // —— v1.5.4 增强：详情浮层 / 合约 OI / 恐惧贪婪 ——
   const [detail, setDetail] = useState<{ symbol: string; market: "spot" | "futures"; base?: any } | null>(null);
   const openDetail = (market: "spot" | "futures") => (symbol: string, base?: any) => setDetail({ symbol, market, base });
   const [oiMap, setOiMap] = useState<Record<string, { oi: number | null; notional: number | null }>>({});
   const [fng, setFng] = useState<any>(null);
-  const [liqFilter, setLiqFilter] = useState("");
   const heroBase = useMemo(
     () => HERO_COINS.map((s) => (data?.all ?? []).find((x) => x.symbol === s)).filter(Boolean) as Ticker[],
     [data],
@@ -169,21 +168,15 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
     try { setTracks(await api.marketRadarTracks()); } catch { /* 网络失败保持旧数据 */ }
   };
 
-  // —— v1.5.0 爆仓流面板 + 多空比面板 ——
-  type LiqRec = { ts: number; symbol: string; side: "SELL" | "BUY"; kind: "long" | "short"; price: number; qty: number; quote: number };
-  type LiqData = { recent?: LiqRec[]; stats?: { long_count?: number; short_count?: number; long_quote?: number; short_quote?: number; total_quote?: number; window?: number }; ws?: { connected?: boolean }; error?: string };
-  const [liq, setLiq] = useState<LiqData | null>(null);
-  const loadLiq = async () => {
-    try { setLiq(await api.marketLiquidations(60, 300)); } catch { /* 网络失败保持旧数据 */ }
-  };
+  // —— v1.5.0 多空比面板（爆仓流已按需求移除 v1.5.7）——
   type LsRow = { symbol: string; price: number; change_pct: number; quote_volume: number; top_ratio: number | null; top_prev: number | null; global_ratio: number | null; divergence: boolean };
   const [ls, setLs] = useState<LsRow[]>([]);
   const loadLs = async () => {
     try { const d: any = await api.marketLongshort(); if (!d?.error) setLs(d?.rows ?? []); } catch { /* 网络失败保持旧数据 */ }
   };
   useEffect(() => {
-    loadLiq(); loadLs();
-    const t = setInterval(() => { loadLiq(); loadLs(); }, 30_000);
+    loadLs();
+    const t = setInterval(loadLs, 30_000);
     return () => clearInterval(t);
   }, []);
   useEffect(() => {
@@ -841,70 +834,7 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
             )}
           </div>
 
-          {/* 爆仓流 */}
-          <div className="glass p-4" style={{ borderRadius: 12 }}>
-            <div className="flex items-center gap-2 mb-2.5">
-              <I.Zap size={14} className="text-gold" />
-              <span className="font-mono text-[13px] font-semibold tracking-wider text-ink">{t("markets.liqTitle")}</span>
-              <span className={`pill ml-auto text-[11px] ${liq?.ws?.connected ? "pill-green" : "pill-dim"}`}>
-                {liq?.ws?.connected ? t("markets.liqOn") : t("markets.liqWait")}
-              </span>
-            </div>
-            {/* v1.5.4 按币筛选 + 大单图例（≥$100K 金框高亮） */}
-            <div className="flex items-center gap-1.5 mb-2">
-              <div className="relative flex-1 min-w-0">
-                <I.Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-mute" />
-                <input value={liqFilter} onChange={(e) => setLiqFilter(e.target.value)}
-                  placeholder={t("markets.liqSearch")} className="field pl-6 w-full py-0.5 text-[12px]" />
-              </div>
-              {liqFilter && (
-                <button onClick={() => setLiqFilter("")} className="text-ink-mute hover:text-ink text-[12px] shrink-0"><I.X size={12} /></button>
-              )}
-              <span className="pill pill-gold text-[10px] shrink-0" title={t("markets.liqBigTitle")}>{t("markets.liqBig")}</span>
-            </div>
-            {liq?.stats && (
-              <div className="grid grid-cols-2 gap-2 mb-2.5">
-                <div className="rounded-md border border-red/40 bg-red/5 px-2 py-1.5 text-center">
-                  <div className="font-mono tabular text-[14px] text-red font-semibold">${((liq.stats.long_quote ?? 0) / 1e6).toFixed(2)}M</div>
-                  <div className="font-mono text-[10.5px] text-ink-mute">{t("markets.liqLong5m", { n: liq.stats.long_count ?? 0 })}</div>
-                </div>
-                <div className="rounded-md border border-green/40 bg-green/5 px-2 py-1.5 text-center">
-                  <div className="font-mono tabular text-[14px] text-green font-semibold">${((liq.stats.short_quote ?? 0) / 1e6).toFixed(2)}M</div>
-                  <div className="font-mono text-[10.5px] text-ink-mute">{t("markets.liqShort5m", { n: liq.stats.short_count ?? 0 })}</div>
-                </div>
-              </div>
-            )}
-            <div className="space-y-0.5">
-              {(liq?.recent ?? [])
-                .filter((r) => {
-                  const s = liqFilter.trim().toLowerCase();
-                  return !s || r.symbol.toLowerCase().includes(s) || r.symbol.replace(/USDT$/, "").toLowerCase().includes(s);
-                })
-                .slice(0, 14).map((r, i) => {
-                  const big = r.quote >= 100_000;
-                  return (
-                    <button key={i} onClick={() => onTrade?.(r.symbol)}
-                      className={`w-full flex items-center gap-2 font-mono text-[12px] hover:bg-elevated/40 rounded px-1 py-0.5 transition-colors
-                        ${big ? "bg-gold/10 border border-gold/40" : ""}`}>
-                      <span className={`w-9 text-center rounded ${r.kind === "long" ? "text-red bg-red/10" : "text-green bg-green/10"}`}>
-                        {r.kind === "long" ? t("markets.liqLong") : t("markets.liqShort")}
-                      </span>
-                      <span className={`flex-1 text-left truncate ${big ? "text-gold font-semibold" : "text-ink"}`}>{baseName(r.symbol)}</span>
-                      <span className="text-ink-dim tabular">{fmtPrice(r.price)}</span>
-                      <span className={`tabular ${big ? "text-gold font-semibold" : "text-gold"}`}>
-                        ${r.quote >= 1e6 ? `${(r.quote / 1e6).toFixed(2)}M` : r.quote >= 1e3 ? `${(r.quote / 1e3).toFixed(0)}K` : r.quote.toFixed(0)}
-                      </span>
-                    </button>
-                  );
-                })}
-              {(liq?.recent ?? []).filter((r) => {
-                const s = liqFilter.trim().toLowerCase();
-                return !s || r.symbol.toLowerCase().includes(s) || r.symbol.replace(/USDT$/, "").toLowerCase().includes(s);
-              }).length === 0 && (
-                <div className="text-[12px] text-ink-mute font-mono py-2">{t("markets.liqNone")}</div>
-              )}
-            </div>
-          </div>
+          {/* 爆仓流已按需求移除（v1.5.7）；后端 /api/market/liquidations 保留供 market-data 技能使用 */}
 
           {/* 多空比（大户比例条可视化） */}
           <div className="glass p-4" style={{ borderRadius: 12 }}>

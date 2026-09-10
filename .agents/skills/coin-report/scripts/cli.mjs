@@ -8,7 +8,7 @@ import process from "node:process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-const TIMEOUT_MS = 10_000;
+const TIMEOUT_MS = 60_000;  // 后端冷缓存首扫（全市场快照/雷达）可达 30s+，10s 必超时
 const PORTS = [process.env.BAZZ_PORT || "8080", "8081"];
 const H = {};
 if (process.env.BAZZ_AUTH_TOKEN) H["X-BAZZ-Token"] = process.env.BAZZ_AUTH_TOKEN;
@@ -46,7 +46,9 @@ const usd = (v) => {
 async function report(rest) {
   const [sym0, mkt0] = rest;
   if (!sym0) throw Object.assign(new Error("report: 需要 SYMBOL"), { exitCode: 1 });
-  const sym = sym0.toUpperCase();
+  // 裸基础资产（如 WLD / SOL）自动补 USDT；已带常见计价后缀（BTCUSDT/WLDUSDC…）则原样
+  const sym = /^[A-Z0-9]+(USDT|USDC|FDUSD|TUSD|BUSD|TRY|BRL)$/.test(sym0.toUpperCase())
+    ? sym0.toUpperCase() : `${sym0.toUpperCase()}USDT`;
   const market = mkt0 === "spot" ? "spot" : "futures";
   const enc = encodeURIComponent;
 
@@ -134,11 +136,15 @@ ${track ? `- 状态：${track.status}（结局：${track.outcome}）；发现价
   return { report: file, summary: { ...s, funding_rate, oi, longshort, fng: fngD.value, track } };
 }
 
-const [cmd, ...rest] = process.argv.slice(2);
+const [cmd0, ...rest0] = process.argv.slice(2);
+// 兼容裸 SYMBOL（如 `cli.mjs WLDUSDT`）—— 技能页预设与 agent 常省略 "report" 前缀。
+// 注意：裸 SYMBOL 时 cmd0 本身就是标的，必须挪进 rest，否则 report 收到空参数报"需要 SYMBOL"。
+const bare = cmd0 !== "report" && !!(cmd0 || "").trim() && /^[A-Z0-9]{2,20}(USDT|USDC|BUSD|FDUSD|TRY|BRL)?$/i.test(cmd0);
+const cmd = cmd0 === "report" || !(cmd0 || "").trim() || bare ? "report" : cmd0;
 if (cmd !== "report") {
-  console.log(JSON.stringify({ error: cmd ? `未知命令 "${cmd}"` : "用法: report <SYMBOL> [market=futures]", available: ["report"] }));
+  console.log(JSON.stringify({ error: cmd0 ? `未知命令 "${cmd0}"` : "用法: report <SYMBOL> [market=futures]", available: ["report"] }));
   process.exit(1);
 }
-report(rest)
+report(bare ? [cmd0, ...rest0] : rest0)
   .then((out) => console.log(JSON.stringify(out)))
   .catch((e) => { console.log(JSON.stringify({ error: e?.message || String(e) })); process.exit(e?.exitCode || 1); });

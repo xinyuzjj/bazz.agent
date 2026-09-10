@@ -864,6 +864,29 @@ def _summarize_error(err) -> str:
     return f"{snip}（{', '.join(hits)}）" if hits else snip
 
 
+def _unwrap_choice(d: dict, model: str) -> dict:
+    """取 choices[0].message；网关异常回包（HTTP 200 但 choices 为 null/[] 或带 error）
+    抛出带摘要的 RuntimeError —— 否则 d["choices"][0] 直接 NoneType/IndexError，
+    且 chat_with_tools 里被裸 except 吞掉，上层完全看不到失败原因。"""
+    if not isinstance(d, dict) or not d.get("choices"):
+        err = d.get("error") if isinstance(d, dict) else None
+        detail = ""
+        if isinstance(err, dict):
+            detail = str(err.get("message") or err.get("code") or err)[:200]
+        elif err:
+            detail = str(err)[:200]
+        if not detail:
+            try:
+                detail = json.dumps(d, ensure_ascii=False)[:200]
+            except Exception:
+                detail = str(d)[:200]
+        raise RuntimeError(f"模型 {model} 回包异常（choices 为空）· {detail}")
+    msg = d["choices"][0].get("message")
+    if not isinstance(msg, dict):
+        raise RuntimeError(f"模型 {model} 回包异常（message 缺失）· {json.dumps(d, ensure_ascii=False)[:200]}")
+    return msg
+
+
 def chat(system: str, user: str, temperature: float = 0.6, max_tokens: int = 900,
          llm_cfg: dict = None, task: str = None) -> Optional[str]:
     """一次对话文本（返回 str）；多模型 fallback 链，全部失败返回 None。
@@ -887,7 +910,7 @@ def chat(system: str, user: str, temperature: float = 0.6, max_tokens: int = 900
                    "temperature": temperature, "max_tokens": eff_max}
         try:
             d = _post(payload, cfg, timeout=45)
-            msg = d["choices"][0]["message"]
+            msg = _unwrap_choice(d, model)
             text = (msg.get("content") or "").strip()
             rc = _extract_reasoning(msg)
             if rc:
@@ -1021,7 +1044,10 @@ def chat_with_tools(messages: List[Dict[str, Any]], tools: List[Dict[str, Any]] 
                 if thinking:
                     out["reasoning"] = thinking
                     out["content"] = clean  # 正文里去思考
+            _last_error = None
             return out
-        except Exception:
+        except Exception as e:
+            # 之前这里静默 continue —— 网关异常回包/工具名 400 等全部无迹可查
+            _last_error = _summarize_error(f"模型 {model} 工具调用失败：{type(e).__name__}: {str(e).strip()}")
             continue
     return None

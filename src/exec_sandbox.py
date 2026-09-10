@@ -857,7 +857,7 @@ def run_skill_cmd(skill_name: str, args: str = "", timeout: int = 90, max_out: i
         elif os.path.isfile(cli):
             # v1.3.9：node 解析锚定内置 runtime（打包版用户机器没有 PATH node，裸 node 必失败）
             import workspace as _ws
-            node_exe = _ws.NODE_EXE if _os.path.isfile(_ws.NODE_EXE) else "node"
+            node_exe = _ws.NODE_EXE if os.path.isfile(_ws.NODE_EXE) else "node"
             if skills_client._cli_uses_meta_url_dispatch(cli):
                 launcher = os.path.join(os.path.dirname(os.path.abspath(skills_client.__file__)), "skill_launcher.mjs")
                 cmd = f'"{node_exe}" {shlex.quote(launcher)} {shlex.quote(sdir)} ' + (arg_s if arg_s else "")
@@ -874,12 +874,11 @@ def run_skill_cmd(skill_name: str, args: str = "", timeout: int = 90, max_out: i
 
 def skill_is_executable(skill_name: str) -> bool:
     """该 skill 是否属于本地可执行类（需要审批确认）。"""
-    import os as _os
     import skills_client
     if skill_name in skills_client._BAW_SKILLS:
         return True
-    sdir = _os.path.join(skills_client.AGENTS_DIR, skill_name)
-    return _os.path.isfile(_os.path.join(sdir, "scripts", "cli.mjs"))
+    sdir = os.path.join(skills_client.AGENTS_DIR, skill_name)
+    return os.path.isfile(os.path.join(sdir, "scripts", "cli.mjs"))
 
 
 if __name__ == "__main__":

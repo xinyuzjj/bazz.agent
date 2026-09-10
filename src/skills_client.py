@@ -440,7 +440,8 @@ def run_skill(skill_name: str, args: str = "") -> dict:
                     "stdout": f"(技能 {skill_name} 为 HTTP/扩展型，无本地 cli.mjs — 以下为官方 SKILL.md 使用指引，请在有网真机按指引调用)\n\n{guide}",
                     "note": "api_reference"}
         proc = subprocess.run(["cmd", "/c"] + base + toks,
-                              capture_output=True, text=True, timeout=120)
+                              capture_output=True, text=True, timeout=120,
+                              encoding="utf-8", errors="replace")  # node 输出 UTF-8，按 GBK 读会乱码
         # 广场发帖记账：手动「运行」发布的真实结果也落本地台账
         if skill_name == "square-post":
             try:

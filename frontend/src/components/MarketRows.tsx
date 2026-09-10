@@ -58,9 +58,9 @@ export const RADAR_COLS = {
   takeoff:  { tpl: "2fr 0.9fr 0.9fr 0.9fr 0.9fr 1.1fr 0.8fr 1fr 2.2fr", head: ["markets.col.symbol", "markets.h.price", "7D", "30D", "markets.col.fromhigh", "markets.h.quotevol", "markets.col.surge", "markets.col.verdict", "markets.col.action"] },
 } as const;
 
-// v1.5.2 妖币追踪：启动前发现 → 后续暴涨/暴跌结局验证
+// v1.5.2 妖币追踪：启动前发现 → 后续暴涨/暴跌结局验证（v1.5.7 增加方向 + 当前涨跌幅）
 export type TrackRow = {
-  id: string; symbol: string; stage: string;
+  id: string; symbol: string; stage: string; direction?: "LONG" | "SHORT";
   found_price: number; found_score: number; reasons?: string[];
   status: "pending" | "closed";
   outcome: "" | "moon" | "dump" | "expired";
@@ -76,8 +76,8 @@ export const OUTCOME_META: Record<string, { label: string; cls: string }> = {
   expired: { label: "markets.outcomeExpired", cls: "pill-dim" },
 };
 export const TRACK_COLS = {
-  pending: { tpl: "2.2fr 0.9fr 0.9fr 0.9fr 0.9fr 1fr", head: ["markets.col.symbol", "markets.trackFoundPrice", "markets.trackNowPrice", "markets.trackMaxGain", "markets.trackMaxDrop", "markets.trackFoundAt"] },
-  history: { tpl: "2.2fr 0.9fr 0.9fr 0.9fr 0.9fr 1fr", head: ["markets.col.symbol", "markets.trackFoundPrice", "markets.trackOutcomePrice", "markets.trackMaxGain", "markets.trackMaxDrop", "markets.trackDuration"] },
+  pending: { tpl: "2.2fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr 1fr", head: ["markets.col.symbol", "markets.trackFoundPrice", "markets.trackNowPrice", "markets.trackChg", "markets.trackMaxGain", "markets.trackMaxDrop", "markets.trackFoundAt"] },
+  history: { tpl: "2.2fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr 1fr", head: ["markets.col.symbol", "markets.trackFoundPrice", "markets.trackOutcomePrice", "markets.trackChg", "markets.trackMaxGain", "markets.trackMaxDrop", "markets.trackDuration"] },
 } as const;
 // 相对时间：60s→"xm"、1h→"x.xh"、更长→"x.xd"（列头文案区分"发现于/持续"）
 export const fmtAgo = (ts: number, now: number = Date.now() / 1000) => {
@@ -428,6 +428,11 @@ export const TrackLine = memo(function TrackLine({ r, variant, onDetail }: {
   const oc = OUTCOME_META[r.outcome] ?? null;
   const gain = r.max_gain_pct ?? 0;
   const drop = r.max_drop_pct ?? 0;
+  const isShort = r.direction === "SHORT";
+  // 当前涨跌幅：pending=现价 vs 发现价；history=结局价 vs 发现价
+  const refPx = r.found_price || 0;
+  const curPx = isP ? (r.last_price || 0) : (r.outcome_price || r.last_price || 0);
+  const curChg = refPx > 0 && curPx > 0 ? (curPx / refPx - 1) * 100 : null;
   return (
     <div onClick={() => onDetail?.(r.symbol, r)} title={t("markets.detail.open")}
       className="grid items-center px-4 py-2.5 border-b border-line/60 last:border-0 hover:bg-elevated/40 transition-colors cursor-pointer group"
@@ -436,25 +441,22 @@ export const TrackLine = memo(function TrackLine({ r, variant, onDetail }: {
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-mono font-semibold text-ink group-hover:text-gold">{baseName(r.symbol)}</span>
           <span className="font-mono text-[10.5px] text-ink-mute">/USDT</span>
+          {/* 方向：做多/做空（做多跌太多会判 dump=失败；做空跌了反而是兑现） */}
+          <span className={`pill ${isShort ? "pill-red" : "pill-green"} text-[10.5px]`}>
+            {isShort ? t("markets.short") : t("markets.long")}
+          </span>
           <span className={`pill ${stageCls} text-[10.5px]`}>{t(`markets.stage.${r.stage}`)}</span>
           {!isP && oc && <span className={`pill ${oc.cls} text-[10.5px]`}>{t(oc.label)}</span>}
-          {!isP && r.outcome === "moon" && r.outcome_price > 0 && (
-            <span className="font-mono text-[11px] text-green">+{(((r.outcome_price / (r.found_price || 1)) - 1) * 100).toFixed(0)}%</span>
-          )}
-          {!isP && r.outcome === "dump" && r.outcome_price > 0 && (
-            <span className="font-mono text-[11px] text-red">{(((r.outcome_price / (r.found_price || 1)) - 1) * 100).toFixed(0)}%</span>
-          )}
         </div>
         {(r.reasons?.length ?? 0) > 0 && (
           <div className="font-mono text-[11px] text-ink-mute truncate mt-0.5">{r.reasons!.slice(0, 3).join(" · ")}</div>
         )}
       </div>
       <div className="font-mono tabular text-ink text-[13px]">{fmtPrice(r.found_price)}</div>
-      {isP ? (
-        <div className="font-mono tabular text-ink text-[13px]">{r.last_price ? fmtPrice(r.last_price) : "—"}</div>
-      ) : (
-        <div className="font-mono tabular text-ink text-[13px]">{fmtPrice(r.outcome_price || r.last_price)}</div>
-      )}
+      <div className="font-mono tabular text-ink text-[13px]">{curPx ? fmtPrice(curPx) : "—"}</div>
+      <div className={`font-mono tabular text-[13px] font-medium ${curChg == null ? "text-ink-mute" : curChg >= 0 ? "up" : "down"}`}>
+        {curChg == null ? "—" : `${curChg >= 0 ? "+" : ""}${curChg.toFixed(1)}%`}
+      </div>
       <div className={`font-mono tabular text-[13px] ${gain > 0 ? "up" : "text-ink-mute"}`}>+{gain.toFixed(1)}%</div>
       <div className={`font-mono tabular text-[13px] ${drop > 0 ? "down" : "text-ink-mute"}`}>-{drop.toFixed(1)}%</div>
       <div className="font-mono tabular text-ink-dim text-[12.5px]">

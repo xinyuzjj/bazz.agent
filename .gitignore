@@ -40,6 +40,8 @@ data/
 workspace/
 update-cache/
 .system/
+# coin-report 研报输出（dev 模式 cwd 落 repo 根，打包态在 workspace/妖币）
+妖币/
 
 # ---- WorkBuddy tooling ----
 .workbuddy/

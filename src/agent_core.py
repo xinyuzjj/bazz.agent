@@ -456,17 +456,20 @@ _QUOTES = ["USDT", "USDC", "FDUSD", "TUSD", "TRY", "BRL", "EUR"]
 
 
 def _parse_trade(message: str):
-    """从自然语言提取 (symbol, direction)。支持「买入 BTC」「卖出 ETH 市价」「BTCUSDT 做多」等。"""
+    """从自然语言提取 (symbol, direction)。支持「买入 BTC」「卖出 ETH 市价」「BTCUSDT 做多」等。
+    注意不能用 \\b：Python 里中文属 \\w，「分析WLD」中 下/W 之间无词边界，永远匹配不上；
+    改用 (?<![A-Z0-9]) / (?![A-Z0-9]) 手工边界（紧跟字母数字才算同一词）。"""
     direction = "BULLISH"
     if re.search(r"卖出|sell|做空|short|看空|空", message, re.I):
         direction = "BEARISH"
+    up = message.upper()
     # 显式 BASEQUOTE 形式（如 BTCUSDT）
-    m = re.search(r"\b([A-Z]{2,10})(USDT|USDC|FDUSD|TUSD)\b", message.upper())
+    m = re.search(r"(?<![A-Z0-9])([A-Z]{2,10})(USDT|USDC|FDUSD|TUSD)(?![A-Z0-9])", up)
     if m:
         return f"{m.group(1)}{m.group(2)}", direction
     # 仅给基础资产（如 BTC）→ 默认 USDT 交易对
     for b in _TRADE_BASE:
-        if re.search(rf"\b{b}\b", message.upper()):
+        if re.search(rf"(?<![A-Z0-9]){b}(?![A-Z0-9])", up):
             return f"{b}USDT", direction
     return None, direction
 
@@ -1565,13 +1568,16 @@ def _dispatch_tool(name: str, args: dict, confirmed: bool = False) -> Dict[str, 
     if name == "propose_trade":
         return _tool_propose_trade(args.get("symbol", ""), args.get("direction", "BULLISH"))
     if name == "market_quote":
-        symbol = args.get("symbol", "BTCUSDT")
+        symbol = (args.get("symbol") or "").strip().upper() or "BTCUSDT"
+        if not symbol.endswith(("USDT", "USDC", "FDUSD", "TUSD", "TRY", "BRL")):
+            symbol += "USDT"  # LLM 常只给基础资产（如 "WLD"）
         rows = scan_symbols([symbol], force=True)
         if rows:
             r = rows[0]
+            fr = float(r.get("funding_rate") or 0)  # funding 可能是 None，直接 *100 会 TypeError
             return {"reply": f"**{r['symbol']}** 实时行情：\n- 价格：{r['price']}\n"
                              f"- 24h 涨跌：{r.get('change_pct', 0):+.2f}%\n"
-                             f"- 资金费率：{r.get('funding_rate', 0) * 100:+.4f}%",
+                             f"- 资金费率：{fr:+.4f}%",
                     "tools": [{"icon": "📈", "name": "行情查询", "status": "success", "detail": r['symbol']}],
                     "data": {"quote": r}}
         return {"reply": f"未找到 {symbol} 的行情。", "tools": [
