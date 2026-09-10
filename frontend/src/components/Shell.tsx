@@ -5,6 +5,9 @@ import { useTheme } from "../theme/theme";
 
 export type NavId = "chat" | "markets" | "wallet" | "skills" | "cex" | "council" | "settings" | "memory";
 
+// vite.config.ts define 注入的 package.json 版本号
+declare const __APP_VERSION__: string;
+
 // 仅当 desktop（preload 暴露了 bazzWindow）时显示窗口控制按钮
 function WindowControls() {
   const w: any = (typeof window !== "undefined") ? (window as any) : null;
@@ -59,7 +62,7 @@ export function TopBar({
           <I.Hex className="text-gold" size={22} />
           <div className="leading-tight">
             <div className="font-mono font-bold tracking-wide text-[16px] text-ink">BAZZ<span className="text-gold">.</span>AGENT</div>
-            <div className="font-mono text-[10px] tracking-[0.12em] text-ink-dim">BINANCE AGENT OS // v2.4.9</div>
+            <div className="font-mono text-[10px] tracking-[0.12em] text-ink-dim">BINANCE AGENT OS // v{__APP_VERSION__}</div>
           </div>
         </div>
 
