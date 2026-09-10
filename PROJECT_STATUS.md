@@ -9,7 +9,7 @@
 
 - **形态**：Windows 桌面端（Electron 壳）+ FastAPI Python 后端 + TS/Vite 前端
 - **定位**：币安 AI 交易终端 —— Agent 对话、行情（现货/合约/股票化代币）、交易方案卡、CEX 连接、Agentic Wallet、广场发文、Skills Hub
-- **当前版本**：v1.5.1（已发布，妖币雷达越界修复）
+- **当前版本**：v1.5.3（已发版：妖币追踪 + 行情页双栏终端风重设计）
 - **工作区**：安装目录 `<安装根>/workspace`（state.db / proxies.json / .skill_update.json / 附件 / 日志）
 
 ## 二、近期发布版本
