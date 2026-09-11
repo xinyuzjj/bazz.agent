@@ -32,7 +32,7 @@
 
 ![主驾驶舱](./docs/screenshot.png)
 
-**🎬 [88 秒实拍演示](https://xinyuzjj.github.io/bazz.agent/#demo)** — 历史 → 行情雷达 → 一键现货买单丢进 Agent 对话分析 → 记忆 → 钱包 → 设置 · [⬇ MP4](./docs/video/BAZZ-demo-v1.mp4)
+**🎬 [88 秒实拍演示](https://xinyuzjj.github.io/bazz.agent/#demo)** — 历史 → 行情雷达 → 一键现货买单丢进 Agent 对话分析 → 记忆 → 钱包 → 设置 · [⬇ MP4](./docs/video/BAZZ-demo-v2.mp4)
 
 </div>
 

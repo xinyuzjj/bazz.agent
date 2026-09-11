@@ -32,7 +32,7 @@
 
 ![Main cockpit](./docs/screenshot.png)
 
-**🎬 [88s real-footage walkthrough](https://xinyuzjj.github.io/bazz.agent/#demo)** — history → market radar → one-tap trade analyzed in chat → memory → wallet → settings · [⬇ MP4](./docs/video/BAZZ-demo-v1.mp4)
+**🎬 [88s real-footage walkthrough](https://xinyuzjj.github.io/bazz.agent/#demo)** — history → market radar → one-tap trade analyzed in chat → memory → wallet → settings · [⬇ MP4](./docs/video/BAZZ-demo-v2.mp4)
 
 </div>
 
