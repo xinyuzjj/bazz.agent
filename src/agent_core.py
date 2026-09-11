@@ -394,6 +394,8 @@ def _system_prompt(locale: str = "zh") -> str:
             "args='<SYMBOL> [futures|spot] --publish')：自动取数+Pillow 封面+固定结构组稿"
             "（开头行情人话段 → 合约+情绪 → 我的看法竖排 SMC 推理链 结构/BOS・CHoCH/OTE 0.618-0.705/OB/FVG → "
             "操作计划竖排点位+100U 仓位算法 → 风险提示+GitHub 链接 github.com/xinyuzjj/bazz.agent）+ $cashtag/#hashtag。"
+            "**发布形态默认短贴多图**（封面+24h 走势图直接显示在正文里，用户指定要长文才加 --article；"
+            "长文 API 不支持正文插图）；"
             "**严禁绕过它自己手写简版文直接 square-post 发**——那会丢 SMC 推理链/仓位算法/GitHub 链接/封面，不合规；\n"
             "   b) 例外：用户**给了现成正文**（『把这段文字发出去』/发短帖/发视频）或 rich 稿改稿重发 → "
             "run_skill(skill_name='square-post', args='<text|article|image|video 子命令 + 参数>')；"

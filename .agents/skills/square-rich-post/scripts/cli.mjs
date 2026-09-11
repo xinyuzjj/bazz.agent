@@ -3,8 +3,9 @@
 //
 // 用法：
 //   node cli.mjs <SYMBOL> [market=futures]            # 只合成，打印产物路径与摘要
-//   node cli.mjs <SYMBOL> [market] --publish          # 合成后发布：文章 + 封面图
-//   node cli.mjs <SYMBOL> [market] --publish --reuse <目录>   # 复用已合成目录（改稿后重发）
+//   node cli.mjs <SYMBOL> [market] --publish          # 短贴多图发布：封面+24h图+全文（默认）
+//   node cli.mjs <SYMBOL> [market] --publish --article # 长文+封面（contentType=2）
+//   node cli.mjs <SYMBOL> [market] --publish --reuse <dir>   # 复用已合成目录（改稿后重发）
 //
 // 合成走本机后端（进程内 scanner 数据 + Pillow 画图）；发布走 square-post 技能
 // （image --title-file --cover --text-file），密钥由 square-post 自行读取。
@@ -121,10 +122,24 @@ async function main() {
     return;
   }
 
-  // 发布：文章 + 封面 → square-post（contentType=2）
-  const res = spawnSync(process.execPath, [SQUARE_POST_CLI, "image",
-    "--title-file", meta.title_file, "--cover", meta.cover, "--text-file", meta.text_file,
-  ], { encoding: "utf8", timeout: 180_000 });
+  // 发布（v1.5.22 默认短贴多图：contentType=1，封面+24h 图最多 4 张，正文里能看到图）；
+  // --article 走长文+封面（contentType=2，OpenAPI 不支持正文插图）
+  let res;
+  if (argv.includes("--article")) {
+    res = spawnSync(process.execPath, [SQUARE_POST_CLI, "image",
+      "--title-file", meta.title_file, "--cover", meta.cover, "--text-file", meta.text_file,
+    ], { encoding: "utf8", timeout: 240_000, maxBuffer: 16 * 1024 * 1024 });
+  } else {
+    const imgs = [meta.cover, path.join(meta.dir, "chart_24h.png")]
+      .filter((p, i, a) => p && fs.existsSync(p) && a.indexOf(p) === i)
+      .slice(0, 4);
+    if (!imgs.length) usageExit("短贴至少需要 1 张图（cover.png / chart_24h.png）");
+    const bodyText = fs.readFileSync(meta.text_file, "utf8").trim();
+    const titleTxt = fs.existsSync(meta.title_file) ? fs.readFileSync(meta.title_file, "utf8").trim() : "";
+    const body = titleTxt ? `${titleTxt}\n\n${bodyText}` : bodyText;
+    res = spawnSync(process.execPath, [SQUARE_POST_CLI, "image", "--text", body, "--images", imgs.join(",")],
+      { encoding: "utf8", timeout: 240_000, maxBuffer: 16 * 1024 * 1024 });
+  }
   if (res.stdout) process.stdout.write(res.stdout);
   if (res.stderr) process.stderr.write(res.stderr);
   process.exit(res.status ?? 1);

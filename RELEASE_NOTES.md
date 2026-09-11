@@ -48,6 +48,22 @@
 - square-rich-post `--reuse` 自动锚定 workspace/square_rich 兜底，bad 路径给出尝试列表
 - 实测确认：7899 代理链路当时是通的（代码里代理检测用 api.binance.com/ping，但方形图上传走 bapi/presignedUrl——S3 域名超时才导致失败，现已覆盖）
 
+# BAZZ.AGENT v1.5.22
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.22 更新要点（广场发文默认「短贴多图」，正文直接可见图）
+
+### 发文形态调整（实测反馈驱动）
+- **实锤**：广场 OpenAPI 的长文（contentType=2）正文是 `bodyTextOnly` 纯文本，**永远插不了图**，只有单封面；带图只能走短贴（contentType=1，最多 4 图）
+- square-rich-post **默认改为短贴多图**：封面图 + 24h 分时图 + 标题全文一贴发出，正文里直接看到图（已实测发布成功，两图齐全）
+- 要传统长文形态加 `--article`；`--reuse` 复用不受影响
+- Agent 提示词与 SKILL.md 同步更新分流规则；短贴超时 240s / 输出缓冲 16MB
+
+### v1.5.21 实测补充
+- 你的代理节点经 7899 对 bapi / api / S3 三域全通，发文链路真机验证通过（帖子 ID 365432062242575 / 365434349443879）
+- 注意：mihomo 内核崩溃后 APP 会自动拉起，**重启空窗几秒内发文会 ECONNREFUSED**——属瞬时故障，重试即可（v1.5.19 起已自动重试一次）
+
 ## 📜 历史版本
 
 # BAZZ.AGENT v1.5.15

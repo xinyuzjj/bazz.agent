@@ -18,7 +18,8 @@ metadata:
 | 命令 | 说明 |
 |---|---|
 | `node cli.mjs <SYMBOL> [market=futures]` | 只合成不出：出封面图 + 24h 图 + 深度稿，返回文件路径与摘要 |
-| `node cli.mjs <SYMBOL> [market] --publish` | 合成后直接发布（文章 + 封面图，带 $cashtag/#hashtag） |
+| `node cli.mjs <SYMBOL> [market] --publish` | 合成后发布 **短贴多图**（封面+24h 图显示在正文里，v1.5.22 默认形态） |
+| `node cli.mjs <SYMBOL> [market] --publish --article` | 长文+封面（contentType=2；OpenAPI 限制：正文无法插图） |
 | `node cli.mjs <SYMBOL> --publish --reuse <目录>` | 复用已合成目录（改稿后重发） |
 
 示例：`run_skill square-rich-post "RAYUSDT --publish"` / `run_skill square-rich-post "BTCUSDT spot"`（纯预览）
