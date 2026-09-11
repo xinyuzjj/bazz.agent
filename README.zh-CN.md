@@ -339,6 +339,19 @@ bazz.agent/
 
 ---
 
+## 📮 联系我
+
+<div align="center">
+
+<a href="mailto:1105002234@qq.com"><img src="https://img.shields.io/badge/📧-1105002234%40qq.com-8b5cf6?style=for-the-badge"/></a>&nbsp;&nbsp;
+<img src="https://img.shields.io/badge/💬-junjunnizz-22c55e?style=for-the-badge"/>&nbsp;&nbsp;
+<a href="https://t.me/junjunnizxcz"><img src="https://img.shields.io/badge/📱-junjunnizxcz-26A5E4?style=for-the-badge&logo=telegram&logoColor=white"/></a>&nbsp;&nbsp;
+<a href="https://x.com/hll404357315674"><img src="https://img.shields.io/badge/𝕏-@hll404357315674-ffffff?style=for-the-badge&logo=x&logoColor=black"/></a>
+
+</div>
+
+---
+
 <div align="center">
 
 **如果 BAZZ.AGENT 帮你省下了盯盘时间，点个 ⭐ —— 雷达会更强。**
