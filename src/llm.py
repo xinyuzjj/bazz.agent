@@ -704,7 +704,8 @@ TOOLS: List[Dict[str, Any]] = [
                             "需要先看用法说明时，先 cat .agents/skills/<name>/SKILL.md（已被允许）。\n"
                             "用户要求『跑技能/用技能/执行XX skill/查meme/查聪明钱/扫链上数据/审计代币/查地址持仓/扫市场榜/发币安广场』时调用。\n"
                             "**分析/研究某币（走势/K线/费率/OI/研报）时必须优先本工具调 coin-report 或 market-data——禁止用 run_command 跑 python/node 直连币安 API（受限地区必失败），禁止 fetch_url 抓 api.binance.com**。\n"
-                            "**发币安广场（square-post）：** args 直接拼 `node scripts/cli.mjs <子命令> <JSON>`，常用子命令 text(短文)、article(长文 + 标题)、image(图文,<=4 张)、video(视频)。前置 BINANCE_SQUARE_OPENAPI_KEY，缺时去创作者中心 https://www.binance.com/square/creator-center/home 生成。\n"
+                            "**发币安广场（square-post）：** args 直接拼 `node scripts/cli.mjs <子命令> <JSON>`，常用子命令 text(短文)、article(长文 + 标题)、image(图文,<=4 张)、video(视频)。长文/多段落正文必须先写入工作区文件再传 `--text-file <路径>`（多段落文本直接拼进 args 会触发「命令解析失败」），示例：`text --text-file workspace/draft.md --title 标题`。前置 BINANCE_SQUARE_OPENAPI_KEY（已配置则自动读取），缺时去创作者中心 https://www.binance.com/square/creator-center/home 生成。\n"
+                            "**富媒体行情文（square-rich-post，优先用它发文）：** args='<SYMBOL> [spot] --publish'——自动取 90d K线/费率/OI/多空比/恐惧贪婪，画深色封面图与 24h 分时图，组稿含 $cashtag/#hashtag，直接发布带封面文章。示例：`RAYUSDT --publish`。想先预览再发就去掉 --publish，改稿后 `RAYUSDT --publish --reuse <目录>` 重发。\n"
                             "⚠️ 不要用 run_command 直接调 .agents/skills/X/scripts/cli.mjs——这是已装技能的入口，应当走本 run_skill 工具（它会代你处理 token 化/确认/路径/超时）。\n"
                             "⚠️ **不要把发广场映射成 mcp_call**：MCP binance 网关不含发广场端点；发广场只走本 run_skill。"),
             "parameters": {

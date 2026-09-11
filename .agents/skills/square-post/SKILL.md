@@ -74,6 +74,22 @@ Flags:
 - `--text` required, post text content
 - `--title` optional, sets article-style content
 
+### Long Content: Use `--text-file` / `--title-file` (strongly recommended for Agent)
+
+Multi-paragraph content with newlines/quotes breaks shell argument parsing
+(`命令解析失败（检查引号）`). `cli.mjs` supports reading content from files —
+write the body to a file first, then pass the path. This is the ONLY reliable
+way to post long Chinese articles.
+
+```bash
+node scripts/cli.mjs text --text-file ./draft.md --title "Article Title"
+node scripts/cli.mjs text --title-file ./title.txt --text-file ./draft.md
+```
+
+Flags:
+- `--text-file <path>` read post/article body from file (replaces `--text`)
+- `--title-file <path>` read article title from file (replaces `--title`)
+
 ### Image Post
 
 Use for short image posts or long articles with a cover image.

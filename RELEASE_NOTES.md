@@ -1,4 +1,24 @@
-﻿# BAZZ.AGENT v1.5.14
+﻿# BAZZ.AGENT v1.5.15
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.15 更新要点（广场富媒体发文 · square-post 长文修复）
+
+### 1. 新技能 square-rich-post：一句话发「全维度行情拆解」富媒体文
+- 自动取 90d OHLCV/费率/OI/大户多空比/恐惧贪婪 → Pillow 画深色封面图（90日 K线+成交量+高低位标注+信息条）与 24h 分时图 → 组稿（$cashtag + #hashtag 服务端解析，事实与推测分栏）→ 调 square-post 发布带封面文章
+- 后端新路由 /api/square/rich/compose（进程内复用 scanner 数据，5 分钟缓存）；产物落 workspace/square_rich/<SYM>_<ts>/
+- 图表引擎用已打包的 Pillow 实现，**零新增依赖**（不引 matplotlib，包体积不涨）；打包态无独立 python，Python 能力一律走后端路由
+- **合约占位脏数据防线**：SETTLING/下架合约（如 RAYUSDT）fapi 返回全等价格 0 量平线（此前 coin-report 取到 0.248 假数据的根因）——平线检测自动回退现货并在文中如实标注
+- 台账打通：square-rich-post 发布自动记入 Square 台账页；llm 工具提示词引导 Agent 优先用富媒体发文
+
+### 2. square-post 长文发布修复（「命令解析失败」根因）
+- cli.mjs 新增 `--text-file` / `--title-file`：多段落正文先写文件再传路径，彻底绕开 shlex 引号/换行解析崩溃
+- SKILL.md 明确「长文必须走文件」；台账 _extract_meta 同步支持从文件读回正文
+- 修复 square_store.DATA_DIR 未定义导致台账写入静默失败（App 内发布从未成功记账的存量 bug）
+
+## 历史
+
+---
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
 

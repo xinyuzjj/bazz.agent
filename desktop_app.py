@@ -296,6 +296,33 @@ def api_market_oi(symbols: str):
         return {"items": [], "error": str(e)}
 
 
+@app.get("/api/market/klines_ohlcv")
+def api_market_klines_ohlcv(symbol: str, interval: str = "1d", limit: int = 90, market: str = "futures"):
+    """完整 OHLCV K 线（旧→新，5 分钟缓存）—— square-rich-post 图表引擎用。"""
+    from scanner import klines_ohlcv
+    sym = (symbol or "").strip().upper()
+    try:
+        d = klines_ohlcv(sym, interval, limit,
+                         market if market in ("spot", "futures") else "futures")
+        return {"symbol": sym, "interval": interval, "market": market, "ts": int(time.time()), **d}
+    except Exception as e:
+        return {"symbol": sym, "opens": [], "highs": [], "lows": [], "closes": [],
+                "vols": [], "times": [], "error": str(e)}
+
+
+@app.get("/api/square/rich/compose")
+def api_square_rich_compose(symbol: str, market: str = "futures"):
+    """广场富媒体发文合成：全维度取数 → Pillow 画封面图（90d K线+成交量）+ 24h 分时图
+    → 组稿（含 $cashtag/#hashtag）→ 落盘 workspace/square_rich/<SYM>_<ts>/。
+    返回 {dir, title_file, text_file, cover, extra_chart, stats}，发文交给 square-post 技能。"""
+    import square_rich
+    sym = (symbol or "").strip().upper()
+    try:
+        return square_rich.compose(sym, market if market in ("spot", "futures") else "futures")
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.get("/api/market/fng")
 def api_market_fng():
     """恐惧贪婪指数（Crypto Fear & Greed，10 分钟缓存，含 8 天历史）。"""

@@ -69,6 +69,36 @@ function pickFlag(tokens, name) {
   return undefined;
 }
 
+// --text-file <path> / --title-file <path>：从文件读正文/标题，替换为 --text/--title。
+// 长文（多段落、含引号/换行）经命令行传参极易被 shlex/引号解析冲掉，走文件最稳。
+function resolveFileFlags(tokens) {
+  const out = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    let flag = "", inline = "";
+    if (t === "--text-file" || t === "--title-file") {
+      flag = t.slice(2, -5); // text / title
+      if (i + 1 >= tokens.length) usageExit(`--${flag}-file 缺少文件路径`);
+      inline = tokens[++i];
+    } else if (t.startsWith("--text-file=") || t.startsWith("--title-file=")) {
+      flag = t.slice(2, t.indexOf("=") - 5);
+      inline = t.slice(t.indexOf("=") + 1);
+    } else {
+      out.push(t);
+      continue;
+    }
+    let content = "";
+    try {
+      content = fs.readFileSync(inline, "utf8").trim();
+    } catch (e) {
+      usageExit(`读取 --${flag}-file 失败: ${inline} (${e.message})`);
+    }
+    if (!content) usageExit(`--${flag}-file 文件为空: ${inline}`);
+    out.push(`--${flag}`, content);
+  }
+  return out;
+}
+
 const argv = process.argv.slice(2);
 const help = argv.includes("--help") || argv.includes("-h");
 if (help || argv.length === 0) usageExit(help ? undefined : "缺少内容与类型（发空帖会被币安拒绝）");
@@ -101,6 +131,9 @@ if (kind === "text") {
 } else {
   tokens = tokens.slice(1);
 }
+
+// 长文本走文件：--text-file/--title-file → --text/--title（在 --text 必填检查前解析）
+tokens = resolveFileFlags(tokens);
 
 if (!hasFlag(tokens, "text") && kind !== "video") {
   // text/image 必须有正文；video 的 --text 可选

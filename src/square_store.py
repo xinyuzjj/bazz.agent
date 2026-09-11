@@ -16,7 +16,10 @@ import time
 
 from workspace import SQUARE_POSTS as DATA_FILE  # 统一落盘到 workspace
 
+DATA_DIR = os.path.dirname(DATA_FILE)  # v1.5.12 修复：_write 引用的 DATA_DIR 从未定义，台账写入一直静默失败
+
 SQUARE_SKILL = "square-post"
+RICH_SKILL = "square-rich-post"        # 富媒体发文技能（合成 + 转发 square-post）
 DAILY_LIMIT = 100                      # Square OpenAPI 每 key 每日发帖上限
 KEY_ENV = "BINANCE_SQUARE_OPENAPI_KEY"
 KEY_FILE = os.path.join(os.path.expanduser("~"), ".config", "binance-square", "openapi-key")
@@ -180,6 +183,23 @@ def _extract_meta(arg_s: str) -> dict:
     except Exception:
         toks = []
 
+    # --text-file/--title-file：正文/标题走文件（长文本规避命令行解析），读回内容供台账记录
+    def _read_flag_file(name):
+        i = next((i for i, t in enumerate(toks) if t == f"--{name}-file"), -1)
+        if i != -1 and i + 1 < len(toks):
+            try:
+                return open(toks[i + 1], "r", encoding="utf-8").read().strip()
+            except Exception:
+                return None
+        return None
+
+    ftext = _read_flag_file("text")
+    if ftext is None:
+        ftext = ""
+    ftitle = _read_flag_file("title")
+    if ftitle is None:
+        ftitle = ""
+
     def flag(name):
         i = next((i for i, t in enumerate(toks) if t == f"--{name}"), -1)
         if i != -1 and i + 1 < len(toks):
@@ -199,8 +219,8 @@ def _extract_meta(arg_s: str) -> dict:
     text = flag("text")
     if text is None and meta["kind"] == "text" and not first.startswith("--") and len(toks) > 1:
         text = " ".join(toks[1:]).strip()  # 兼容没打引号的多词正文
-    meta["text"] = (text or "").strip()
-    meta["title"] = (flag("title") or "").strip()
+    meta["text"] = (ftext or text or "").strip()
+    meta["title"] = (ftitle or flag("title") or "").strip()
     media = flag("images") or flag("cover") or flag("video") or ""
     meta["media"] = media.strip()
     return meta
@@ -247,8 +267,8 @@ def append_record(kind: str, text: str, title: str, tags: list, post_id: str,
 
 def record_from_run(skill_name: str, arg_s: str, output: str, exit_code: int,
                     via: str = "agent") -> dict | None:
-    """skill 执行结果 → 台账。仅 square-post 生效；任何异常都静默（不打断主流程）。"""
-    if (skill_name or "") != SQUARE_SKILL:
+    """skill 执行结果 → 台账。仅 square-post / square-rich-post 生效；任何异常都静默。"""
+    if (skill_name or "") not in (SQUARE_SKILL, RICH_SKILL):
         return None
     try:
         out = output or ""
@@ -263,7 +283,27 @@ def record_from_run(skill_name: str, arg_s: str, output: str, exit_code: int,
             if not err:
                 err = (out or "").strip()[-300:] or f"exit={exit_code}"
 
-        meta = _extract_meta(arg_s)
+        if skill_name == RICH_SKILL:
+            # rich 技能：从输出解析产物目录，读回 title/article；发布结果同样取 ID/Link
+            m_dir = re.search(r"已合成 → (\S+)", out)
+            kind, text, title = "article", "", ""
+            if m_dir and os.path.isdir(m_dir.group(1)):
+                d = m_dir.group(1)
+                try:
+                    title = open(os.path.join(d, "title.txt"), encoding="utf-8").read().strip()
+                except Exception:
+                    title = ""
+                try:
+                    text = open(os.path.join(d, "article.txt"), encoding="utf-8").read().strip()
+                except Exception:
+                    text = ""
+            else:
+                meta = _extract_meta(arg_s)
+                kind, text, title = meta["kind"], meta["text"], meta["title"]
+        else:
+            meta = _extract_meta(arg_s)
+            kind, text, title = meta["kind"], meta["text"], meta["title"]
+
         m_id = re.search(r"\bID:\s*(\S+)", out)
         m_link = re.search(r"\bLink:\s*(\S+)", out)
         post_id = (m_id.group(1).strip() if m_id else "").strip()
@@ -274,8 +314,8 @@ def record_from_run(skill_name: str, arg_s: str, output: str, exit_code: int,
             share_url = f"{POST_URL_PREFIX}{post_id}"
 
         return append_record(
-            kind=meta["kind"], text=meta["text"], title=meta["title"],
-            tags=_extract_tags(meta["text"], meta["title"]),
+            kind=kind, text=text, title=title,
+            tags=_extract_tags(text, title),
             post_id=post_id, share_url=share_url,
             status="failed" if failed else "posted",
             error=err if failed else "", via=via,

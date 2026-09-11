@@ -1637,6 +1637,46 @@ def klines_closes(sym: str, interval: str = "1h", limit: int = 24, market: str =
     return closes
 
 
+_klines_ohlcv_cache: dict = {}   # (market, sym, interval, limit) -> (ts, dict)
+
+
+def klines_ohlcv(sym: str, interval: str = "1d", limit: int = 90, market: str = "futures") -> dict:
+    """最近 N 根 K 线完整 OHLCV + 开盘时间(ms)（旧→新，含当前未收 bar）。
+    square-rich-post 图表引擎用；5 分钟缓存，拉新失败回退旧缓存，完全失败返回空表。"""
+    key = (market, sym, interval, int(limit))
+    now = time.time()
+    hit = _klines_ohlcv_cache.get(key)
+    if hit and now - hit[0] < 300:
+        return hit[1]
+    out = {"opens": [], "highs": [], "lows": [], "closes": [], "vols": [], "times": []}
+    try:
+        if market == "futures":
+            r = _session.get(f"{FAPI}/fapi/v1/klines",
+                             params={"symbol": sym, "interval": interval, "limit": int(limit)}, timeout=10)
+            r.raise_for_status()
+            raw = r.json() or []
+        else:
+            raw = _klines_raw(sym, interval, int(limit))
+        for x in raw:
+            try:
+                out["times"].append(int(x[0]))
+                out["opens"].append(float(x[1]))
+                out["highs"].append(float(x[2]))
+                out["lows"].append(float(x[3]))
+                out["closes"].append(float(x[4]))
+                out["vols"].append(float(x[5]))
+            except (TypeError, ValueError, IndexError):
+                continue
+    except Exception:
+        pass
+    if out["closes"]:
+        _klines_ohlcv_cache[key] = (now, out)
+    elif hit:
+        out = hit[1]
+        _klines_ohlcv_cache[key] = (now, out)
+    return out
+
+
 _oi_cache: dict = {}             # sym -> (ts, oi_base, price)
 
 
