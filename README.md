@@ -38,30 +38,23 @@
 
 ---
 
-## 🆕 Fresh out of the lab — v1.5.19 → v1.5.26
+## 🎯 Why BAZZ.AGENT — not another chatbox
 
-| | Highlight | What it means |
-|---|---|---|
-| 🛡 | **Auto proxy failover** | Skill network call dies? The app live-tests every proxy node (api + www + image CDN, the *real* publish chain), switches to a working one and **retries by itself** — 6 attempts across 2 nodes, zero babysitting. |
-| 📣 | **Rich Square publishing** | One sentence → auto market data + Pillow dark cover + 24h chart + SMC-structured article (BOS/CHoCH · OTE 0.618–0.705 · OB · FVG → position plan) → **short-post with images** to Binance Square. |
-| 🖥 | **Close-to-Tray** | ✕ asks once: *minimize to tray or quit?* Tray mode keeps **cron monitors & update checks running with the window closed**. Left-click tray to return, right-click to exit. |
-| 🖼 | **In-app image viewer** | Click any png/jpg/webp in the file manager → instant preview; viewer now minimizes to a corner pill so you can keep it open while trading. |
-| 🔄 | **Delta auto-update** | MANIFEST diff → only changed files (~MB, not the whole bundle), SHA256-verified, background-prefetched, applied in ~1s, **with install-version guard** (never downgrades). |
-| 🌐 | **Built-in proxy pool** | Import nodes/subscriptions, latency-test kernels (vless/vmess/hysteria2 via bundled mihomo), one-click enable — **all app traffic** routes through it, loopback excluded. |
+<div align="center">
 
----
+**AI assistants all talk. BAZZ.AGENT acts — but only after you nod.**
 
-## 🎯 It is not another chatbox
+</div>
 
-AI assistants all **talk**. BAZZ.AGENT **acts** — but you must approve first.
+| 😴 Typical AI chatbox | ⚡ BAZZ.AGENT |
+|---|---|
+| ❌ A chat skin taped over the Binance REST API | ✅ Runs on **Agent OS native protocols** — MCP · Agentic Wallet · x402 · Skill Hub |
+| ❌ Answers end with *"you could consider buying…"* | ✅ Ends with a **Confirm card** — real orders fire only after you nod |
+| ❌ Forgets you the moment the session ends | ✅ **Long-term memory** learns your preferences & risk anchors across sessions |
+| ❌ Black-box signals you can't audit | ✅ **Human-in-the-loop by default** — every step logged, nothing silent |
+| ❌ Pastes a chart widget and calls it "market analysis" | ✅ **Real radar** — full-market scan, funding / OI / long-short / Fear & Greed, zero key |
 
-This is **not** a chat skin over the Binance API. It is an **agent operating system** running inside your Binance account:
-
-- It reads the **real market** exposed by Agent OS;
-- It drives the **four native capabilities** (MCP / Wallet / x402 / Skill Hub) directly;
-- Every sensitive action (order / transfer / signed payment) drops a `Confirm` card into the chat — **executed only after you click it**, on your real keys / keyless MPC wallet.
-
-The cockpit is a Hermes-style three-pane **trading desk**:
+## 🖥 The cockpit — a Hermes-style trading desk
 
 ```
 ┌──────────────┬─────────────────────────────┬──────────────────┐
