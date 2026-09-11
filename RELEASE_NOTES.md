@@ -1,4 +1,26 @@
-﻿# BAZZ.AGENT v1.5.15
+﻿# BAZZ.AGENT v1.5.19
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.19 更新要点（技能网络兜底 · 广场发文路由 · 技能绑定补全）
+
+### 1. 技能网络失败自动切代理重试
+- 技能执行失败且命中网络错误特征（fetch failed / 超时 / ECONNRESET 等）时，自动实测代理池：先测当前节点 → 按延迟逐个激活实测（内核型自动拉起 mihomo 并切 selector）→ 找到能连通币安的节点后**带代理重试一次**
+- Agent 主路径（exec_sandbox）与手动运行路径（skills_client）双覆盖；输出标注 `[auto-proxy]` 结果
+- square-post 报错带出底层原因码（如 ETIMEDOUT）与「设置 → 代理池」自助指引；失败分诊区分「已重试仍失败（节点全挂）」与「池子无可用节点」
+
+### 2. 广场发文路由修复
+- 此前所有「发广场」都路由到 square-post 裸发文本，Agent 会自己手写简版文绕过富媒体管线（丢 SMC 推理链 / 仓位算法 / GitHub 链接 / 封面）
+- 现在改为两级路由：**生成文章 / 行情文 / 深度分析发文 → 默认 square-rich-post**（自动取数 + Pillow 封面 + 固定结构组稿 + $cashtag/#hashtag）；只有用户给了现成正文 / 短帖 / 视频才走 square-post；改稿重发用 `--reuse <目录>`
+- rich 发布同样记入广场台账
+
+### 3. 9 个已装技能补入提示词路由
+- news-sentiment（新闻情绪）/ portfolio-review（资产复盘）/ track-monitor（妖币复查）/ query-token-audit（代币审计）/ query-address-info（地址持仓）/ binance-tokenized-securities-info（代币化美股）/ binance-trading-signal（合约聪明钱）/ binance-sports-ai-analyzer（赛事预测）此前从未绑定，Agent 遇到相关需求不会调用——已按各技能真实 CLI 用法逐一接入，并留空参返回用法指引的兜底
+- 工具注册表与 run_command 白名单全量核对：无死引用、无阻断
+
+## 📜 历史版本
+
+# BAZZ.AGENT v1.5.15
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
 
