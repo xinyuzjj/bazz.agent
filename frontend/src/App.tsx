@@ -13,6 +13,8 @@ import { PanicHaltModal } from "./views/PanicHaltModal";
 import { I18nProvider, useI18n } from "./i18n/i18n";
 import UpdateNotifier from "./components/UpdateNotifier";
 import Toasts from "./components/Toasts";
+import AppDialogHost, { showAppDialog } from "./components/ConfirmDialog";
+import { useT } from "./i18n/i18n";
 import { ThemeProvider } from "./theme/theme";
 
 // 兜底：捕获子树渲染错误，渲染降级提示而不让整页崩
@@ -65,6 +67,26 @@ function AppInner() {
       sessionStorage.setItem("llm-hint-shown", "1");
     }
   }, [settings]);
+
+  // v1.5.27：点 X 的「托盘 / 退出」询问——主进程转发到渲染层，用应用内美化弹窗替代系统原生弹窗
+  const t = useT();
+  useEffect(() => {
+    const bw = (window as any).bazzWindow;
+    if (!bw?.onAskClose || !bw?.answerClose) return;
+    return bw.onAskClose(() => {
+      showAppDialog({
+        title: t("dialog.closeTitle"),
+        detail: t("dialog.closeDetail"),
+        choices: [
+          { id: "tray", label: t("dialog.closeTray") },
+          { id: "quit", label: t("dialog.closeQuit"), variant: "danger" },
+        ],
+        layout: "list",
+        checkbox: { label: t("dialog.closeRemember") },
+        cancelId: "cancel",   // Esc / 点遮罩 / 关闭按钮 = 取消，留在当前窗口
+      }).then((r) => bw.answerClose(r));
+    });
+  }, [t]);
 
   // 从行情/妖币/对话带 symbol 跳到 CEX；妖币模式决定现货还是合约、方向
   // useCallback：保持引用稳定，让 MarketsView 的 memo 行组件不至于随状态轮询整表重渲
@@ -173,6 +195,7 @@ function AppInner() {
       />
       <UpdateNotifier />
       <Toasts />   {/* v1.4.0：全局事件通知（订单状态 / SL·TP 提醒）——应用内 toast + 系统通知 */}
+      <AppDialogHost />   {/* v1.5.27：全局美化弹窗（替代 window.confirm / 系统原生 dialog） */}
     </>
   );
 }

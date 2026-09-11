@@ -158,6 +158,18 @@ body {
 }
 .btn-halt:hover { background: var(--red); color: #fff; }
 
+/* ---- 全局美化弹窗（ConfirmDialog）---- */
+@keyframes dialog-pop {
+  from { opacity: 0; transform: scale(0.94) translateY(8px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+.dialog-pop { animation: dialog-pop 160ms cubic-bezier(0.22, 1, 0.36, 1); }
+@keyframes dialog-pop-out {
+  from { opacity: 1; transform: scale(1) translateY(0); }
+  to   { opacity: 0; transform: scale(0.96) translateY(6px); }
+}
+.dialog-pop-out { animation: dialog-pop-out 140ms ease-in forwards; }
+
 /* Inputs */
 .field {
   width: 100%;

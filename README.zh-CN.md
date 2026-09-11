@@ -1,4 +1,4 @@
-<img src="https://capsule-render.vercel.app/api?type=waving&height=240&color=0:0d0d1a,50:f0b90b,100:7a5c00&section=header&text=BAZZ.AGENT&fontSize=78&fontColor=ffffff&fontAlignY=34&desc=%E2%9A%A1%20%E4%BD%A0%E7%9A%84%E5%B8%81%E5%AE%89%E5%89%AF%E9%A9%BE%E9%A9%B6%20%C2%B7%20%E5%87%BA%E6%89%8B%E4%B9%8B%E5%89%8D%EF%BC%8C%E5%85%88%E9%97%AE%E4%BD%A0&descSize=19&descAlignY=55&animation=twinkling" width="100%" alt="BAZZ.AGENT 横幅"/>
+﻿<img src="https://capsule-render.vercel.app/api?type=waving&height=240&color=0:0d0d1a,50:f0b90b,100:7a5c00&section=header&text=BAZZ.AGENT&fontSize=78&fontColor=ffffff&fontAlignY=34&desc=%E2%9A%A1%20%E4%BD%A0%E7%9A%84%E5%B8%81%E5%AE%89%E5%89%AF%E9%A9%BE%E9%A9%B6%20%C2%B7%20%E5%87%BA%E6%89%8B%E4%B9%8B%E5%89%8D%EF%BC%8C%E5%85%88%E9%97%AE%E4%BD%A0&descSize=19&descAlignY=55&animation=twinkling" width="100%" alt="BAZZ.AGENT 横幅"/>
 
 <div align="center">
 
@@ -12,7 +12,7 @@
 
 <div align="center">
 
-[![Release](https://img.shields.io/github/v/release/xinyuzjj/bazz.agent?logo=github&logoColor=white&label=v1.5.26&color=f0b90b)](https://github.com/xinyuzjj/bazz.agent/releases/latest)
+[![Release](https://img.shields.io/github/v/release/xinyuzjj/bazz.agent?logo=github&logoColor=white&label=v1.5.27&color=f0b90b)](https://github.com/xinyuzjj/bazz.agent/releases/latest)
 [![Download](https://img.shields.io/badge/⬇_下载-setup.exe-2ea44f?logo=windows&logoColor=white)](https://github.com/xinyuzjj/bazz.agent/releases/latest)
 [![Delta](https://img.shields.io/badge/🔄_增量更新-只下变更-4a9eff)](#-增量自动更新)
 [![Pages](https://img.shields.io/badge/🎬_在线演示-Pages-181717?logo=githubpages&logoColor=white)](https://xinyuzjj.github.io/bazz.agent/)

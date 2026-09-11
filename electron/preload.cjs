@@ -15,4 +15,12 @@ contextBridge.exposeInMainWorld("bazzWindow", {
   getPid: () => ipcRenderer.invoke("bazz:app-pid"),
   // v1.2.11：统一通过主进程用系统默认浏览器打开外链（设置里的 GitHub 下载页、release 页等）
   openUrl: (url) => ipcRenderer.send("bazz:open-url", url),
+  // v1.5.27：点 X 的「托盘 / 退出」询问改由应用内美化弹窗承担——
+  // 主进程发 ask-close，渲染层弹窗后把选择回传 answer-close
+  onAskClose: (cb) => {
+    const handler = () => { try { cb(); } catch {} };
+    ipcRenderer.on("bazz:ask-close", handler);
+    return () => ipcRenderer.removeListener("bazz:ask-close", handler);
+  },
+  answerClose: (payload) => ipcRenderer.send("bazz:answer-close", payload),
 });

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { I } from "../components/icons";
 import { useI18n } from "../i18n/i18n";
+import { confirmDialog } from "../components/ConfirmDialog";
 
 /* Hermes 跨会话长期记忆与偏好中枢 —— 真实数据驱动版
  *
@@ -131,13 +132,13 @@ function MemoryBody({ onClose }: { onClose?: () => void }) {
     } finally { setBusy(false); }
   };
   const del = async (key: string) => {
-    if (!window.confirm(t("mem.delConfirm", { key }))) return;
+    if (!(await confirmDialog(t("mem.delConfirm", { key }), { danger: true }))) return;
     await api.deleteMemory(key);
     await load();
   };
   const resetAll = async () => {
     if (!items.length) return;
-    if (!window.confirm(t("mem.clearConfirm", { n: items.length }))) return;
+    if (!(await confirmDialog(t("mem.clearConfirm", { n: items.length }), { danger: true }))) return;
     setBusy(true);
     try {
       // 顺序删除所有 key（并行请求可能撞锁）

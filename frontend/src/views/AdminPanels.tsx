@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { api, authHeaders } from "../api";
 import { I } from "../components/icons";
 import { useT, useI18n } from "../i18n/i18n";
+import { confirmDialog } from "../components/ConfirmDialog";
 
 /* ============================================================
  * Cron 面板（真实 /api/cron）— 完善版：自然语言解析 / 任务类型枚举 / 状态高亮
@@ -80,7 +81,7 @@ export function CronPanel() {
     finally { setBusy(""); }
   };
   const toggle = async (j: any) => { await api.toggleCron(j.id, !j.enabled); load(); };
-  const remove = async (j: any) => { if (!window.confirm(t("admin.cron.delConfirm", { name: j.name }))) return; await api.deleteCron(j.id); load(); };
+  const remove = async (j: any) => { if (!(await confirmDialog(t("admin.cron.delConfirm", { name: j.name }), { danger: true }))) return; await api.deleteCron(j.id); load(); };
   const runNow = async (j: any) => {
     setBusy(j.id);
     try {
@@ -362,7 +363,7 @@ export function McpPanel() {
     try { await api.addMcp({ name: f.name.trim(), url: f.url.trim(), auth: f.auth, description: f.description }); setAdding(false); setF({ name: "", url: "", auth: "oauth", description: "" }); await load(); }
     catch (e: any) { setMsg(String(e?.message ?? e)); }
   };
-  const remove = async (s: any) => { if (!window.confirm(t("admin.mcp.delConfirm", { name: s.name }))) return; await api.deleteMcp(s.name); load(); };
+  const remove = async (s: any) => { if (!(await confirmDialog(t("admin.mcp.delConfirm", { name: s.name }), { danger: true }))) return; await api.deleteMcp(s.name); load(); };
   const toggle = async (s: any) => { await api.toggleMcp(s.name, !s.enabled); load(); };
   const tools = async (s: any) => {
     setBusy(s.name);

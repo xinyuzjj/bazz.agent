@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useT } from "../i18n/i18n";
+import { confirmDialog } from "../components/ConfirmDialog";
 
 // 代理池配置（v1.3.7）—— 仿 Ant Browser：导入代理 / 订阅 / 测速 / 一键启用；
 // hysteria2 等内核协议由可下载的 mihomo 内核转发，http/socks 节点直连。
@@ -96,7 +97,7 @@ export function ProxyPoolView({ embedded = false }: { embedded?: boolean }) {
   };
 
   const del = async (id: string) => {
-    if (!confirm(t("proxy.delConfirm"))) return;
+    if (!(await confirmDialog(t("proxy.delConfirm"), { danger: true }))) return;
     setBusy("d-" + id);
     try { await api.proxyDelete(id); await load(); }
     catch (e: any) { flash("err", e?.message || String(e)); }

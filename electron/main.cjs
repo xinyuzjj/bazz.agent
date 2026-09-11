@@ -3,7 +3,7 @@
 //   开发/仓库内  : electron .  → 拉起 .venv python desktop_app.py，加载后端托管页面
 //   打包分发 exe : app.isPackaged → 拉起内嵌 ScoutBackend.exe（resources/scout-bundle），
 //                  加载后端托管页面（默认 8080，被占自动换端口）；/api/* 走本机随机 token 鉴权
-const { app, BrowserWindow, ipcMain, shell, Tray, Menu, dialog, nativeImage } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, Tray, Menu, nativeImage } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
@@ -138,6 +138,18 @@ ipcMain.on("bazz:win-max-toggle", () => {
   if (mainWin.isMaximized()) mainWin.unmaximize(); else mainWin.maximize();
 });
 ipcMain.on("bazz:win-close", () => { if (mainWin && !mainWin.isDestroyed()) mainWin.close(); });
+
+// v1.5.27：点 X 的「托盘 / 退出」询问——渲染层应用内弹窗的选择回传到这里
+let closeAskPending = false;
+ipcMain.on("bazz:answer-close", (_e, payload) => {
+  closeAskPending = false;
+  const choice = payload && typeof payload.choice === "string" ? payload.choice : "";
+  if (choice === "cancel") return;           // Esc / 点遮罩 / 关闭按钮 = 取消，留在当前窗口
+  const pick = choice === "quit" ? "quit" : "tray";
+  if (payload && payload.checked) savePrefs({ ...loadPrefs(), closeMode: pick });
+  if (pick === "tray") hideToTray();
+  else { isQuitting = true; app.quit(); }
+});
 
 // v1.2.11：统一通过主进程用系统默认浏览器打开外链（设置里点「打开下载页」等）
 //   只放行 http(s)，避免渲染层误传 file:// / javascript: 等触发任意协议
@@ -306,30 +318,23 @@ function createWindow() {
   mainWin.setMenuBarVisibility(false);
   mainWin.on("page-title-updated", (e) => e.preventDefault());   // 固定产品名，不被页面 title 覆盖
   // v1.5.26：点 X → 询问「最小化到托盘 / 退出」，可勾选记住选择；托盘模式下窗口只隐藏不销毁
+  // v1.5.27：询问弹窗由应用内美化弹窗（渲染层）承担——主进程发 bazz:ask-close，渲染层回 bazz:answer-close
   mainWin.on("close", (e) => {
     if (isQuitting) return;
     const mode = loadPrefs().closeMode;
     if (mode === "quit") return;               // 记住过「退出」→ 放行
-    if (mode !== "tray") {
-      e.preventDefault();
-      dialog.showMessageBox(mainWin, {
-        type: "question",
-        buttons: ["最小化到托盘", "退出应用"],
-        defaultId: 0, cancelId: 0,
-        checkboxLabel: "记住我的选择，不再询问",
-        checkboxChecked: false,
-        title: APP_TITLE,
-        message: "关闭窗口时想做什么？",
-        detail: "最小化到托盘：应用与后台任务（定时监控、行情、更新检查）继续运行，点任务栏托盘图标可随时回到窗口。",
-      }).then(({ response, checkboxChecked }) => {
-        const pick = response === 0 ? "tray" : "quit";
-        if (checkboxChecked) savePrefs({ ...loadPrefs(), closeMode: pick });
-        if (pick === "tray") hideToTray(); else { isQuitting = true; app.quit(); }
-      }).catch(() => {});
-      return;
-    }
-    e.preventDefault();                        // 记住过「托盘」→ 静默隐藏
-    hideToTray();
+    e.preventDefault();
+    if (mode === "tray") { hideToTray(); return; }   // 记住过「托盘」→ 静默隐藏
+    if (!mainWin || mainWin.isDestroyed() || closeAskPending) return;
+    closeAskPending = true;
+    try { mainWin.webContents.send("bazz:ask-close"); } catch { closeAskPending = false; hideToTray(); return; }
+    // 兜底：页面尚未加载完成（收不到/答不了 IPC）→ 1.5s 后直接隐藏到托盘，关闭操作不卡死
+    setTimeout(() => {
+      if (!closeAskPending || !mainWin || mainWin.isDestroyed()) return;
+      let loading = true;
+      try { loading = mainWin.webContents.isLoading(); } catch {}
+      if (loading) { closeAskPending = false; hideToTray(); }
+    }, 1500);
   });
   mainWin.once("ready-to-show", swapToMain);
   mainWin.on("maximize", () => mainWin.webContents.send("bazz:win-max-changed", true));

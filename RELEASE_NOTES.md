@@ -115,6 +115,28 @@
 - 选择「退出」或托盘菜单「退出」才真正退出（后端随之一并结束）
 - 偏好存 userData/window-prefs.json；无托盘图标资源的裸 dev 环境回退为直接退出
 
+# BAZZ.AGENT v1.5.27
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.27 更新要点（全局美化弹窗：告别系统原生白框）
+
+### 1. 全新应用内弹窗组件（ConfirmDialog）
+- 深色玻璃卡片（glass-bright）+ 遮罩背景模糊 + 淡入缩放动画，与主界面设计系统完全统一
+- 普通确认用金色主按钮；删除类危险操作自动切换红色警示主题
+- 支持 Esc 取消 / Enter 确认 / 点遮罩关闭；「记住我的选择」金色自绘勾选框
+- 文案跟随应用语言（中/英 i18n 新增 dialog.* 键）
+
+### 2. 全部原生 confirm 替换（11 处）
+- 删除会话 / 群聊房间 / Agent / 工作区文件 / 踢出群成员（ChatView ×5）
+- 代理池节点删除（ProxyPoolView）、Cron 任务删除 / MCP 服务删除（AdminPanels ×2）
+- 记忆条目删除 / 一键清空（MemoryOverlay ×2）——原 window.confirm 系统白框全部下线
+
+### 3. 关窗询问弹窗同步美化
+- 点 X 的「最小化到托盘 / 退出应用」询问由 Electron 原生 dialog 改为应用内弹窗（IPC 双向：主进程 ask-close → 渲染层弹窗 → answer-close）
+- 竖排选项卡 + → 箭头指示，退出应用红色警示；Esc/点遮罩 = 取消，留在当前窗口
+- 兜底：页面未就绪收不到 IPC 时 1.5s 后自动隐藏到托盘，关闭操作不卡死
+
 ## 📜 历史版本
 
 # BAZZ.AGENT v1.5.15

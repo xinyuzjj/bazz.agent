@@ -5,6 +5,7 @@ import { AgentSigninCard, ChainWalletPanel, Spin } from "../components/WalletBit
 import { AgentAvatar, Blobatar } from "../components/Blobatar";
 import { useT } from "../i18n/i18n";
 import { pushToast } from "../components/Toasts";
+import { confirmDialog } from "../components/ConfirmDialog";
 
 type ChatMsg = {
   id: string; role: "user" | "assistant"; text: string;
@@ -244,7 +245,7 @@ export function ChatView({
   const togglePick = (name: string) =>
     setGPicked((prev) => prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]);
   const delRoom = async (rid: string) => {
-    if (!window.confirm(t("chat.confirmDelRoom"))) return;
+    if (!(await confirmDialog(t("chat.confirmDelRoom"), { danger: true }))) return;
     try { await api.deleteRoom(rid); } catch {}
     refreshList();
     if (convId === rid) { setConvId(null); setMessages([]); }
@@ -302,7 +303,7 @@ export function ChatView({
   };
   const delConv = async (cid: string) => {
     if (streaming) return;
-    if (!window.confirm(t("chat.confirmDelSession"))) return;
+    if (!(await confirmDialog(t("chat.confirmDelSession"), { danger: true }))) return;
     try { await api.deleteConversation(cid); } catch (e: any) { pushToast(t("common.opFailed"), String(e?.message ?? e).slice(0, 120), "bad"); }
     setConvMenu(null);
     refreshList();
@@ -415,7 +416,7 @@ export function ChatView({
     } catch (e: any) { setBotMsg(t("chat.botSaveFail", { err: e?.message ?? e })); }
   };
   const removeAgent = async (b: Agent) => {
-    if (!window.confirm(t("chat.confirmDelAgent", { name: b.name }))) return;
+    if (!(await confirmDialog(t("chat.confirmDelAgent", { name: b.name }), { danger: true }))) return;
     try { await api.deleteBot(b.id); if (activeBot?.id === b.id) setActiveBot(null); await loadAgents(); }
     catch (e: any) { setBotMsg(String(e?.message ?? e)); }
   };
@@ -971,7 +972,7 @@ export function ChatView({
   // 删除文件/目录（文件浏览器每行右侧的删除按钮）：state.db 二次确认（存着全部会话与记忆）
   const deleteFile = async (name: string) => {
     const full = fileCwd ? `${fileCwd}/${name}` : name;
-    if (!window.confirm(t(name === "state.db" ? "chat.fileDeleteConfirmDb" : "chat.fileDeleteConfirm", { name }))) return;
+    if (!(await confirmDialog(t(name === "state.db" ? "chat.fileDeleteConfirmDb" : "chat.fileDeleteConfirm", { name }), { danger: true }))) return;
     try {
       await api.workspaceDelete(full);
       pushLog(`DEL > ${full}`);
@@ -1385,7 +1386,7 @@ export function ChatView({
                   if (!ag) return null;
                   return (
                     <button key={mn} title={t("chat.kickMember", { name: mn })} onClick={async () => {
-                      if (!window.confirm(t("chat.confirmKick", { name: mn }))) return;
+                      if (!(await confirmDialog(t("chat.confirmKick", { name: mn }), { danger: true, confirmText: t("dialog.ok") }))) return;
                       try { await api.roomMembers(roomInfo.id, "remove", mn); refreshList(); } catch (e: any) { setRoomMsg(String(e?.message ?? e)); }
                     }}
                       className="flex items-center gap-1 pr-1.5 py-0.5 rounded-full border border-line bg-card/60 hover:border-red/50 group/mem" style={{ borderColor: `${ag.color}44` }}>
