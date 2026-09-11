@@ -972,6 +972,34 @@ def workspace_read(path: str = ""):
     }
 
 
+_IMG_EXT_MEDIA = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+    ".svg": "image/svg+xml", ".ico": "image/x-icon",
+}
+_MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20MB 图片上限
+
+
+@app.get("/api/workspace/raw")
+def workspace_raw(path: str = ""):
+    """图片原文端点（v1.5.24）：文件管理器点图片直接预览，不再落入「二进制不可预览」。
+
+    仅扩展名白名单（png/jpg/jpeg/gif/webp/bmp/svg/ico）；路径经 _resolve_workspace_subpath
+    防越界；鉴权走 /api/* 统一中间件；前端 fetch blob（带 token）后 objectURL 展示。"""
+    try:
+        target = _resolve_workspace_subpath(path)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    if not os.path.isfile(target):
+        return JSONResponse({"error": "文件不存在", "path": path}, status_code=404)
+    media = _IMG_EXT_MEDIA.get(os.path.splitext(target)[1].lower())
+    if not media:
+        return JSONResponse({"error": "仅支持图片预览（png/jpg/jpeg/gif/webp/bmp/svg/ico）"}, status_code=415)
+    if os.path.getsize(target) > _MAX_IMAGE_BYTES:
+        return JSONResponse({"error": f"图片过大（>{_MAX_IMAGE_BYTES // 1024 // 1024}MB）"}, status_code=413)
+    return FileResponse(target, media_type=media)
+
+
 @app.delete("/api/workspace/file")
 def workspace_delete(path: str = ""):
     """删除工作区内文件/目录（文件浏览器「删除」按钮后端）。

@@ -79,6 +79,18 @@
 - `api()` 与 S3 `uploadToS3()` 现在对网络类错误（ETIMEDOUT/ECONNRESET/ECONNREFUSED/UND_ERR 等）**自动重试 3 次**（3s/6s 退避），业务错误（401/参数）仍立即抛
 - 叠加 APP 侧的换节点重试，单次发文最多 6 次尝试、跨 2 个节点
 
+# BAZZ.AGENT v1.5.24
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.24 更新要点（文件管理器图片可直接预览）
+
+### 图片预览支持
+- 此前文件列表里点图片（png/jpg 等）一律显示「二进制文件，不可文本预览」——查看器只有文本一个分支
+- 新增后端原文端点 `/api/workspace/raw`（扩展名白名单 png/jpg/jpeg/gif/webp/bmp/svg/ico，路径防越界，20MB 上限，走 /api/* 统一鉴权）
+- 前端点图片 → 带 token 拉取 blob → 弹窗内直接渲染 `<img>`（深色底居中、最高 58vh），关闭时释放 objectURL
+- state.db 等非图片二进制行为不变（仍提示不可文本预览 + 删除按钮）
+
 ## 📜 历史版本
 
 # BAZZ.AGENT v1.5.15

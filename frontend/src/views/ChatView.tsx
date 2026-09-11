@@ -70,7 +70,7 @@ export function ChatView({
   const [log, setLog] = useState<{ ts: string; line: string }[]>([]);
   const [files, setFiles] = useState<any[]>([]);
   const [fileCwd, setFileCwd] = useState("");
-  const [fileModal, setFileModal] = useState<{ name: string; path: string; size: number; is_text: boolean; content: string; too_large?: boolean; loading: boolean; error?: string } | null>(null);
+  const [fileModal, setFileModal] = useState<{ name: string; path: string; size: number; is_text: boolean; content: string; too_large?: boolean; loading: boolean; error?: string; img_url?: string } | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [convMenu, setConvMenu] = useState<string | null>(null); // 当前展开 ⋮ 菜单的会话 id
   // v1.4.3 会话搜索：防抖调 /api/conversations/search；convHits 非空 = 搜索态（列表显示命中结果）
@@ -2028,6 +2028,12 @@ export function ChatView({
                 <div className="font-mono text-[12px] text-red">⚠ {fileModal.error}</div>
               ) : fileModal.too_large ? (
                 <div className="font-mono text-[12px] text-ink-mute">{t("chat.fileTooLarge")}<span className="text-ink">{fileModal.path}</span></div>
+              ) : fileModal.img_url ? (
+                <div className="flex items-center justify-center">
+                  <img src={fileModal.img_url} alt={fileModal.name}
+                       className="max-w-full rounded-md"
+                       style={{ maxHeight: "58vh", objectFit: "contain" }} />
+                </div>
               ) : !fileModal.is_text ? (
                 <div className="font-mono text-[12px] text-ink-mute">{t("chat.fileBinPrev", { size: fmtSize(fileModal.size) })}</div>
               ) : (

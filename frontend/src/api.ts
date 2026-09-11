@@ -72,6 +72,12 @@ export const api = {
     jget("/workspace/files?path=" + encodeURIComponent(path)),
   workspaceRead: (path: string) =>
     jget("/workspace/read?path=" + encodeURIComponent(path)),
+  // v1.5.24：图片原文（blob URL 预览用）——带鉴权头，非 JSON
+  workspaceRawBlob: async (path: string): Promise<Blob> => {
+    const r = await fetch(BASE + "/workspace/raw?path=" + encodeURIComponent(path), { headers: authHeaders() });
+    if (!r.ok) throw new Error(await r.text());
+    return r.blob();
+  },
   workspaceDelete: (path: string) =>
     jdel("/workspace/file?path=" + encodeURIComponent(path)),
   approvalWhitelist: () => jget("/approvals/whitelist"),
