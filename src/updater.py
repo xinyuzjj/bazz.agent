@@ -960,6 +960,8 @@ def apply(zip_path: str, wait_pid: int = 0) -> dict:
 def resume_pending_update() -> dict:
     """v1.5.13 兜底：上次会话 spawn PowerShell 静默失败（应用已退出但安装器没跑）时，
     开机检测 update-cache 遗留的 *-setup.exe + apply-update-setup.ps1 → 补跑安装。
+    v1.5.17 版本守卫：遗留包版本 ≤ 本地版本时绝不安装（否则新版本装完开机又被旧包降级，
+    v1.5.16 实测踩坑），直接清掉遗留包与陈旧脚本/分段残片。
     尝试计数防死循环：连续 3 次仍未成功则停止自动重试，保留现场供排查。
     安装成功后 ps1 会清掉 setup.exe；新一轮 apply() 会清掉计数文件。"""
     if not is_packaged():
@@ -973,6 +975,19 @@ def resume_pending_update() -> dict:
         return {"resumed": False, "reason": "cache-unreadable"}
     if not (os.path.exists(ps1) and setups):
         return {"resumed": False}
+    setup = setups[0]
+    # 版本守卫：从文件名解析 BAZZ.AGENT-v<ver>-setup.exe；解析不出或 ≤ 本地版本 → 清理不安装
+    m = re.search(r"v(\d+\.\d+\.\d+)", os.path.basename(setup))
+    if m and _ver_tuple(m.group(1)) <= _ver_tuple(_local_version()):
+        print(f"[updater] 遗留更新包 {os.path.basename(setup)} 不比当前版本新，清理跳过恢复安装")
+        for junk in ([setup, ps1] +
+                     [os.path.join(cache, f) for f in os.listdir(cache)
+                      if f.endswith(".part") or re.search(r"\.part\.s\d+$", f)]):
+            try:
+                os.remove(junk)
+            except OSError:
+                pass
+        return {"resumed": False, "reason": "stale-package"}
     cnt_file = os.path.join(cache, "apply-attempts.txt")
     try:
         with open(cnt_file, "r", encoding="utf-8") as f:
@@ -988,6 +1003,6 @@ def resume_pending_update() -> dict:
             f.write(str(n + 1))
     except Exception:
         pass
-    r = apply(setups[0], wait_pid=0)
+    r = apply(setup, wait_pid=0)
     print(f"[updater] 开机恢复安装（第 {n + 1} 次尝试）：{r}")
     return {"resumed": True, "attempt": n + 1, "result": r}
