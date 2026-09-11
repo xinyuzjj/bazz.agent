@@ -1,28 +1,10 @@
+<img src="https://capsule-render.vercel.app/api?type=waving&height=240&color=0:0d0d1a,50:f0b90b,100:7a5c00&section=header&text=BAZZ.AGENT&fontSize=78&fontColor=ffffff&fontAlignY=34&desc=%E2%9A%A1%20%E4%BD%A0%E7%9A%84%E5%B8%81%E5%AE%89%E5%89%AF%E9%A9%BE%E9%A9%B6%20%C2%B7%20%E5%87%BA%E6%89%8B%E4%B9%8B%E5%89%8D%EF%BC%8C%E5%85%88%E9%97%AE%E4%BD%A0&descSize=19&descAlignY=55&animation=twinkling" width="100%" alt="BAZZ.AGENT 横幅"/>
+
 <div align="center">
 
-```
-╔══════════════════════════════════════════════════════════════╗
-║                                                              ║
-║   ██████╗  █████╗  ███████╗███████╗   █████╗  ██████╗ ███████╗ ║
-║   ██╔══██╗██╔══██╗╚══███╔╝╚══███╔╝  ██╔══██╗██╔════╝ ██╔════╝ ║
-║   ██████╔╝███████║  ███╔╝    ███╔╝   ███████║██║  ███╗█████╗   ║
-║   ██╔══██╗██╔══██║ ███╔╝    ███╔╝    ██╔══██║██║   ██║██╔══╝   ║
-║   ██████╔╝██║  ██║███████╗███████╗   ██║  ██║╚██████╔╝███████╗ ║
-║   ╚═════╝ ╚═╝  ╚═╝╚══════╝╚══════╝   ╚═╝  ╚═╝ ╚═════╝ ╚══════╝ ║
-║                                                              ║
-║          —— 你的币安副驾驶。出手之前，先问你。——           ║
-╚══════════════════════════════════════════════════════════════╝
-```
-
-# ⚡ BAZZ.AGENT — 会真正「动手」的 Agent OS
+<a href="https://git.io/typing-svg"><img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=22&pause=1200&color=F0B90B&center=true&vCenter=true&width=760&lines=%E6%89%AB%E6%8F%8F+%E2%86%92+%E5%88%86%E6%9E%90+%E2%86%92+%E6%8F%90%E6%A1%88+%E2%86%92+%E7%A1%AE%E8%AE%A4+%E2%86%92+%E6%89%A7%E8%A1%8C;MCP+%E2%80%A2+Agentic+Wallet+%E2%80%A2+x402+%E2%80%A2+Skill+Hub;%E4%B8%8D%E6%98%AF%E5%8F%88%E4%B8%80%E4%B8%AA%E8%81%8A%E5%A4%A9%E6%A1%86%E3%80%82%E4%BC%9A%E7%9C%9F%E6%AD%A3%E5%8A%A8%E6%89%8B%E3%80%82;%E7%9C%9F%E5%8D%8F%E8%AE%AE+%C2%B7+%E7%9C%9F%E6%89%A7%E8%A1%8C+%C2%B7+%E9%9B%B6%E6%A8%A1%E6%8B%9F" alt="Typing SVG"/></a>
 
 ### 把币安 Agent OS 四大原生能力熔进一条真实交易闭环
-
-**MCP · Agentic Wallet · x402 支付 · Skill Hub** —— 不是贴图挂件，是真协议、真执行。
-
-> `📡 扫描 → 🧠 分析 → 💡 提案 → ✅ 你确认 → ⚡ 执行`
->
-> **别的 AI 聊天框只会「说」，BAZZ.AGENT 会「做」——但每一枪都等你点头。**
 
 **[📖 English](./README.md) | 中文**
 
@@ -35,13 +17,14 @@
 [![Delta](https://img.shields.io/badge/🔄_增量更新-只下变更-4a9eff)](#-增量自动更新)
 [![Pages](https://img.shields.io/badge/🎬_在线演示-Pages-181717?logo=githubpages&logoColor=white)](https://xinyuzjj.github.io/bazz.agent/)
 [![EN](https://img.shields.io/badge/📖_README-English-f0b90b)](./README.md)
+[![Visitors](https://komarev.com/ghpvc/?username=xinyuzjj&repo=bazz.agent&label=访客&color=f0b90b&style=flat-square)](https://github.com/xinyuzjj/bazz.agent)
 
 [![Track A](https://img.shields.io/badge/币安_Agent_OS-Track_A-f0b90b)](#-黑客松)
-[![Python](https://img.shields.io/badge/Python-3.11-3776ab?logo=python&logoColor=white)](#-技术栈)
-[![FastAPI](https://img.shields.io/badge/FastAPI-SSE_流式-009688?logo=fastapi&logoColor=white)](#-技术栈)
-[![React](https://img.shields.io/badge/React_18-TypeScript-61dafb?logo=react&logoColor=222)](#-技术栈)
-[![Electron](https://img.shields.io/badge/Electron-无边框_·_托盘驻留-47848f?logo=electron&logoColor=white)](#-架构)
 [![License](https://img.shields.io/badge/License-MIT-success)](#-许可证)
+
+<p>
+  <a href="https://skillicons.dev"><img src="https://skillicons.dev/icons?i=py,fastapi,react,ts,vite,tailwind,electron,nodejs,sqlite,git&theme=dark" alt="技术栈"/></a>
+</p>
 
 </div>
 
@@ -63,7 +46,7 @@
 | 📣 | **广场富媒体发文** | 一句话 → 自动取行情 + Pillow 深色封面 + 24h 分时图 + SMC 结构文章（BOS/CHoCH · OTE 0.618–0.705 · OB · FVG → 仓位计划）→ **带图短贴**发上币安广场，本地台账全记录。 |
 | 🖥 | **关闭缩托盘** | 点 ✕ 弹窗选一次：**最小化到托盘 or 退出**，可记住选择。托盘模式下**定时监控、更新检查照常后台跑**。左键托盘回窗口，右键退出。 |
 | 🖼 | **应用内图片预览** | 文件管理器点 png/jpg/webp 直接看图；查看器支持**最小化成角落浮条**，边盯盘边挂着文件。 |
-| 🔄 | **增量自动更新** | MANIFEST 差分 → 只下变更文件（MB 级，不是整个包），SHA256 逐文件校验，后台预取，约 1 秒应用，**带版本守卫永不降级**。 |
+| 🔄 | **增量自动更新** | MANIFEST 差分 → 只下变更文件（MB 级），SHA256 逐文件校验，后台预取，约 1 秒应用，**版本守卫永不降级**。 |
 | 🌐 | **内置代理池** | 导入节点/订阅、内核测速（vless/vmess/hysteria2，内置 mihomo）、一键启用——**全应用流量**走代理池，本地回环除外。 |
 
 ---
@@ -91,32 +74,15 @@ AI 助手都在**说话**，BAZZ.AGENT 在**做事**——但你必须先批准�
       深色 ⇄ 浅色主题 · 中文 ⇄ EN —— 顶栏一键切换，重启不忘
 ```
 
----
-
 ## 🔁 核心闭环
 
 ```
-   ┌─────────────┐
-   │   📡 扫描    │   全市场雷达 · 妖币雷达 · 24h 盯盘
-   └──────┬──────┘
-          ▼
-   ┌─────────────┐
-   │   🧠 分析    │   多模型 LLM · 19+ 技能 · 规则引擎兜底
-   └──────┬──────┘
-          ▼
-   ┌─────────────┐
-   │   💡 提案    │   信号卡：杠杆 / 仓位 / 止盈止损
-   └──────┬──────┘
-          ▼
-   ┌─────────────┐
-   │   ✅ 确认    │   ◄── 关键：你在聊天里亲手点 Confirm
-   └──────┬──────┘
-          ▼
-   ┌─────────────┐
-   │   ⚡ 执行    │   CEX / Agentic Wallet / x402 —— 真实订单
-   └──────┬──────┘
-          └────────────► 回到扫描 ◄
+   📡 扫描 ──► 🧠 分析 ──► 💡 提案 ──► ✅ 确认 ──► ⚡ 执行
+      ▲                                            │
+      └────────────── 回到扫描 ◄────────────────────┘
 ```
+
+> 关键在 **✅ 确认**：每笔订单 / 转账 / 签名支付都等你在聊天里亲手点头。
 
 ---
 
@@ -130,14 +96,14 @@ AI 助手都在**说话**，BAZZ.AGENT 在**做事**——但你必须先批准�
 | 🧠 **长期记忆** | 跨会话学习你的偏好与风险锚点，可索引、可搜索、Memory 面板可视化。 |
 | 👛 **Agentic Wallet** | 无密钥 MPC，BSC / 以太坊 / Base / Solana 链上兑换走 `baw`；官方日限额硬约束；**私钥永远不进应用**。 |
 | 💹 **真实 CEX 交易** | 通过白名单 `binance-cli` profile 在真实账户现货 / 合约 / 兑换；CEX 与 Web3 密钥组**严格隔离**。 |
-| 🧩 **Skill Hub — 19 技能** | 19 个官方技能预装（CEX + Web3 + 研究类：代币审计、地址持仓、代币化美股、赛事 AI、新闻情绪……），意图驱动路由，防路径穿越。 |
+| 🧩 **Skill Hub — 19 技能** | 19 个官方技能预装（代币审计、地址持仓、代币化美股、赛事 AI、新闻情绪……），意图驱动路由，防路径穿越。 |
 | 📣 **广场富媒体发文** | 行情 → 封面 + 走势图 + SMC 文章 → **带图短贴**发布，本地台账留底每一帖。 |
 | 🤖 **多 Bot + 群聊** | 人格 Bot 各带技能与记忆域；建房间 @多个 Bot，轮流接话共享日志。 |
 | ⏰ **CRON 自动化** | 一句「每天 09:00 扫描行情」即可建任务；运行 / 暂停 / 手动触发——**窗口缩到托盘也照跑**。 |
 | 💸 **x402 / B402** | 机器付机器：离线 Permit2 EIP-712 签名，官方 Facilitator 验证并上链结算。 |
 | 🖥 **桌面 + Web 双形态** | 无边框 Windows 安装包（Electron + 内嵌 PyInstaller 后端，**不需要装 Python/Node**），同一套驾驶舱也能跑在浏览器里。一套代码。 |
 | 🌓 **双语 + 皮肤** | 中文 / English + 深金 ↔ 浅色，顶栏一键切换。 |
-| 🔒 **本地优先** | 会话 / 记忆 / 配置都在 `<安装目录>\workspace`——更新只动程序，**永远不碰你的数据**（更新前先备份，备份失败即中止）。 |
+| 🔒 **本地优先** | 会话 / 记忆 / 配置都在 `<安装目录>\workspace`——更新只动程序，**永远不碰你的数据**。 |
 
 <details>
 <summary><b>🧩 四大原生能力 —— 真协议，不是挂件</b> <i>（点击展开）</i></summary>
@@ -262,8 +228,6 @@ start-dev.bat         # FastAPI + Vite 热更新，改 UI 用
 └──────────────────────────────────────────────────────────────┘
 ```
 
-桌面版内嵌 PyInstaller 冻结后端（`ScoutBackend.exe`），托管同一份 React 构建——**一套代码，两种形态**。
-
 </details>
 
 <details>
@@ -272,7 +236,7 @@ start-dev.bat         # FastAPI + Vite 热更新，改 UI 用
 - 每笔真实交易 / 转账 / 签名支付都带 `needs_approval`；后端只在显式 `confirm: true` 时放行。
 - 密钥从不落盘明文；CEX 密钥每次会话在 UI 输入，你连接授权后才镜像进本地 `binance-cli` profile。
 - Agent 永远接触不到原始私钥——Agentic Wallet 是无密钥的。
-- `run_command` 白名单：`baw` / `node` / `python` / `git` + 只读 wrapper——任意 shell 直接拒绝；破坏性命令（`rm -rf`、`format`、`shutdown`）硬拦截。
+- `run_command` 白名单：`baw` / `node` / `python` / `git` + 只读 wrapper——任意 shell 直接拒绝；破坏性命令硬拦截。
 - 本地 API 在桌面壳运行时启用每次启动随机的 token 鉴权；路径严格设防：不许越界、不许删工作区根、二进制文件标记展示而不是吐乱码。
 - 技能防路径穿越；广场发文本地台账留底；UI 里密钥打码。
 - 更新包安装前 SHA256 校验 + 版本守卫；先备份 workspace，备份失败即中止更新。
@@ -314,18 +278,28 @@ bazz.agent/
 
 ---
 
-## 🏷 主题
-
-`binance` · `agent-os` · `ai-agent` · `交易` · `crypto` · `web3` · `mcp` · `x402` · `oauth` · `electron` · `fastapi` · `react` · `smc` · `币安广场`
-
----
-
 ## 🏆 黑客松
 
 - **赛事**：Binance Agent OS Mini Hackathon — Track A：*Build an AI Agent on Agent OS*
 - **截止**：2026-09-08 23:59 UTC
 - **在线落地页**：https://xinyuzjj.github.io/bazz.agent/
 - **免责声明**：本仓库是黑客松演示，不构成投资建议。加密交易有真实风险，每条执行路径都需要人工显式确认。
+
+---
+
+## ⭐ Star History
+
+<a href="https://star-history.com/#xinyuzjj/bazz.agent&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=xinyuzjj/bazz.agent&type=Date&theme=dark"/>
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=xinyuzjj/bazz.agent&type=Date"/>
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=xinyuzjj/bazz.agent&type=Date"/>
+ </picture>
+</a>
+
+## 🏷 主题
+
+`binance` · `agent-os` · `ai-agent` · `交易` · `crypto` · `web3` · `mcp` · `x402` · `oauth` · `electron` · `fastapi` · `react` · `smc` · `币安广场`
 
 ---
 
@@ -336,5 +310,7 @@ bazz.agent/
 `扫描 → 分析 → 提案 → 确认 → 执行` · *出手之前，先问你。*
 
 MIT License © 2026
+
+<img src="https://capsule-render.vercel.app/api?type=waving&height=130&color=0:7a5c00,50:f0b90b,100:0d0d1a&section=footer" width="100%" alt="footer"/>
 
 </div>

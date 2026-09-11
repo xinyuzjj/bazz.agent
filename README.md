@@ -1,28 +1,10 @@
+<img src="https://capsule-render.vercel.app/api?type=waving&height=240&color=0:0d0d1a,50:f0b90b,100:7a5c00&section=header&text=BAZZ.AGENT&fontSize=78&fontColor=ffffff&fontAlignY=34&desc=%E2%9A%A1%20Your%20Binance%20Co-Pilot%20%C2%B7%20It%20asks%20before%20it%20fires&descSize=19&descAlignY=55&animation=twinkling" width="100%" alt="BAZZ.AGENT banner"/>
+
 <div align="center">
 
-```
-╔══════════════════════════════════════════════════════════════╗
-║                                                              ║
-║   ██████╗  █████╗  ███████╗███████╗   █████╗  ██████╗ ███████╗ ║
-║   ██╔══██╗██╔══██╗╚══███╔╝╚══███╔╝  ██╔══██╗██╔════╝ ██╔════╝ ║
-║   ██████╔╝███████║  ███╔╝    ███╔╝   ███████║██║  ███╗█████╗   ║
-║   ██╔══██╗██╔══██║ ███╔╝    ███╔╝    ██╔══██║██║   ██║██╔══╝   ║
-║   ██████╔╝██║  ██║███████╗███████╗   ██║  ██║╚██████╔╝███████╗ ║
-║   ╚═════╝ ╚═╝  ╚═╝╚══════╝╚══════╝   ╚═╝  ╚═╝ ╚═════╝ ╚══════╝ ║
-║                                                              ║
-║        —— Your Binance Co-Pilot. It asks before it fires. —— ║
-╚══════════════════════════════════════════════════════════════╝
-```
-
-# ⚡ BAZZ.AGENT — An Agent OS That *Acts*
+<a href="https://git.io/typing-svg"><img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=22&pause=1200&color=F0B90B&center=true&vCenter=true&width=760&lines=Scan+%E2%86%92+Analyze+%E2%86%92+Propose+%E2%86%92+Approve+%E2%86%92+Execute;MCP+%E2%80%A2+Agentic+Wallet+%E2%80%A2+x402+%E2%80%A2+Skill+Hub;Not+another+chatbox.+It+acts+%E2%80%94+after+you+nod.;Real+protocols.+Real+execution.+Zero+simulations." alt="Typing SVG"/></a>
 
 ### Fuse the four native Binance Agent OS capabilities into one real trading loop
-
-**MCP · Agentic Wallet · x402 Payments · Skill Hub** — not widgets. Real protocols, real execution.
-
-> `📡 SCAN → 🧠 ANALYZE → 💡 PROPOSE → ✅ APPROVE → ⚡ EXECUTE`
->
-> **Every other AI chatbox just *talks*. BAZZ.AGENT *acts* — but only after you nod.**
 
 **🌐 English | [中文文档](./README.zh-CN.md)**
 
@@ -35,13 +17,14 @@
 [![Delta Update](https://img.shields.io/badge/🔄_Update-delta_~MB-4a9eff)](#-incremental-auto-update)
 [![Pages](https://img.shields.io/badge/🎬_Live_Demo-Pages-181717?logo=githubpages&logoColor=white)](https://xinyuzjj.github.io/bazz.agent/)
 [![中文](https://img.shields.io/badge/📖_README-中文-f0b90b)](./README.zh-CN.md)
+[![Visitors](https://komarev.com/ghpvc/?username=xinyuzjj&repo=bazz.agent&label=VISITORS&color=f0b90b&style=flat-square)](https://github.com/xinyuzjj/bazz.agent)
 
 [![Track A](https://img.shields.io/badge/Binance_Agent_OS-Track_A-f0b90b)](#-hackathon)
-[![Python](https://img.shields.io/badge/Python-3.11-3776ab?logo=python&logoColor=white)](#-tech-stack)
-[![FastAPI](https://img.shields.io/badge/FastAPI-SSE_Streaming-009688?logo=fastapi&logoColor=white)](#-tech-stack)
-[![React](https://img.shields.io/badge/React_18-TypeScript-61dafb?logo=react&logoColor=222)](#-tech-stack)
-[![Electron](https://img.shields.io/badge/Electron-Frameless-47848f?logo=electron&logoColor=white)](#-architecture)
 [![License](https://img.shields.io/badge/License-MIT-success)](#-license)
+
+<p>
+  <a href="https://skillicons.dev"><img src="https://skillicons.dev/icons?i=py,fastapi,react,ts,vite,tailwind,electron,nodejs,sqlite,git&theme=dark" alt="Tech Stack"/></a>
+</p>
 
 </div>
 
@@ -91,32 +74,15 @@ The cockpit is a Hermes-style three-pane **trading desk**:
         dark ⇄ light theme · 中文 ⇄ EN — one click, remembered
 ```
 
----
-
 ## 🔁 The core loop
 
 ```
-   ┌─────────────┐
-   │   📡 SCAN    │   Full-market radar · Monster Radar · 24h watch
-   └──────┬──────┘
-          ▼
-   ┌─────────────┐
-   │  🧠 ANALYZE  │   Multi-model LLM · 19+ skills · rules-engine fallback
-   └──────┬──────┘
-          ▼
-   ┌─────────────┐
-   │  💡 PROPOSE  │   Signal card: leverage / position / TP-SL
-   └──────┬──────┘
-          ▼
-   ┌─────────────┐
-   │  ✅ APPROVE  │   ◄── the key: YOU press Confirm in the chat
-   └──────┬──────┘
-          ▼
-   ┌─────────────┐
-   │  ⚡ EXECUTE  │   CEX / Agentic Wallet / x402 — real orders
-   └──────┬──────┘
-          └────────────► back to scanning ◄
+   📡 SCAN ──► 🧠 ANALYZE ──► 💡 PROPOSE ──► ✅ APPROVE ──► ⚡ EXECUTE
+      ▲                                                        │
+      └──────────────────── back to scanning ◄─────────────────┘
 ```
+
+> The key is **✅ APPROVE**: every order / transfer / signed payment waits for *your* click in the chat.
 
 ---
 
@@ -130,14 +96,14 @@ The cockpit is a Hermes-style three-pane **trading desk**:
 | 🧠 **Long-term memory** | Cross-session preferences & risk anchors, indexed & searchable, viewable in the Memory panel. |
 | 👛 **Agentic Wallet** | Keyless MPC on BSC / Ethereum / Base / Solana via `baw`; official daily limits enforced; **private keys never touch the app**. |
 | 💹 **Real CEX trading** | Spot / futures / convert on your real account via a whitelisted `binance-cli` profile; CEX and Web3 key sets **strictly isolated**. |
-| 🧩 **Skill Hub — 19 skills** | 19 official skills preloaded (CEX + Web3 + research: audit, address info, tokenized stocks, sports AI, news sentiment…), intent-routed, path-traversal-protected. |
+| 🧩 **Skill Hub — 19 skills** | 19 official skills preloaded (audit, address info, tokenized stocks, sports AI, news sentiment…), intent-routed, path-traversal-protected. |
 | 📣 **Square rich-posting** | Market report → cover + chart + SMC article → published as an **image short-post**, local ledger keeps every post. |
 | 🤖 **Multi-bot + group chat** | Persona bots with own skills & memory domains; make a room, `@mention` bots, they answer in turns. |
-| ⏰ **CRON automation** | Write "scan the market every day at 09:00" in plain words; run / pause / trigger manually — **runs even when the window is closed to tray**. |
+| ⏰ **CRON automation** | "Scan the market every day at 09:00" in plain words; run / pause / trigger manually — **runs even when closed to tray**. |
 | 💸 **x402 / B402** | Machine pays machine: offline Permit2 EIP-712 signing, verified by the official Facilitator, settled on-chain. |
 | 🖥 **Desktop + Web** | Frameless Windows installer (Electron + embedded PyInstaller backend, **no Python/Node needed**) *and* the same cockpit in a browser. One codebase. |
 | 🌓 **Bilingual & skinnable** | 中文 / English + deep-gold ↔ light, one key from the top bar. |
-| 🔒 **Local-first** | Sessions / memory / config live in `<install dir>\workspace` — updates replace only the program, **never your data** (backup before update, abort on backup failure). |
+| 🔒 **Local-first** | Sessions / memory / config live in `<install dir>\workspace` — updates replace only the program, **never your data**. |
 
 <details>
 <summary><b>🧩 The four native capabilities — real protocols, not widgets</b> <i>(click to expand)</i></summary>
@@ -262,8 +228,6 @@ Network blocked? The updater rides the **same proxy pool** as everything else, w
 └──────────────────────────────────────────────────────────────┘
 ```
 
-The desktop build embeds a PyInstaller-frozen backend (`ScoutBackend.exe`) that serves the same React build — **one codebase, two shapes**.
-
 </details>
 
 <details>
@@ -272,8 +236,8 @@ The desktop build embeds a PyInstaller-frozen backend (`ScoutBackend.exe`) that 
 - Every real trade / transfer / signed payment carries `needs_approval`; the backend proceeds only on an explicit `confirm: true`.
 - Keys are never written to disk in plaintext; CEX keys are typed into the UI per session and mirrored into the local `binance-cli` profile only after you connect and authorize.
 - The agent never touches raw private keys — the Agentic Wallet is keyless.
-- `run_command` whitelist: `baw` / `node` / `python` / `git` + read-only wrappers — arbitrary shell rejected; destructive patterns (`rm -rf`, `format`, `shutdown`) hard-blocked.
-- Local API enforces per-launch random-token auth (when run from the desktop shell) and strict path guards: no traversal, no workspace-root deletion, binaries flagged instead of garbled.
+- `run_command` whitelist: `baw` / `node` / `python` / `git` + read-only wrappers — arbitrary shell rejected; destructive patterns hard-blocked.
+- Local API enforces per-launch random-token auth (desktop shell) and strict path guards: no traversal, no workspace-root deletion, binaries flagged instead of garbled.
 - Skills are path-traversal-protected; Square posts keep a local ledger; keys masked in the UI.
 - Update packages are SHA256-verified and version-guarded before install; workspace is backed up first, update aborts if backup fails.
 
@@ -314,18 +278,28 @@ bazz.agent/
 
 ---
 
-## 🏷 Topics
-
-`binance` · `agent-os` · `ai-agent` · `trading` · `crypto` · `web3` · `mcp` · `x402` · `oauth` · `electron` · `fastapi` · `react` · `smc` · `binance-square`
-
----
-
 ## 🏆 Hackathon
 
 - **Event**: Binance Agent OS Mini Hackathon — Track A: *Build an AI Agent on Agent OS*
 - **Deadline**: 2026-09-08 23:59 UTC
 - **Live landing page**: https://xinyuzjj.github.io/bazz.agent/
 - **Disclaimer**: This repo is a Hackathon demo, not investment advice. Crypto trading carries real risk; every execution path requires explicit human confirmation.
+
+---
+
+## ⭐ Star History
+
+<a href="https://star-history.com/#xinyuzjj/bazz.agent&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=xinyuzjj/bazz.agent&type=Date&theme=dark"/>
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=xinyuzjj/bazz.agent&type=Date"/>
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=xinyuzjj/bazz.agent&type=Date"/>
+ </picture>
+</a>
+
+## 🏷 Topics
+
+`binance` · `agent-os` · `ai-agent` · `trading` · `crypto` · `web3` · `mcp` · `x402` · `oauth` · `electron` · `fastapi` · `react` · `smc` · `binance-square`
 
 ---
 
@@ -336,5 +310,7 @@ bazz.agent/
 `Scan → Analyze → Propose → Approve → Execute` · *It asks before it fires.*
 
 MIT License © 2026
+
+<img src="https://capsule-render.vercel.app/api?type=waving&height=130&color=0:7a5c00,50:f0b90b,100:0d0d1a&section=footer" width="100%" alt="footer"/>
 
 </div>
