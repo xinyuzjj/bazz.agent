@@ -29,6 +29,25 @@
 - **手动安装**：installer.iss 新增 PrepareToInstall 预处理——taskkill 强杀 BAZZ.AGENT.exe / ScoutBackend.exe / mihomo.exe，node/python 按**路径锚定安装根**强杀（不误杀用户自己的同名进程），杀完才进安装阶段
 - **应用内自动更新**：更新脚本杀残留进程名单补上 mihomo 与 runtime node/python，setup 命令追加 `/FORCECLOSEAPPLICATIONS` 双保险
 
+# BAZZ.AGENT v1.5.21
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.21 更新要点（广场发文链路 · 沙箱命令解析修复）
+
+### 1. 广场发文「上传超时失败」根治（RUNE 发文实测）
+- **根因**：Node undici 默认连接超时 10s，代理节点/币安 S3 域名握手稍慢就抛 `UND_ERR_CONNECT_TIMEOUT`，发文必失败
+- proxy-preload 全局挂载改为 `connect 30s / headers 60s / body 120s`，慢代理也能跑完图片上传（scripts/ 与 runtime/ 同步）
+
+### 2. 沙箱命令解析两处修复
+- **cat/ls/echo 被误杀**：白名单解析只认可执行名，wrapper 命令全被拒「不在白名单」，报错清单却仍列出它们——已补 wrapper 放行
+- **反斜杠被吞**：Windows 下 shlex posix 转义吃掉路径反斜杠（`--reuse F:\1\...` → `F:1...`）导致复用目录校验失败——改 posix=quoted 保留原样并剥包裹引号
+
+### 3. 技能防呆 + 复用容错
+- market-data klines 无数据改为**直接报错**（此前返回 n:0 的 OK，模型把垃圾参数当成功继续跑；合约下架币提示切 spot）
+- square-rich-post `--reuse` 自动锚定 workspace/square_rich 兜底，bad 路径给出尝试列表
+- 实测确认：7899 代理链路当时是通的（代码里代理检测用 api.binance.com/ping，但方形图上传走 bapi/presignedUrl——S3 域名超时才导致失败，现已覆盖）
+
 ## 📜 历史版本
 
 # BAZZ.AGENT v1.5.15

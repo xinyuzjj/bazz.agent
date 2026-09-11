@@ -278,10 +278,19 @@ def write_text(path: str, content: str, append: bool = False) -> dict:
 
 
 def _tokenize(cmdline: str):
+    # v1.5.21：Windows 下 posix=True 的转义规则会吃掉路径反斜杠（--reuse F:\1\BAZZ.AGENT
+    # → F:1BAZZ.AGENT，RUNE 发文实测踩坑），改用 posix=False 保留原样，再自行剥掉成对包裹引号
     try:
-        toks = shlex.split(cmdline or "", posix=True)
+        toks = shlex.split(cmdline or "", posix=(sys.platform != "win32"))
     except Exception:
         raise SandboxError("命令解析失败（检查引号）")
+    if sys.platform == "win32":
+        fixed = []
+        for t in toks:
+            if len(t) >= 2 and t[0] == t[-1] and t[0] in ('"', "'"):
+                t = t[1:-1]
+            fixed.append(t)
+        toks = fixed
     if not toks:
         raise SandboxError("command 为空")
     return toks
@@ -762,6 +771,10 @@ def _resolve_exe0(tok: str) -> tuple:
         return None, None
     key = tok.lower()
     if key in EXE_BIN:
+        return key, None
+    # v1.5.21：wrapper 命令（cat/ls/echo 等）也放行 —— 此前只查 EXE_BIN，
+    # cat/ls 全被误杀「不在白名单」，报错清单里却包含它们（纯误导）
+    if key in _WRAPPERS:
         return key, None
     return None, None
 

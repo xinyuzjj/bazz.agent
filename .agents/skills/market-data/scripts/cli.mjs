@@ -57,7 +57,15 @@ const CMDS = {
     const [sym, interval = "1h", limit = "24", market = "spot"] = rest;
     if (!sym) throw Object.assign(new Error("klines: 需要 SYMBOL"), { exitCode: 1 });
     const d = await jget(`/market/klines?symbol=${enc(sym.toUpperCase())}&interval=${interval}&limit=${limit}&market=${market}`);
-    return { symbol: sym.toUpperCase(), interval, market, stat: kstat(d.closes), closes: (d.closes || []).map((c) => num(c)) };
+    const closes = (d.closes || []).map((c) => num(c));
+    // v1.5.21：空数据直接报错退出（此前返回 n:0 的 OK，模型把垃圾参数当成功继续跑）
+    if (!closes.length) {
+      throw Object.assign(new Error(
+        `klines: ${sym.toUpperCase()} 无数据（interval=${interval} market=${market}）。` +
+        `检查符号拼写、interval 合法值（1h/4h/1d 等）与 market（spot/futures）；合约下架币试试 spot`),
+        { exitCode: 1 });
+    }
+    return { symbol: sym.toUpperCase(), interval, market, stat: kstat(d.closes), closes };
   },
 
   async fng() {

@@ -90,12 +90,26 @@ async function main() {
 
   let meta;
   if (reuse) {
-    if (!fs.existsSync(path.join(reuse, "article.txt"))) usageExit(`--reuse 目录无效: ${reuse}`);
+    // v1.5.21：相对/被吞反斜杠的路径兜底锚定 workspace（技能执行 cwd 不一定在安装根）
+    let rdir = reuse;
+    const tried = [rdir];
+    if (!fs.existsSync(path.join(rdir, "article.txt"))) {
+      const ws = process.env.BAZZ_WORKSPACE || "";
+      const cands = [];
+      if (ws) cands.push(path.join(ws, rdir));
+      const base = path.basename(rdir);
+      if (base && base !== rdir) { if (ws) cands.push(path.join(ws, "square_rich", base)); cands.push(path.join("workspace", "square_rich", base)); }
+      for (const c of cands) {
+        tried.push(c);
+        if (fs.existsSync(path.join(c, "article.txt"))) { rdir = c; break; }
+      }
+    }
+    if (!fs.existsSync(path.join(rdir, "article.txt"))) usageExit(`--reuse 目录无效: ${reuse}（尝试过: ${tried.join(" , ")}；也可传绝对路径并保留反斜杠）`);
     let saved = {};
-    try { saved = JSON.parse(fs.readFileSync(path.join(reuse, "meta.json"), "utf8")); } catch { }
+    try { saved = JSON.parse(fs.readFileSync(path.join(rdir, "meta.json"), "utf8")); } catch { }
     meta = {
-      dir: reuse, title_file: path.join(reuse, "title.txt"), text_file: path.join(reuse, "article.txt"),
-      cover: path.join(reuse, "cover.png"), tags: saved.tags || [], stats: saved.stats || {},
+      dir: rdir, title_file: path.join(rdir, "title.txt"), text_file: path.join(rdir, "article.txt"),
+      cover: path.join(rdir, "cover.png"), tags: saved.tags || [], stats: saved.stats || {},
     };
   } else {
     meta = await compose(sym, market);

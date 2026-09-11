@@ -15,7 +15,13 @@ try {
   if (hasProxy) {
     const undici = require("undici");
     if (undici && typeof undici.setGlobalDispatcher === "function" && undici.EnvHttpProxyAgent) {
-      undici.setGlobalDispatcher(new undici.EnvHttpProxyAgent());
+      // v1.5.21：undici 默认 connect 超时 10s，慢节点/S3 域名握手直接 UND_ERR_CONNECT_TIMEOUT
+      // （RUNE 发文实测踩坑）；放宽连接/头/体超时，让慢代理也能跑完上传
+      undici.setGlobalDispatcher(new undici.EnvHttpProxyAgent({
+        connect: { timeout: 30_000 },
+        headersTimeout: 60_000,
+        bodyTimeout: 120_000,
+      }));
     }
   }
 } catch {}
