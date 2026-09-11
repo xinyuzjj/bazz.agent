@@ -908,7 +908,10 @@ if ($waitPid -gt 0) {{
 }}
 # 2) 杀残留后端 / 双开实例（释放文件锁）
 if ($backendPid -gt 0) {{ Stop-Process -Id $backendPid -Force -ErrorAction SilentlyContinue }}
-Get-Process -Name 'BAZZ.AGENT','ScoutBackend' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process -Name 'BAZZ.AGENT','ScoutBackend','mihomo' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+# v1.5.20：runtime 内置 node/python 也持安装根文件锁（发文测试会把 node/mihomo 拉起来），
+# 按路径锚定安装根杀，避免误杀用户自己的同名进程
+Get-Process -Name 'node','python' -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -and $_.Path.StartsWith($oldRoot) }} | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
 # 3) 前置校验 + 挪出安装根
 Set-Step '正在校验更新包…'
@@ -921,7 +924,7 @@ if ($setupBak -ne $setup) {{
 Set-Step '正在安装新版本…（约半分钟）'
 L 'silent install start'
 $dirArg = '/DIR="' + $oldRoot + '"'
-$p = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCANCEL',$dirArg -PassThru
+$p = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCANCEL','/FORCECLOSEAPPLICATIONS',$dirArg -PassThru
 while (-not $p.HasExited) {{ Start-Sleep -Milliseconds 250; [System.Windows.Forms.Application]::DoEvents() }}
 L ('installer exit code: ' + $p.ExitCode)
 if ($p.ExitCode -ne 0) {{ L 'ERR install-failed'; exit 6 }}

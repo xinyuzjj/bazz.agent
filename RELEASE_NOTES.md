@@ -1,4 +1,4 @@
-﻿# BAZZ.AGENT v1.5.19
+# BAZZ.AGENT v1.5.19
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
 
@@ -17,6 +17,17 @@
 ### 3. 9 个已装技能补入提示词路由
 - news-sentiment（新闻情绪）/ portfolio-review（资产复盘）/ track-monitor（妖币复查）/ query-token-audit（代币审计）/ query-address-info（地址持仓）/ binance-tokenized-securities-info（代币化美股）/ binance-trading-signal（合约聪明钱）/ binance-sports-ai-analyzer（赛事预测）此前从未绑定，Agent 遇到相关需求不会调用——已按各技能真实 CLI 用法逐一接入，并留空参返回用法指引的兜底
 - 工具注册表与 run_command 白名单全量核对：无死引用、无阻断
+
+# BAZZ.AGENT v1.5.20
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.20 更新要点（安装包「无法自动关闭应用」修复）
+
+### 安装前强杀文件锁进程
+- **现象**：安装/更新时弹「Setup was unable to automatically close all applications」卡在 Closing applications——mihomo 内核 / runtime node / 后端都是**无窗口进程**，Inno 的 Restart Manager 关不掉（发文测试会把它们拉起来，持着安装根里的文件锁）
+- **手动安装**：installer.iss 新增 PrepareToInstall 预处理——taskkill 强杀 BAZZ.AGENT.exe / ScoutBackend.exe / mihomo.exe，node/python 按**路径锚定安装根**强杀（不误杀用户自己的同名进程），杀完才进安装阶段
+- **应用内自动更新**：更新脚本杀残留进程名单补上 mihomo 与 runtime node/python，setup 命令追加 `/FORCECLOSEAPPLICATIONS` 双保险
 
 ## 📜 历史版本
 

@@ -63,3 +63,23 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
 Type: filesandordirs; Name: "{app}\..\{#MyAppName}-win32-x64"
+
+[Code]
+// v1.5.20：安装前强杀自家后台进程。mihomo 内核 / runtime node / 后端都是无窗口
+// 进程，Restart Manager 关不掉 → CloseApplications 弹「Select action」卡住安装。
+// taskkill 按镜像名杀自有进程（BAZZ.AGENT/ScoutBackend/mihomo 名称唯一）；
+// node/python 按路径锚定安装根，避免误杀用户自己的同名进程。
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  AppDir, PsCmd: String;
+  ResultCode: Integer;
+begin
+  Result := '';
+  AppDir := ExpandConstant('{app}');
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM BAZZ.AGENT.exe /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM ScoutBackend.exe /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM mihomo.exe /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  PsCmd := '-NoProfile -ExecutionPolicy Bypass -Command "Get-Process node,python -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -and $_.Path.StartsWith(''' + AppDir + ''') }} | Stop-Process -Force"';
+  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), PsCmd, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(800);
+end;
