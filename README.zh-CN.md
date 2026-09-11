@@ -219,21 +219,13 @@ start-dev.bat         # FastAPI + Vite 热更新，改 UI 用
 
 ## 🔄 增量自动更新
 
-```
-   应用检查 GitHub Releases ──► MANIFEST.json 与本地差分
-            │                            │
-            ▼                            ▼
-   版本守卫（永不降级、           delta-<版本>.zip：只含变更文件，
-   断点续装校验）                 SHA256 逐文件校验
-            │                            │
-            └──────────┬─────────────────┘
-                       ▼
-   后台预取 ──► 备份 workspace ──► 应用（约 1 秒）
-                       ▼
-   setup.exe /VERYSILENT 原地覆盖 ──► 自动重启 ──► 完成 ✅
-```
+<div align="center">
 
-网络被墙？更新器跟其他模块一样走**同一个代理池**，带实时节点切换。
+<img src="https://img.shields.io/badge/🔍_检查-4A9EFF?style=for-the-badge"/> ➜ <img src="https://img.shields.io/badge/📦_差分-B34EFF?style=for-the-badge"/> ➜ <img src="https://img.shields.io/badge/🧬_SHA256-2EA44F?style=for-the-badge"/> ➜ <img src="https://img.shields.io/badge/🛡_备份-F59E0B?style=for-the-badge"/> ➜ <img src="https://img.shields.io/badge/⚡_应用·约1秒-E11D48?style=for-the-badge"/> ➜ <img src="https://img.shields.io/badge/🔄_重启-22C55E?style=for-the-badge&logo=githubactions&logoColor=white"/>
+
+<sub>MANIFEST 与本地差分 → 只下变更文件、SHA256 逐文件校验 → 备份 workspace → 应用 → 自动重启<br/>🛡 版本守卫<b>永不降级</b> · 网络被墙？更新器走<b>同一个代理池</b>，带实时节点切换</sub>
+
+</div>
 
 ---
 

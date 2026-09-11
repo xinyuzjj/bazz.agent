@@ -332,6 +332,20 @@ bazz.agent/
 
 ---
 
+## 📊 Live stats & the snake
+
+<div align="center">
+
+<img src="https://github-readme-stats.vercel.app/api/pin/?username=xinyuzjj&repo=bazz.agent&theme=github_dark"/>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/xinyuzjj/bazz.agent/output/github-contribution-grid-snake-dark.svg"/>
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/xinyuzjj/bazz.agent/output/github-contribution-grid-snake.svg"/>
+  <img alt="contribution snake" src="https://raw.githubusercontent.com/xinyuzjj/bazz.agent/output/github-contribution-grid-snake.svg"/>
+</picture>
+
+</div>
+
 ## ⭐ Star History
 
 <a href="https://star-history.com/#xinyuzjj/bazz.agent&Date">
