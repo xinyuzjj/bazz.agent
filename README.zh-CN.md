@@ -177,9 +177,8 @@
 
 <div align="center">
 
-**[⬇ 下载最新 setup.exe](https://github.com/xinyuzjj/bazz.agent/releases/latest)** —— 安装即用，无需 Python / Node。
-
-`setup.exe` · `delta-<版本>.zip`（应用内更新自动消费）· `SHA256SUMS` · `MANIFEST.json`
+<a href="https://github.com/xinyuzjj/bazz.agent/releases/latest"><img src="https://img.shields.io/badge/⬇_下载_setup.exe-2EA44F?style=for-the-badge&logo=windows&logoColor=white"/></a><br><br>
+<sub>安装即用 —— 无需 Python / Node · <code>SHA256SUMS</code> · <code>MANIFEST.json</code> · 增量自动更新</sub>
 
 </div>
 
