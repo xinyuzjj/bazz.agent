@@ -56,26 +56,29 @@
 
 ## 🖥 The cockpit — a Hermes-style trading desk
 
-```
-┌──────────────┬─────────────────────────────┬──────────────────┐
-│  LEFT        │  CENTER                     │  RIGHT           │
-│  Sessions    │  Agent chat                 │  Live signals    │
-│  Personas    │  · SSE/NDJSON streaming     │  Market radar    │
-│  Tools       │  · live tool cards          │  Positions       │
-│  Files       │  · Confirm cards            │  Account         │
-└──────────────┴─────────────────────────────┴──────────────────┘
-        dark ⇄ light theme · 中文 ⇄ EN — one click, remembered
-```
+<table>
+<tr>
+<td width="33%" align="center"><img src="https://img.shields.io/badge/LEFT_·_NAV-2D3748?style=for-the-badge"/></td>
+<td width="34%" align="center"><img src="https://img.shields.io/badge/CENTER_·_CHAT-F0B90B?style=for-the-badge&logo=binance&logoColor=black"/></td>
+<td width="33%" align="center"><img src="https://img.shields.io/badge/RIGHT_·_SIGNALS-4A9EFF?style=for-the-badge"/></td>
+</tr>
+<tr>
+<td valign="top" align="center">🗂 Sessions<br>🎭 Personas<br>🧰 Tools<br>📁 Files</td>
+<td valign="top" align="center"><b>Agent chat</b><br>· SSE/NDJSON streaming<br>· live tool cards<br>· <b>✅ Confirm cards</b></td>
+<td valign="top" align="center">📊 Live signals<br>📡 Market radar<br>💼 Positions<br>💰 Account</td>
+</tr>
+<tr><td colspan="3" align="center"><sub>dark ⇄ light theme · 中文 ⇄ EN — one click, remembered</sub></td></tr>
+</table>
 
 ## 🔁 The core loop
 
-```
-   📡 SCAN ──► 🧠 ANALYZE ──► 💡 PROPOSE ──► ✅ APPROVE ──► ⚡ EXECUTE
-      ▲                                                        │
-      └──────────────────── back to scanning ◄─────────────────┘
-```
+<div align="center">
 
-> The key is **✅ APPROVE**: every order / transfer / signed payment waits for *your* click in the chat.
+<img src="https://img.shields.io/badge/📡_SCAN-FF6B00?style=for-the-badge"/> ➜ <img src="https://img.shields.io/badge/🧠_ANALYZE-B34EFF?style=for-the-badge"/> ➜ <img src="https://img.shields.io/badge/💡_PROPOSE-4A9EFF?style=for-the-badge"/> ➜ <img src="https://img.shields.io/badge/✅_APPROVE_·_YOU_CLICK-2EA44F?style=for-the-badge"/> ➜ <img src="https://img.shields.io/badge/⚡_EXECUTE-F0B90B?style=for-the-badge&logo=binance&logoColor=black"/>
+
+<sub>↺ back to scanning — the loop never sleeps<br/><b>APPROVE</b> is the key: every order / transfer / signed payment waits for <i>your</i> click in the chat.</sub>
+
+</div>
 
 ---
 

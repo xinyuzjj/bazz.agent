@@ -56,26 +56,29 @@
 
 ## 🖥 驾驶舱 —— Hermes 风格交易台
 
-```
-┌──────────────┬─────────────────────────────┬──────────────────┐
-│  左栏         │  中栏                        │  右栏             │
-│  会话         │  Agent 对话                  │  实时信号         │
-│  人格         │  · SSE/NDJSON 流式           │  行情雷达         │
-│  工具         │  · 工具实时卡片               │  持仓             │
-│  文件         │  · Confirm 确认卡            │  账户             │
-└──────────────┴─────────────────────────────┴──────────────────┘
-      深色 ⇄ 浅色主题 · 中文 ⇄ EN —— 顶栏一键切换，重启不忘
-```
+<table>
+<tr>
+<td width="33%" align="center"><img src="https://img.shields.io/badge/左栏_·_导航-2D3748?style=for-the-badge"/></td>
+<td width="34%" align="center"><img src="https://img.shields.io/badge/中栏_·_对话-F0B90B?style=for-the-badge&logo=binance&logoColor=black"/></td>
+<td width="33%" align="center"><img src="https://img.shields.io/badge/右栏_·_信号-4A9EFF?style=for-the-badge"/></td>
+</tr>
+<tr>
+<td valign="top" align="center">🗂 会话<br>🎭 人格<br>🧰 工具<br>📁 文件</td>
+<td valign="top" align="center"><b>Agent 对话</b><br>· SSE/NDJSON 流式<br>· 工具实时卡片<br>· <b>✅ Confirm 确认卡</b></td>
+<td valign="top" align="center">📊 实时信号<br>📡 行情雷达<br>💼 持仓<br>💰 账户</td>
+</tr>
+<tr><td colspan="3" align="center"><sub>深色 ⇄ 浅色主题 · 中文 ⇄ EN —— 顶栏一键切换，重启不忘</sub></td></tr>
+</table>
 
 ## 🔁 核心闭环
 
-```
-   📡 扫描 ──► 🧠 分析 ──► 💡 提案 ──► ✅ 确认 ──► ⚡ 执行
-      ▲                                            │
-      └────────────── 回到扫描 ◄────────────────────┘
-```
+<div align="center">
 
-> 关键在 **✅ 确认**：每笔订单 / 转账 / 签名支付都等你在聊天里亲手点头。
+<img src="https://img.shields.io/badge/📡_扫描-FF6B00?style=for-the-badge"/> ➜ <img src="https://img.shields.io/badge/🧠_分析-B34EFF?style=for-the-badge"/> ➜ <img src="https://img.shields.io/badge/💡_提案-4A9EFF?style=for-the-badge"/> ➜ <img src="https://img.shields.io/badge/✅_确认·你点头-2EA44F?style=for-the-badge"/> ➜ <img src="https://img.shields.io/badge/⚡_执行-F0B90B?style=for-the-badge&logo=binance&logoColor=black"/>
+
+<sub>↺ 回到扫描 —— 循环永不休息<br/><b>确认</b>是关键：每笔订单 / 转账 / 签名支付都等你在聊天里<i>亲手点头</i>。</sub>
+
+</div>
 
 ---
 
