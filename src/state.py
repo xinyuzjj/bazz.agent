@@ -16,6 +16,13 @@ import time
 
 from workspace import DB_PATH  # 统一落盘到 workspace（见 src/workspace.py）
 
+# 敏感设置加解密（F15）：flat 布局下 src/secrets.py 遮蔽 stdlib secrets，
+# 包布局（src.state）时兜底走 src.secrets。
+try:
+    from secrets import encrypt_secret, decrypt_secret
+except Exception:
+    from src.secrets import encrypt_secret, decrypt_secret
+
 # v1.3.6 并发保护：FastAPI 线程池 + scheduler + 钱包预热线程共用这一条连接，
 # 不串行化时多线程写入会交错（execute…execute…commit 互相穿插）导致事务混乱。
 _db_lock = threading.RLock()  # 可重入：同线程嵌套调用（ensure_group_member_session → new_conversation）安全
@@ -513,8 +520,31 @@ def rollback_last_turn(cid, new_user_text=None, upto_user_index=None):
 
 # ---------------- 设置（本地持久化，仅本机） ----------------
 
+# F15：含密钥的敏感设置 key —— 落库前整体 encrypt_secret，读出后先 decrypt_secret。
+# 旧明文数据读入时 decrypt_secret 原样返回 = 自动兼容，下次保存自动迁移为密文。
+# （key 名以各模块实际 set_setting 调用为准：src/llm.py、src/cex_wallet.py、
+#   src/web3_wallet.py、src/mcp_client.py）
+SENSITIVE_SETTING_KEYS = {
+    "llm",                  # LLM 配置 JSON（含 api_key）—— src/llm.py
+    "BINANCE_API_KEY",      # 币安 CEX API Key / Secret —— src/cex_wallet.py
+    "BINANCE_API_SECRET",
+    "W3_API_KEY",           # Web3 钱包服务 API Key / Secret —— src/web3_wallet.py
+    "W3_API_SECRET",
+    "mcp_servers",          # MCP server 配置 JSON —— src/mcp_client.py（token 另存 mcp_token:<name>）
+}
+
+
+def _is_sensitive_setting(key) -> bool:
+    k = str(key or "")
+    if k in SENSITIVE_SETTING_KEYS:
+        return True
+    return k.startswith("mcp_token:")  # 每个 MCP server 的 OAuth token —— src/mcp_client.py _token_key()
+
+
 @_serialized
 def set_setting(key, value):
+    if _is_sensitive_setting(key) and isinstance(value, str) and value:
+        value = encrypt_secret(value)  # 内部自带降级/异常兜底，不抛
     _conn_get().execute(
         "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         (key, value))
@@ -523,12 +553,45 @@ def set_setting(key, value):
 
 def get_setting(key, default=""):
     r = _conn_get().execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
-    return r["value"] if r else default
+    v = r["value"] if r else default
+    if _is_sensitive_setting(key) and isinstance(v, str) and v:
+        v = decrypt_secret(v)  # 内部自带降级/异常兜底，不抛
+    return v
 
 
 def get_all_settings():
     rows = _conn_get().execute("SELECT key,value FROM settings").fetchall()
-    return {r["key"]: r["value"] for r in rows}
+    out = {}
+    for r in rows:
+        v = r["value"]
+        if _is_sensitive_setting(r["key"]) and isinstance(v, str) and v:
+            v = decrypt_secret(v)
+        out[r["key"]] = v
+    return out
+
+
+@_serialized
+def update_cron_job(job_id, patch):
+    """F12：按 id 原子更新 settings("cron_jobs") 中单个任务的字段。
+    读-改-写全程持锁（RLock），供调度线程逐任务回写 last_run/next_run，
+    替代「读全量 -> 执行 -> 整份覆盖」的丢并发修改写法。
+    patch 为字段字典；id 不存在或 patch 为空返回 False。"""
+    if not job_id or not isinstance(patch, dict) or not patch:
+        return False
+    try:
+        jobs = json.loads(get_setting("cron_jobs", "") or "[]")
+    except Exception:
+        return False
+    if not isinstance(jobs, list):
+        return False
+    hit = False
+    for j in jobs:
+        if isinstance(j, dict) and j.get("id") == job_id:
+            j.update(patch)
+            hit = True
+    if hit:
+        set_setting("cron_jobs", json.dumps(jobs, ensure_ascii=False))
+    return hit
 
 
 # ---------------- Agents / Bots 档案（Hermes: one chat per agent） ----------------
@@ -586,13 +649,6 @@ def bot_activity() -> list:
         "WHERE c.persona<>'' AND c.persona<>'__group__' AND m.role='assistant' "
         "GROUP BY c.persona").fetchall()
     return [{"persona": r["persona"], "last_ts": r["last_ts"]} for r in rows]
-
-
-def last_persona_conv(persona: str):
-    """persona 最近更新的会话 id（无则 None）。"""
-    r = _conn_get().execute(
-        "SELECT id FROM conversations WHERE persona=? ORDER BY updated_at DESC LIMIT 1", (persona,)).fetchone()
-    return r["id"] if r else None
 
 
 # ---------------- 长期记忆（跨会话） ----------------

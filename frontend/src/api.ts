@@ -192,8 +192,9 @@ export const api = {
   squareConnect: (api_key: string) => jpost("/square/connect", { api_key }),
   squareDisconnect: () => jpost("/square/disconnect", {}),
   getAutoExec: async () => {
+    // fail-closed：请求失败时视为未开启自动执行（false → 走人工确认），不能 fail-open 放大权限
     const r = await fetch(BASE + "/settings/auto-exec", { headers: authHeaders() });
-    return r.ok ? (await r.json()).auto_exec : true;
+    return r.ok ? (await r.json()).auto_exec === true : false;
   },
   setAutoExec: (on: boolean) => jpost("/settings/auto-exec", { auto_exec: on }),
   getDeepThinking: async () => {

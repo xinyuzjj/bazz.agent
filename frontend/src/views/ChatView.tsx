@@ -61,6 +61,20 @@ export function ChatView({
   const textBufRef = useRef<Map<string, string>>(new Map());
   const reasonBufRef = useRef<Map<string, string>>(new Map());
   const textRafRef = useRef<Map<string, number>>(new Map());
+  // 会话切换竞态防护：流式请求代号，切换会话时递增 → 旧流所有写入点校验不匹配即停止
+  const activeReqRef = useRef(0);
+  const skipAbortOnceRef = useRef<string | null>(null); // 流内 meta 回填 convId → 该次 convId 变化不算"切换会话"
+  // 切换会话时中断旧流：convId 变化 → abort 在途请求（流内 meta 回填 convId 的情况跳过）
+  useEffect(() => {
+    if (skipAbortOnceRef.current != null) {
+      const expected = skipAbortOnceRef.current;
+      skipAbortOnceRef.current = null;
+      if (expected === convId) return; // 新会话首次落库回填 id，非用户切换
+    }
+    if (!abortRef.current) return;
+    activeReqRef.current += 1; // 旧流 requestId 失效
+    abortRef.current.abort();
+  }, [convId]);
   const [editSel, setEditSel] = useState<{ id: string; text: string } | null>(null); // 正在“编辑重发”的用户消息
   const [renamingId, setRenamingId] = useState<string | null>(null); // 正在改名中的会话 id
   const [renameDraft, setRenameDraft] = useState("");
@@ -479,17 +493,23 @@ export function ChatView({
     mentions.forEach((m) => { const id = crypto.randomUUID(); botIds[m.name] = id; pre.push({ id, role: "assistant", text: "", pending: true, persona: m.name, ts: Date.now() }); });
     setMessages((arr) => [...arr, ...pre]);
     setGrouping(true);
+    const myReq = ++activeReqRef.current; // 本次群聊流代号：会话切换后写入失效
     try {
       const res = await fetch("/api/bots/reply", {
         method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ conversation_id: convId, message: content, to: mentions.map((m) => m.name) }),
       });
+      if (!res.ok) {
+        const errTxt = await res.text().catch(() => "");
+        throw new Error(errTxt || `HTTP ${res.status}`);
+      }
       const reader = res.body!.getReader();
       const dec = new TextDecoder();
       let buf = "";
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
+        if (activeReqRef.current !== myReq) break; // 会话已切换：停止写入
         buf += dec.decode(value, { stream: true });
         const lines = buf.split("\n"); buf = lines.pop() ?? "";
         for (const ln of lines) {
@@ -499,11 +519,15 @@ export function ChatView({
             if (ev.type === "bot" && ev.name && botIds[ev.name]) {
               const targetId = botIds[ev.name];
               setMessages((arr) => arr.map((m) => m.id === targetId ? { ...m, text: (m.text || "") + (ev.text ?? ""), pending: false } : m));
-            } else if (ev.type === "done" && ev.conversation_id && !convId) {
+            } else if (ev.type === "done" && ev.conversation_id && !convId && activeReqRef.current === myReq) {
               setConvId(ev.conversation_id);
             }
           } catch {}
         }
+      }
+      // EOF 终态：未收到回复的 bot 占位也落 done，避免 UI 停留在"生成中"
+      if (activeReqRef.current === myReq) {
+        setMessages((arr) => arr.map((m) => pre.some((p) => p.id === m.id) ? { ...m, pending: false } : m));
       }
     } catch (e: any) {
       mentions.forEach((m) => {
@@ -642,14 +666,20 @@ export function ChatView({
     pushLog(`ROOM > ${content.slice(0, 60)}`);
     setMessages((arr) => [...arr, { id: crypto.randomUUID(), role: "user", text: content, ts: Date.now() }]);
     setGrouping(true);
+    const myReq = ++activeReqRef.current; // 本次房间流代号：会话切换后写入失效
     try {
       const res = await streamChat({ conversation_id: convId, message: content });
+      if (!res.ok) {
+        const errTxt = await res.text().catch(() => "");
+        throw new Error(errTxt || `HTTP ${res.status}`);
+      }
       const reader = res.body!.getReader();
       const dec = new TextDecoder();
       let buf = "";
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
+        if (activeReqRef.current !== myReq) break; // 会话已切换：停止写入
         buf += dec.decode(value, { stream: true });
         const lines = buf.split("\n"); buf = lines.pop() ?? "";
         for (const ln of lines) {
@@ -688,6 +718,20 @@ export function ChatView({
       setGrouping(false);
       refreshList();
     }
+  };
+
+  // 流结束（EOF/停止/出错）时同步 flush 未提交的增量 buffer：取消挂着的 rAF，一次性把累积内容写入 state
+  const flushStreamBufs = (id: string) => {
+    for (const key of [id, id + ":r"]) {
+      const raf = textRafRef.current.get(key);
+      if (raf != null) { cancelAnimationFrame(raf); textRafRef.current.delete(key); }
+    }
+    const t = textBufRef.current.get(id);
+    const r = reasonBufRef.current.get(id);
+    textBufRef.current.delete(id);
+    reasonBufRef.current.delete(id);
+    if (t == null && r == null) return;
+    setMessages((m) => m.map((x) => x.id === id ? { ...x, ...(t != null ? { text: t } : {}), ...(r != null ? { reasoning: r } : {}) } : x));
   };
 
   const send = async (text?: string, opts?: { regenerate?: boolean; editText?: string; editId?: string | null }) => {
@@ -762,6 +806,7 @@ export function ChatView({
 
     const ac = new AbortController();
     abortRef.current = ac;
+    const myReq = ++activeReqRef.current; // 本次流代号：会话切换后所有写入点校验失效
     const editIdx = isEdit && editId ? messages.findIndex((x) => x.id === editId) : undefined;
     try {
       const ap = approvalRef.current;
@@ -773,14 +818,19 @@ export function ChatView({
         ...(isRegen ? { regenerate: !isEdit, edit_text: isEdit ? content : "", edit_index: editIdx } : {}),
         ...(sessionModel && sessionModel !== defaultModel ? { llm_cfg: { model: sessionModel } } : {}),
       }, ac.signal);
+      if (!res.ok) {
+        const errTxt = await res.text().catch(() => "");
+        throw new Error(errTxt || `HTTP ${res.status}`);
+      }
       const reader = res.body!.getReader();
       const dec = new TextDecoder();
       let buf = "";
-      // 逐字流式：每个 text/reasoning delta 后让出一帧，让 React 渲染 + 浏览器绘制真的有间隔（否则 React 批处理只渲染末态、视觉上"一次性出来"）
-      const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
+      // 增量先累积到 textBufRef/reasonBufRef，由 applyEvent 内的 rAF 节流批量 commit（每帧最多 flush 一次），
+      // 读循环本身不再逐 delta 等帧，吞吐不再被帧率卡死
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
+        if (activeReqRef.current !== myReq) { ac.abort(); break; } // 会话已切换：停止写入并中止
         buf += dec.decode(value, { stream: true });
         const lines = buf.split("\n");
         buf = lines.pop() ?? "";
@@ -788,29 +838,40 @@ export function ChatView({
           if (!ln.trim()) continue;
           try {
             const ev = JSON.parse(ln);
-            applyEvent(ev, asstId);
-            if (ev.type === "meta" && ev.conversation_id && !convId) setConvId(ev.conversation_id);
-            // 仅对字符级流式事件让帧；tool/approval/done/error 立刻呈现
-            if (ev.type === "text" || ev.type === "delta" || ev.type === "reasoning") {
-              await nextFrame();
+            applyEvent(ev, asstId, myReq);
+            if (ev.type === "meta" && ev.conversation_id && !convId && activeReqRef.current === myReq) {
+              skipAbortOnceRef.current = ev.conversation_id; // 新会话首次落库回填 id，不算"切换会话"
+              setConvId(ev.conversation_id);
             }
           } catch {}
         }
       }
-    } catch (e: any) {
-      if (e?.name === "AbortError") {
-        pushLog(`STOP > ${t("chat.stopDone")}`);
-        setMessages((m) => m.map((x) => x.id === asstId ? { ...x, text: (x.text || "") + "\n\n⏹ " + t("chat.stopped"), pending: false } : x));
-      } else {
-        pushLog(`ERR > ${e?.message ?? e}`);
-        setMessages((m) => m.map((x) => x.id === asstId ? { ...x, text: t("chat.streamFail", { err: e?.message ?? e }), pending: false } : x));
+      // EOF 终态：flush 残余增量 buffer 并把该消息落 done（后端未发 done/error 时兜底，UI 不停留在"生成中"）
+      if (activeReqRef.current === myReq) {
+        flushStreamBufs(asstId);
+        setMessages((m) => m.map((x) => x.id === asstId ? { ...x, pending: false } : x));
       }
-    } finally { setStreaming(false); abortRef.current = null; refreshList(); /* 5s 后再刷一次：等自动标题落库 */ setTimeout(refreshList, 5000); }
+    } catch (e: any) {
+      if (activeReqRef.current === myReq) {
+        if (e?.name === "AbortError") {
+          flushStreamBufs(asstId);
+          pushLog(`STOP > ${t("chat.stopDone")}`);
+          setMessages((m) => m.map((x) => x.id === asstId ? { ...x, text: (x.text || "") + "\n\n⏹ " + t("chat.stopped"), pending: false } : x));
+        } else {
+          pushLog(`ERR > ${e?.message ?? e}`);
+          setMessages((m) => m.map((x) => x.id === asstId ? { ...x, text: t("chat.streamFail", { err: e?.message ?? e }), pending: false } : x));
+        }
+      }
+    } finally {
+      if (abortRef.current === ac) { abortRef.current = null; setStreaming(false); } // 仅当仍是本次流时清理，避免误清新请求
+      refreshList(); /* 5s 后再刷一次：等自动标题落库 */ setTimeout(refreshList, 5000);
+    }
   };
   // Stop：中断当前生成（前端断开流；后端断连后不再落库该条回复）
   const stopGen = () => { abortRef.current?.abort(); };
 
-  function applyEvent(ev: any, asstId: string) {
+  function applyEvent(ev: any, asstId: string, myReq: number) {
+    if (activeReqRef.current !== myReq) return; // 请求已失效（会话切换）：丢弃事件，不写入
     // 高频流式字段：累积到 ref，下一帧 commit 到 React state —— 避免 fetch 在同帧塞多 delta 时 React 批处理只渲染最后一帧
     if (ev.type === "text" || ev.type === "delta") {
       const cur = textBufRef.current.get(asstId) ?? "";
@@ -818,6 +879,7 @@ export function ChatView({
       if (!textRafRef.current.has(asstId)) {
         textRafRef.current.set(asstId, requestAnimationFrame(() => {
           textRafRef.current.delete(asstId);
+          if (activeReqRef.current !== myReq) { textBufRef.current.delete(asstId); return; } // 切换后丢弃累积
           const t = textBufRef.current.get(asstId);
           if (t == null) return;
           setMessages((m) => m.map((x) => x.id === asstId ? { ...x, text: t } : x));
@@ -833,6 +895,7 @@ export function ChatView({
       if (!textRafRef.current.has(key)) {
         textRafRef.current.set(key, requestAnimationFrame(() => {
           textRafRef.current.delete(key);
+          if (activeReqRef.current !== myReq) { reasonBufRef.current.delete(asstId); return; } // 切换后丢弃累积
           const r = reasonBufRef.current.get(asstId);
           if (r == null) return;
           setMessages((m) => m.map((x) => x.id === asstId ? { ...x, reasoning: r, model: ev.model || x.model } : x));

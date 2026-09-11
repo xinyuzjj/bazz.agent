@@ -14,6 +14,7 @@
 """
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -136,34 +137,60 @@ def _run(scope: str):
         _persist()
 
 
+def _ver_key(v: str) -> tuple:
+    """"v1.10.0" → (1, 10, 0)：与锁定版本比较用，防止锁版本安装把已装的新版回滚。"""
+    nums = [int(x) for x in re.findall(r"\d+", v or "")[:3]]
+    return tuple((nums + [0, 0, 0])[:3])
+
+
 def _update_baw() -> tuple:
-    """baw 原地升级：runtime node + npm-cli.js。baw@latest 与 undici@6 必须同一条命令
-    （runtime/ 无 package.json，npm 分两次装会互相剪包 —— v1.3.8 实测 74 包被剪）。"""
+    """baw 原地升级：runtime node + npm-cli.js。baw 与 undici 必须同一条命令
+    （runtime/ 无 package.json，npm 分两次装会互相剪包 —— v1.3.8 实测 74 包被剪）。
+    F16：安装 spec 用 _PINNED_NPM_SPEC 锁定版本（原 @binance/agentic-wallet@latest /
+    undici@6 为可变引用，内容随时可变，有供应链投毒风险）；已装版本 ≥ 锁定版本时跳过，
+    拒绝静默回滚。"""
     node = workspace.NODE_EXE
     npmcli = os.path.join(workspace.RUNTIME_DIR, "node", "node_modules", "npm", "bin", "npm-cli.js")
     if not (os.path.isfile(node) and os.path.isfile(npmcli)):
         return False, "内置 runtime 缺 node/npm"
+    cur = _baw_version()
+    pinned_ver = _PINNED_BAW_SPEC.rsplit("@", 1)[-1]
+    if cur and _ver_key(cur) >= _ver_key(pinned_ver):
+        return True, f"v{cur}（≥ 锁定版本 v{pinned_ver}，跳过安装防回滚）"
     cmd = [node, npmcli, "install", "--no-audit", "--no-fund", "--no-save",
-           "--prefix", workspace.RUNTIME_DIR, "--loglevel=error",
-           "@binance/agentic-wallet@latest", "undici@6"]
+           "--prefix", workspace.RUNTIME_DIR, "--loglevel=error", *_PINNED_NPM_SPEC]
     try:
+        print(f"[skill_updater] 安装锁定版本：{' '.join(_PINNED_NPM_SPEC)}")
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         if p.returncode == 0:
-            return True, "v" + (_baw_version() or "?")
+            installed = _baw_version() or "?"
+            print(f"[skill_updater] baw 安装完成，落地版本 v{installed}"
+                  f"（锁定 spec {_PINNED_BAW_SPEC}）")   # F16：版本记录日志
+            return True, "v" + installed
         return False, (p.stderr or p.stdout or "")[-200:]
     except Exception as e:
         return False, str(e)[:200]
 
 
 def _update_skills() -> tuple:
-    """已装技能逐个重装（= 更新）。install_skill 走 catalog 的 GitHub URL 覆盖安装。"""
+    """已装技能逐个重装（= 更新）。install_skill 走 catalog 的 GitHub URL 覆盖安装。
+    F16：catalog URL 均为 github tree/main 可变分支引用（接口按分支拉取，无法在本模块
+    锁 commit —— skills_client.install_skill 仅按目录名校验落地），故做两层防护：
+    ① 每次安装记录来源 ref 日志（可追溯，不静默）；② 自动更新只装锁版本的 baw，
+    技能包仅由用户在前端手动触发更新（见 ensure_background），拒绝后台静默升级 main 内容。"""
     installed = skills_client.list_installed()
     official = [k for k in skills_client.SKILL_CATALOG if k in installed]
     updated, failed = [], []
     for k in official:
         r = skills_client.install_skill(k)
-        (updated if r.get("status") == "ok" else failed).append(
-            k if r.get("status") == "ok" else f"{k}({(r.get('stderr') or r.get('detail') or '')[-80:]})")
+        ok = r.get("status") == "ok"
+        # F16：版本/来源记录日志 —— 来源是可变 main 分支，必须留痕便于事后审计
+        src = (skills_client.SKILL_CATALOG.get(k) or {}).get("url", "")
+        ref = "main(可变分支)" if "/tree/main/" in src else "catalog"
+        print(f"[skill_updater] 技能 {k} 安装{'成功' if ok else '失败'}"
+              f"（来源 ref: {ref}）" + ("" if ok else f"：{(r.get('stderr') or r.get('detail') or '')[-120:]}"))
+        (updated if ok else failed).append(
+            k if ok else f"{k}({(r.get('stderr') or r.get('detail') or '')[-80:]})")
         with _lock:
             _state["skills"] = {"installed": official, "updated": list(updated),
                                 "failed": list(failed), "total": len(official)}
@@ -180,7 +207,10 @@ def ensure_background():
             try:
                 snap = check()
                 if snap["baw"]["available"]:
-                    start_update("all")
+                    # F16（拒绝静默升级）：自动更新只装 _PINNED_NPM_SPEC 锁版本的 baw；
+                    # 技能包来源是 github main 可变分支，不能由后台静默重装，
+                    # 仅保留前端手动「立即更新」入口（start_update("skills"/"all")）。
+                    start_update("baw")
             except Exception:
                 pass
             time.sleep(CHECK_INTERVAL)

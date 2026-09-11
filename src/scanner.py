@@ -7,6 +7,7 @@
 import os
 import json
 import time
+import threading
 import urllib.parse
 import requests
 
@@ -735,15 +736,68 @@ _daily2_cache = {"ts": 0.0, "bars": {}}   # sym -> (o,h,l,c,v,first_ms)，30 分
 _radar_prev: dict = {}                    # sym -> (cycle_ts, stage)
 
 
-def _klines_raw(sym: str, interval: str = "15m", limit: int = 288) -> list:
-    """拉 sym 的 K 线原始数组（旧→新，含当前未收 bar），失败返回 []。"""
+# ---------------- 5.1 在途请求合并（同缓存键并发去重） ----------------
+# 雷达三段扇出（_daily2_bars 日线池 / get_radar_v2 的 15m+5m K 线 / _confirm_factors
+# 确认层）在线程池里按缓存键发 REST；两轮扫描并发（缓存过期瞬间/force=True）会对相同
+# (sym, interval, limit) 重复打接口（冷启动扇出约 450 次 REST）。_INFLIGHT 把同时进行的
+# 重复请求合并成一次：首个调用者注册 Future 并执行 fetch_fn，其余等待其结果。
+# 已有 TTL 缓存逻辑不变 —— 合并只针对「同时在途」的重复请求，不改变缓存行为。
+_INFLIGHT: dict = {}                       # cache_key -> concurrent.futures.Future
+_INFLIGHT_LOCK = threading.Lock()
+_INFLIGHT_WAIT_SEC = 30.0                  # 等待在途结果的上限（超时自取兜底，防持有者卡死拖死等待者）
+
+
+def _dedupe_fetch(cache_key, fetch_fn):
+    """相同 cache_key 的并发请求只发一次、共享同一结果（线程安全）。
+    未命中：注册自己的 Future 再执行 fetch_fn，完成后先移除注册再回填结果；
+    命中：限时等待在途 Future（超时循环），超时后自己发请求兜底；
+    异常：先移除注册再 set_exception，原样传播给等待者。"""
+    with _INFLIGHT_LOCK:
+        fut = _INFLIGHT.get(cache_key)
+        if fut is None:
+            fut = _cf.Future()
+            _INFLIGHT[cache_key] = fut
+            owner = True
+        else:
+            owner = False
+    if not owner:
+        deadline = time.time() + _INFLIGHT_WAIT_SEC
+        while True:
+            try:
+                return fut.result(timeout=max(0.5, deadline - time.time()))
+            except _cf.TimeoutError:
+                if time.time() >= deadline:
+                    break                  # 持有者迟迟未返回 → 自取兜底（不等死锁）
+            except BaseException:
+                raise                      # 持有者失败：异常原样传播（下轮重试会重新发请求）
+        return fetch_fn()
     try:
-        r = _session.get(f"{SPOT}/api/v3/klines",
-                         params={"symbol": sym, "interval": interval, "limit": limit}, timeout=10)
-        r.raise_for_status()
-        return r.json() or []
-    except Exception:
-        return []
+        res = fetch_fn()
+    except BaseException as e:
+        with _INFLIGHT_LOCK:
+            _INFLIGHT.pop(cache_key, None)
+        fut.set_exception(e)
+        raise
+    with _INFLIGHT_LOCK:
+        _INFLIGHT.pop(cache_key, None)
+    fut.set_result(res)
+    return res
+
+
+def _klines_raw(sym: str, interval: str = "15m", limit: int = 288) -> list:
+    """拉 sym 的 K 线原始数组（旧→新，含当前未收 bar），失败返回 []。
+    5.1：经 _dedupe_fetch 按 (sym, interval, limit) 在途合并 —— 覆盖雷达日线池
+    （_daily2_fetch）、15m/5m 扫描扇出与 klines_closes/klines_ohlcv 的 spot 路径，
+    并发重复请求只发一次 REST。"""
+    def _fetch():
+        try:
+            r = _session.get(f"{SPOT}/api/v3/klines",
+                             params={"symbol": sym, "interval": interval, "limit": limit}, timeout=10)
+            r.raise_for_status()
+            return r.json() or []
+        except Exception:
+            return []
+    return _dedupe_fetch(("klines", sym, interval, limit), _fetch)
 
 
 def _ohlcv(arr: list):
@@ -1010,25 +1064,31 @@ def _btc_beta(sym_rets, btc_rets, chg24: float, btc24: float) -> dict:
 # ---------------- 确认层（/futures/data/* + premiumIndex，全部免费） ----------------
 
 def _fut_hist(sym: str, path: str, period: str = "15m", limit: int = 100) -> list:
-    """/futures/data/* 免费端点。失败返回 []。"""
-    try:
-        r = _session.get(f"{FAPI}/futures/data/{path}",
-                         params={"symbol": sym, "period": period, "limit": limit}, timeout=8)
-        r.raise_for_status()
-        return r.json() or []
-    except Exception:
-        return []
+    """/futures/data/* 免费端点。失败返回 []。
+    5.1：确认层按 (sym, path, period, limit) 在途合并（_confirm_factors 扇出），
+    并发扫描轮对相同键的请求只发一次 REST。"""
+    def _fetch():
+        try:
+            r = _session.get(f"{FAPI}/futures/data/{path}",
+                             params={"symbol": sym, "period": period, "limit": limit}, timeout=8)
+            r.raise_for_status()
+            return r.json() or []
+        except Exception:
+            return []
+    return _dedupe_fetch(("futhist", sym, path, period, limit), _fetch)
 
 
 def _funding_hist(sym: str, limit: int = 21) -> list:
-    """已结算资金费率历史（8h 一期，21 期 ≈ 7 天）。失败返回 []。"""
-    try:
-        r = _session.get(f"{FAPI}/fapi/v1/fundingRate",
-                         params={"symbol": sym, "limit": limit}, timeout=8)
-        r.raise_for_status()
-        return [float(d.get("lastFundingRate") or 0) for d in (r.json() or [])]
-    except Exception:
-        return []
+    """已结算资金费率历史（8h 一期，21 期 ≈ 7 天）。失败返回 []。5.1：同键在途合并。"""
+    def _fetch():
+        try:
+            r = _session.get(f"{FAPI}/fapi/v1/fundingRate",
+                             params={"symbol": sym, "limit": limit}, timeout=8)
+            r.raise_for_status()
+            return [float(d.get("lastFundingRate") or 0) for d in (r.json() or [])]
+        except Exception:
+            return []
+    return _dedupe_fetch(("fundhist", sym, limit), _fetch)
 
 
 def _confirm_factors(sym: str, funding_now: float) -> dict:

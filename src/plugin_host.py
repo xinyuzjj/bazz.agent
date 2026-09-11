@@ -72,6 +72,22 @@ def is_plugin(pid):
     return pid in _plugin_dirs()
 
 
+def _enabled_map() -> dict:
+    """插件启停表（settings key "plugins"，缺省视为启用）。
+    v1.5.29（F14 修复）：禁用的插件不得注入 LLM 工具、不得被执行。"""
+    try:
+        import json as _json
+        from state import get_setting
+        m = _json.loads(get_setting("plugins", "") or "{}")
+        return m if isinstance(m, dict) else {}
+    except Exception:
+        return {}
+
+
+def is_enabled(pid: str) -> bool:
+    return bool(_enabled_map().get(pid, True))
+
+
 def _load_module(pid):
     """缓存加载 main.py；mtime 变化时重新加载（便于热改）。"""
     d = os.path.join(PLUGINS_DIR, pid)
@@ -94,10 +110,13 @@ def _load_module(pid):
 
 
 def list_command_schemas():
-    """把已装插件命令转成 LLM function schema（Hermes：动态工具注入）。"""
+    """把已装插件命令转成 LLM function schema（Hermes：动态工具注入）。
+    v1.5.29（F14 修复）：已禁用插件不注入。"""
     tools = []
     for man in list_plugins():
         pid = man.get("id")
+        if not is_enabled(pid):
+            continue
         for c in man.get("commands") or []:
             schema = c.get("args_schema") or {}
             tools.append({
@@ -119,6 +138,9 @@ def exec_command(pid, command, params=None):
     """执行插件命令：params dict。返回 {ok, text?, data?, error?}。"""
     if pid not in _plugin_dirs():
         return {"ok": False, "error": f"plugin '{pid}' not found"}
+    # v1.5.29（F14 修复）：执行时双重校验启停状态（此前禁用插件仍可被 LLM 调用）
+    if not is_enabled(pid):
+        return {"ok": False, "error": f"plugin '{pid}' 已禁用，请在插件面板启用后再调用"}
     man = _read_manifest(pid)
     cmd = next((c for c in (man or {}).get("commands") or [] if c.get("name") == command), None)
     if cmd is None:

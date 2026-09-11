@@ -115,6 +115,38 @@ def _under(root: str, p: str) -> bool:
         return False
 
 
+def _realpath_escapes(p: str, roots: list) -> bool:
+    """v1.5.29（F06 修复）：把路径按符号链接/junction 解析到真实位置，
+    真实位置落在任一允许根之外 → True（拒绝）。防「工作区内符号链接指向沙箱外」。"""
+    try:
+        rp = os.path.realpath(p)
+    except Exception:
+        return False
+    if rp == p:
+        return False
+    return not any(_under(root, rp) for root in roots)
+
+
+# 子进程环境剥离：变量名（大写化后）含这些子串一律不传给子进程，
+# 防止 BAZZ_AUTH_TOKEN / API Key / 代理凭据等经 run_command 泄露给任意白名单命令。
+_ENV_DENY_SUBSTR = ("TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL",
+                    "API_KEY", "APIKEY", "AUTH")
+
+
+def _sandbox_env() -> dict:
+    """白名单命令子进程的环境：不继承完整 os.environ。
+    保留代理池（HTTP(S)_PROXY）与 NODE_OPTIONS（Node 子进程经 proxy-preload 走代理必需）、
+    BAZZ_WORKSPACE 等运行必需项；剥离一切凭据类变量与 PYTHONSTARTUP。"""
+    env = {}
+    for k, v in os.environ.items():
+        ku = k.upper()
+        if any(s in ku for s in _ENV_DENY_SUBSTR):
+            continue
+        env[k] = v
+    env.pop("PYTHONSTARTUP", None)
+    return env
+
+
 def _disp(p: str) -> str:
     """展示用相对路径：优先相对工作区根，其次代码根，都不行给绝对路径。"""
     for base in (SANDBOX_ROOT, PROJECT_ROOT):
@@ -191,6 +223,8 @@ def resolve_read(path: str) -> str:
             p = cand_ws if os.path.exists(cand_ws) else cand_pr
     if not (_under(PROJECT_ROOT, p) or _under(SANDBOX_ROOT, p)):
         raise SandboxError(f"只能读取项目目录或工作区内的文件（越界: {path}）")
+    if _realpath_escapes(p, [PROJECT_ROOT, SANDBOX_ROOT]):
+        raise SandboxError(f"路径经符号链接解析后越界，不可读: {path}")
     if _is_blacklisted(p):
         raise SandboxError(f"路径命中黑名单目录，不可读: {path}")
     if not os.path.isfile(p):
@@ -213,6 +247,8 @@ def resolve_write(path: str) -> str:
             "（相对路径请以 workspace/ 或 .workbuddy/generated/ 开头）")
     if _is_blacklisted(p):
         raise SandboxError(f"路径命中黑名单目录，不可写: {path}")
+    if _realpath_escapes(p, WRITE_ROOTS):
+        raise SandboxError(f"路径经符号链接解析后越界，不可写: {path}")
     return p
 
 
@@ -237,6 +273,8 @@ def _resolve_sh_path(path: str, write: bool = True) -> str:
     roots = WRITE_ROOTS if write else (PROJECT_ROOT, SANDBOX_ROOT)
     if not any(_under(root, p) for root in roots):
         raise SandboxError(f"{'只允许在工作区内操作，越界' if write else '只能读取项目目录或工作区内文件，越界'}: {path}")
+    if _realpath_escapes(p, list(roots)):
+        raise SandboxError(f"路径经符号链接解析后越界: {path}")
     if _is_blacklisted(p):
         raise SandboxError(f"路径命中黑名单目录: {path}")
     return p
@@ -816,7 +854,9 @@ def _run_one(command: str, timeout: int, max_out: int) -> dict:
     if os.name == "nt" and exe_path.lower().endswith((".cmd", ".bat")):
         argv = ["cmd", "/c"] + argv
     try:
-        proc = subprocess.run(argv, cwd=SANDBOX_ROOT, capture_output=True, timeout=timeout)
+        # v1.5.29（F06 修复）：子进程不再继承完整环境（凭据类变量剥离），防白名单解释器窃密
+        proc = subprocess.run(argv, cwd=SANDBOX_ROOT, capture_output=True, timeout=timeout,
+                              env=_sandbox_env())
         out = _decode_text(proc.stdout or b"")
         if proc.stderr:
             out += "\n[stderr]\n" + _decode_text(proc.stderr)

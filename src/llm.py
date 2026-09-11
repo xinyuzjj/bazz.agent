@@ -214,12 +214,21 @@ def snapshot(cfg: dict = None) -> dict:
 
 
 def cfg_from_snapshot(snap: dict = None) -> dict:
-    """把会话级快照叠加到当前配置：延续旧会话时保持当时的 provider/model 选择，
-    密钥始终取当前（快照不含明文 key）→ 满足防漂移又不丢失凭据。
+    """把会话级快照叠加到当前配置：延续旧会话时保持当时的 provider/model 选择。
+
+    凭据成组语义（防跨服务密钥错配）：快照不含明文 key，key 始终取当前配置——
+    但仅当 snap.provider 与当前 get_llm_config().provider 一致时才继承当前
+    api_key/key_env。若用户中途把 provider 从 A 换到 B（key 也换成了 B 的），
+    恢复旧会话快照时 provider/base_url 会回到 A，此时**不继承**当前（B 的）
+    api_key/key_env：api_key 置空、key_env 只取快照里记录的旧 provider 环境变
+    量名，让请求因缺 key 安全失败或走快照 key_env 机制，避免「A 的端点 +
+    B 的密钥」把凭据泄露到错误服务。
     """
     cfg = get_llm_config()
     if not snap:
         return cfg
+    same_provider = (not snap.get("provider")) or \
+                    (snap.get("provider") == cfg.get("provider"))
     if snap.get("provider"):
         cfg["provider"] = snap["provider"]
     if snap.get("base_url"):
@@ -231,8 +240,13 @@ def cfg_from_snapshot(snap: dict = None) -> dict:
     aux = snap.get("aux")
     if isinstance(aux, dict):
         cfg["aux"] = {**cfg.get("aux", {}), **aux}
-    if snap.get("key_env"):
-        cfg["key_env"] = snap["key_env"]
+    if same_provider:
+        if snap.get("key_env"):
+            cfg["key_env"] = snap["key_env"]
+    else:
+        # provider 换过：不继承当前凭据（api_key 清空；key_env 只信快照里的旧名字）
+        cfg["api_key"] = ""
+        cfg["key_env"] = str(snap.get("key_env") or "")
     return cfg
 
 

@@ -15,7 +15,7 @@ import threading
 import re
 
 from state import (get_setting, set_setting, new_conversation,
-                   add_message, list_conversations)
+                   add_message, list_conversations, update_cron_job)
 
 REPORT_CONV_TITLE = "BAZZ Agent 日报"
 DEFAULT_JOBS = [
@@ -311,7 +311,6 @@ def _loop():
         try:
             now = time.time()
             jobs = get_jobs()
-            changed = False
             for job in jobs:
                 if not job.get("enabled"):
                     continue
@@ -321,11 +320,29 @@ def _loop():
                         run_job(job)
                     except Exception:
                         pass
-                    job["last_run"] = now
-                    job["next_run"] = _next(job["schedule"], now)
-                    changed = True
-            if changed:
-                save_jobs(jobs)
+                    # F12：逐任务原子回写状态字段（读-改-写持锁），不再整份覆盖 jobs，
+                    # 防止执行期间用户增删/改任务时丢任务、丢状态。
+                    try:
+                        ok = update_cron_job(job.get("id"), {
+                            "last_run": now,
+                            "next_run": _next(job.get("schedule") or "", now),
+                            "last_error": job.get("last_error") or "",
+                        })
+                    except Exception:
+                        ok = False
+                    if not ok:
+                        # 兜底：任务尚未落库（如内置 default-daily 首次触发前 cron_jobs 为空）
+                        # 或数据损坏 —— 把补丁并入最新全量后一次性落库（自愈，仅此场景整份写）。
+                        try:
+                            fresh = get_jobs()
+                            for j in fresh:
+                                if j.get("id") == job.get("id"):
+                                    j.update({"last_run": now,
+                                              "next_run": _next(job.get("schedule") or "", now),
+                                              "last_error": job.get("last_error") or ""})
+                            save_jobs(fresh)
+                        except Exception:
+                            pass
         except Exception:
             pass
         time.sleep(30)

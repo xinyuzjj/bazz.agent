@@ -67,9 +67,9 @@ function connect() {
         const incoming = m.ticks?.[scope] ?? {};
         for (const [sym, t] of Object.entries(incoming as Record<string, Tick>)) {
           const prev = map.get(sym);
-          if (prev && prev.p === t.p && prev.c === t.c && prev.q === t.q) {
-            // 价格/涨跌幅没变 → 换 t 但不触发渲染，避免无意义重渲
-            map.set(sym, { ...prev, t: t.t });
+          // diff 合并：渲染相关字段（价/涨跌幅/量/高低）全部未变 → 保留旧对象引用，
+          // useSyncExternalStore 的 Object.is 比较命中，下游组件不重渲（t 为时间戳，无展示方，可随旧引用保留）
+          if (prev && prev.p === t.p && prev.c === t.c && prev.q === t.q && prev.h === t.h && prev.l === t.l) {
             continue;
           }
           map.set(sym, t);

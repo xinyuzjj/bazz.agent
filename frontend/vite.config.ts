@@ -18,6 +18,7 @@ export default defineConfig({
       "/api": {
         target: `http://127.0.0.1:${devPort}`,
         changeOrigin: true,
+        ws: true, // WebSocket（/api/ws 行情流）dev 代理也需升级连接
       },
     },
   },

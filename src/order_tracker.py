@@ -179,10 +179,10 @@ def ensure_started() -> None:
 
     def _loop():
         while True:
-            time.sleep(POLL_SEC)
             try:
                 _tick()
             except Exception:
                 pass
+            time.sleep(POLL_SEC)   # 5.2：先执行一轮检查再 sleep（消除启动即延迟与轮询节奏偏移）
 
     threading.Thread(target=_loop, daemon=True, name="bazz-order-tracker").start()

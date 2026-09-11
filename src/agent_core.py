@@ -831,16 +831,35 @@ def _run_execute(confirm: bool = False, signal: dict = None, message: str = "",
     route = _decide_route(signal=symbol)
     margin = max(1.0, min(100000.0, float(margin_usdt or 50.0)))
     lev = max(1, min(125, int(leverage or 1)))
+    # v1.5.29（F03 修复）：执行层只有现货通道（cex 现货限价单 / baw 链上兑换），
+    # 杠杆语义无法兑现——此前 margin×lev/price 会生成超额数量的现货买单。
+    if lev > 1:
+        return {"reply": (f"⛔ 执行层只有**现货通道**（无杠杆），你要求的 {lev}× 杠杆无法兑现——"
+                          "继续执行会变成按 margin×杠杆 超额买入现货。请去掉杠杆要求后重试"
+                          "（如「执行交易」默认 1×），合约杠杆请到币安合约界面手动操作。"),
+                "tools": [{"icon": "📈", "name": "交易预检", "status": "error",
+                           "detail": f"现货通道不支持 {lev}× 杠杆"}]}
+    # 现货通道做空 = SELL 需已持有该资产，普通用户场景即「卖出」而非「做空」；
+    # 交易所现货通道直接拒绝 BEARISH 语义，避免生成无持仓支撑的 SELL 单。
+    if str(direction).upper() in ("BEARISH", "做空", "SHORT") and route == "exchange":
+        return {"reply": ("⛔ 币安**现货通道无法做空**（SELL 限价单需要已持有该资产）。"
+                          "若你想卖出已有持仓请明确说「卖出 XX」；想做空请到币安合约界面手动操作。"),
+                "tools": [{"icon": "📈", "name": "交易预检", "status": "error",
+                           "detail": "现货通道不支持做空语义"}]}
     signal = {**best, "direction": direction, "price": price,
               "stop_loss": round(price * 0.97, 4), "take_profit": round(price * 1.08, 4),
-              "quantity": str(round(margin * lev / price, 6)), "max_loss_usdt": round(margin * 0.1, 2),
-              "margin_usdt": margin, "leverage": lev, "route": route}
+              "quantity": str(round(margin / price, 6)),
+              "margin_usdt": margin, "leverage": 1, "route": route}
+    notional = round(margin, 2)
     route_txt = "币安交易所（API 密钥）" if route == "exchange" else "Agent 钱包（baw）"
+    # v1.5.29（F03 修复）：止损/止盈只是到价提醒参考，执行层不会自动挂保护单；
+    # 删除此前「最大亏损 = margin×10%」的虚假承诺文案；名义金额按真实提交口径展示。
     reply = (f"已生成下单方案（**未真实下单，需你确认**）：\n\n"
              f"- 标的：**{signal['symbol']}** · {signal['direction']}\n- 入场：{price}\n"
-             f"- 本金：{signal['margin_usdt']} USDT · 杠杆：{signal['leverage']}× · 名义：{round(float(signal['margin_usdt']) * signal['leverage'], 2)} USDT\n"
-             f"- 止损：{signal['stop_loss']} · 止盈：{signal['take_profit']}\n"
-             f"- 数量：{signal['quantity']} · 最大亏损：{signal['max_loss_usdt']} USDT\n"
+             f"- 投入：{signal['margin_usdt']} USDT（现货 · 1×）· 名义金额：{notional} USDT\n"
+             f"- 数量：{signal['quantity']}（按投入金额实际提交）\n"
+             f"- 止损参考：{signal['stop_loss']} · 止盈参考：{signal['take_profit']}"
+             f"（仅到价提醒，**不会自动挂保护单**）\n"
              f"- 执行通道：**{route_txt}**（由 Agent 自动判断）\n\n"
              "点击下方「确认下单」才会真实提交（交易所通道需配置 Binance API Key）。")
     if note:
@@ -1646,6 +1665,18 @@ def _dispatch_tool(name: str, args: dict, confirmed: bool = False) -> Dict[str, 
         except Exception:
             is_plugin = None
         if is_plugin and is_plugin(pid):
+            # v1.5.29（F05 修复）：插件命令是副作用出口（进程内执行插件 Python 代码），
+            # 与沙箱工具一致必须 confirmed 才执行；此前未校验，全能模式下被直接放行。
+            if not confirmed and _wl_has("plugin_exec", {"plugin": pid, "command": cmd}):
+                confirmed = True
+            if not confirmed:
+                return {"reply": f"准备执行插件命令 **{pid}.{cmd}**。确认后运行。",
+                        "needs_approval": True,
+                        "approval": {"action": "local_exec", "op": "plugin_exec",
+                                     "args": {"plugin": pid, "command": cmd, "params": args},
+                                     "title": f"执行插件 {pid}.{cmd}", "label": "▶ 确认执行"},
+                        "tools": [{"icon": "🧩", "name": f"插件 {pid}.{cmd}（待确认）",
+                                   "status": "info", "detail": "需确认"}]}
             try:
                 out = exec_command(pid, cmd, args)
             except Exception as e:
@@ -1718,7 +1749,7 @@ def _dispatch_tool(name: str, args: dict, confirmed: bool = False) -> Dict[str, 
     if name == "gateway_status":
         return _run_gateway_status()
     if name == "mcp_call":
-        return _run_mcp_call(args)
+        return _run_mcp_call(args, confirmed=confirmed)
     if name == "read_file":
         return _run_sandbox_file(args, op="read")
     if name == "write_file":
@@ -1779,7 +1810,7 @@ def _run_gateway_status() -> Dict[str, Any]:
             "data": {"gateways": gates, "mcp_tools": mcp_tool_count}}
 
 
-def _run_mcp_call(args: dict) -> Dict[str, Any]:
+def _run_mcp_call(args: dict, confirmed: bool = False) -> Dict[str, Any]:
     """调用 MCP 网关真实工具。缺 token 时给出引导（OAuth），不裸抛底层异常。"""
     server = (args.get("server") or "binance").strip()
     tool = (args.get("tool") or "").strip()
@@ -1787,6 +1818,18 @@ def _run_mcp_call(args: dict) -> Dict[str, Any]:
     if not tool:
         return {"reply": "缺少 tool 参数。可先 gateway_status 查看可用网关，或用 tools/list 发现工具。",
                 "tools": [{"icon": "🛰️", "name": "MCP 调用", "status": "error", "detail": "缺 tool"}]}
+    # v1.5.29（F05 修复）：MCP 网关可触达账户级私有操作（余额/持仓/真实下单），属副作用出口，
+    # 与沙箱工具一致必须 confirmed 才执行；「信任并执行」按 server.tool 粒度加白。
+    if not confirmed and _wl_has("mcp_call", {"server": server, "tool": tool}):
+        confirmed = True
+    if not confirmed:
+        return {"reply": f"准备调用 MCP 网关 **{server}.{tool}**（该通道可访问账户级数据与操作）。确认后执行。",
+                "needs_approval": True,
+                "approval": {"action": "local_exec", "op": "mcp_call",
+                             "args": {"server": server, "tool": tool, "arguments": arguments},
+                             "title": f"MCP 调用 {server}.{tool}", "label": "▶ 确认执行"},
+                "tools": [{"icon": "🛰️", "name": f"MCP {server}.{tool}（待确认）",
+                           "status": "info", "detail": "需确认"}]}
     try:
         from mcp_client import call_tool, server_status, oauth_start
         st = server_status(server)
@@ -1965,6 +2008,13 @@ def _wl_rule(op: str, args: dict) -> str:
     if op == "run_skill":
         n = str(args.get("skill_name") or "").strip()
         return f"skill:{n}" if n else ""
+    if op == "mcp_call":
+        s = str(args.get("server") or "").strip()
+        t = str(args.get("tool") or "").strip()
+        return f"mcp:{s}.{t}" if (s and t) else ""
+    if op == "plugin_exec":
+        p = str(args.get("plugin") or "").strip()
+        return f"plugin:{p}" if p else ""
     return ""
 
 
@@ -2202,10 +2252,11 @@ def _tool_run_skill(args: dict, confirmed: bool = False) -> Dict[str, Any]:
 
 
 def _dispatch_is_approval_needed(name: str) -> bool:
-    """这些工具执行路径可能流 needs_approval（下单类/装 skill/写文件/跑命令/执行技能）→ 不与其它工具并行。"""
-    base = name.split(".")[0] if "." in name else name
-    return base in ("propose_trade", "execute", "execute_order", "install_skill", "memory_write",
-                    "write_file", "run_command", "run_skill")
+    """这些工具执行路径可能流 needs_approval（下单类/装 skill/写文件/跑命令/执行技能/MCP/插件）→ 不与其它工具并行。"""
+    if "." in name:
+        return True  # v1.5.29（F05/F09）：插件命令（<pluginId>.<cmd>）是副作用出口，按审批屏障处理
+    return name in ("propose_trade", "execute", "execute_order", "install_skill", "memory_write",
+                    "write_file", "run_command", "run_skill", "mcp_call")
 
 
 # Hermes bots：persona 可声明 config.tools 工具子集白名单（留空/缺省 = 全部工具）
@@ -2572,9 +2623,30 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
                         for tc in tool_calls]
         messages.append({"role": "assistant", "content": content, "tool_calls": assistant_tc})
         # 并行执行多个 tool_calls（Hermes：同一轮互不依赖的工具同时跑，结果按原序回传）
-        # 需要审批（needs_approval）的动作（如 propose_trade/execute）不并行——审批要立刻停住等用户。
+        # v1.5.29（F09 修复）：
+        # 1) _run_one 永不抛异常（内部兜底成错误结果）→ 线程池不再整批失败；
+        # 2) 审批是调度屏障——按顺序执行，遇到首个需要审批的工具先跑完它，
+        #    一旦它返回 needs_approval 立即停流等用户，其后的工具一律不再执行；
+        # 3) 删除此前「线程池异常 → 整批顺序重跑」的回退：那会把已执行过的
+        #    副作用工具再执行一遍（重复下单/重复写文件）。改为保留 per-call 结果。
         def _run_one(tc):
-            return tc, _dispatch_tool(tc["name"], tc.get("args", {}), confirmed=auto_exec)
+            try:
+                return tc, _dispatch_tool(tc["name"], tc.get("args", {}), confirmed=auto_exec)
+            except Exception as e:
+                return tc, {"reply": f"工具执行异常：{type(e).__name__}: {str(e)[:200]}",
+                            "tools": [{"icon": "⚠️", "name": tc["name"], "status": "error",
+                                       "detail": str(e)[:140]}]}
+
+        def _run_batch(tcs):
+            if not tcs:
+                return []
+            if len(tcs) == 1:
+                return [_run_one(tcs[0])]
+            try:
+                with ThreadPoolExecutor(max_workers=min(len(tcs), 4)) as pool:
+                    return list(pool.map(_run_one, tcs))
+            except Exception:
+                return [_run_one(tcs[0])]  # 理论不可达（_run_one 不抛），兜底不重放
 
         # 重复调用防护（Hermes repetition_guard）：同签名已真实执行 ≥2 次 → 不再执行，
         # 直接回传提示让 LLM 基于已有结果作答（省 API 调用，防同参死循环烧到轮次上限）。
@@ -2590,16 +2662,25 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
             pending.append((tc, sig))
         if not pending:
             continue  # 本轮全部被拦截 → 直接进下一轮让 LLM 看到提示后收尾
-        tool_calls_exec = [tc for tc, _sig in pending]
-        if len(tool_calls_exec) <= 1 or any(_dispatch_is_approval_needed(tc["name"]) for tc in tool_calls_exec):
-            results = [_run_one(tc) for tc in tool_calls_exec]
-        else:
-            try:
-                with ThreadPoolExecutor(max_workers=min(len(tool_calls_exec), 4)) as pool:
-                    results = list(pool.map(_run_one, tool_calls_exec))
-            except Exception:
-                results = [_run_one(tc) for tc in tool_calls_exec]
-        for sig, (tc, res) in zip([s for _tc, s in pending], results):
+        results, executed_sigs = [], []
+        i = 0
+        while i < len(pending):
+            tc, sig = pending[i]
+            if _dispatch_is_approval_needed(tc["name"]):
+                results.append(_run_one(tc))
+                executed_sigs.append(sig)
+                if results[-1][1].get("needs_approval"):
+                    break  # 审批屏障：其后的工具本轮一律不执行，等用户裁决
+                i += 1
+                continue
+            j = i
+            while j < len(pending) and not _dispatch_is_approval_needed(pending[j][0]["name"]):
+                j += 1
+            batch = pending[i:j]
+            results.extend(_run_batch([t for t, _s in batch]))
+            executed_sigs.extend(s for _t, s in batch)
+            i = j
+        for sig, (tc, res) in zip(executed_sigs, results):
             recent_calls.append(sig)
             if len(recent_calls) > 8:
                 del recent_calls[:len(recent_calls) - 8]
@@ -2686,6 +2767,11 @@ def dispatch(message: str, confirm: bool = False, signal: dict = None,
                 return _run_sandbox_cmd(aargs, confirmed=True)
             if op == "run_skill":
                 return _tool_run_skill(aargs, confirmed=True)
+            if op == "mcp_call":
+                return _run_mcp_call(aargs, confirmed=True)
+            if op == "plugin_exec":
+                return _dispatch_tool(f"{aargs.get('plugin')}.{aargs.get('command')}",
+                                      aargs.get("params") or {}, confirmed=True)
             return {"reply": "未知的本地执行审批类型。", "tools": [
                 {"icon": "⚠️", "name": "审批", "status": "error", "detail": op}]}
 

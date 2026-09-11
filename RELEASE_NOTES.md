@@ -180,6 +180,84 @@
 - 新增 `tests/test_v1528_fixes.py`：15 个离线用例全部通过（AST/函数提取 + 桩隔离，不联网不下单）
 - 既有测试套件（test_v150_market / test_v151_radar_track）49 项全部通过
 
+# BAZZ.AGENT v1.5.29
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.29 更新要点（审查缺陷修复：授权边界 · 密钥防护 · 沙箱加固 · 供应链锁定）
+
+> 来源：同一份第三方源码工程审查报告（提交 944ca16）。本次修复其余全部 11 项缺陷
+> + 3 项性能问题，每项均附离线回归测试（tests/test_v1529_hardening.py，23/23 通过）。
+
+### F03 · 下单方案资金语义失真（P1）
+- 提案按 margin×leverage 计算数量，但执行层只有现货限价单（无杠杆）→ 高杠杆请求变成超额现货买单；
+  止损恒 97%/止盈恒 108% 却宣称「最大亏损 = margin×10%」——虚假承诺
+- 现货通道直接拒绝杠杆与做空语义（明确提示而非静默降级）；数量按 margin/price 真实口径；
+  名义金额如实展示；删除「最大亏损」文案并明示「止损止盈仅为到价提醒，不会自动挂保护单」
+
+### F05 · 副作用出口绕过授权（P1）
+- 插件命令（`<pid>.<cmd>`）与 MCP 网关调用（可触达账户级真实下单）在全能模式下未校验
+  confirmed 即执行
+- 现与沙箱工具同标准：未确认一律流审批卡；「信任并执行」按 `mcp:<server>.<tool>` /
+  `plugin:<pid>` 粒度加白；两类出口纳入调度审批屏障
+
+### F09 · 并行工具整批执行后才查审批 + 异常整批重放（P1）
+- 一批 tool_calls 先全部执行完才检查 needs_approval → 审批卡之前的后续工具已被执行；
+  线程池异常时整批顺序重跑 → 已执行的副作用工具再执行一遍（重复下单/重复写文件）
+- 现审批是调度屏障：遇到首个需审批工具执行后立即停流等用户，其后工具一律不执行；
+  per-call 异常兜底为错误结果，彻底删除整批重放路径
+
+### F07 · 会话快照恢复跨服务密钥错配（P1）
+- cfg_from_snapshot 用旧快照 provider/base_url + 当前 api_key → 「A 的端点 + B 的密钥」
+  把凭据泄露到错误服务
+- 现成组解析：provider 一致才继承当前 key；不一致则 api_key 置空、key_env 只取快照记录的旧名，
+  请求因缺 key 安全失败
+
+### F06 · 沙箱环境与路径逃逸（P1）
+- 白名单解释器（python/node）可传参执行任意代码且继承完整环境变量 → BAZZ_AUTH_TOKEN、
+  API Key、代理凭据可被窃取；文件工具不解析符号链接 → 工作区内链接可指向沙箱外
+- 子进程环境剥离一切凭据类变量（保留代理池/NODE_OPTIONS/PATH 运行必需项）；
+  读/写/wrapper 三类路径解析统一增加 realpath 校验，符号链接解析后越界一律拒绝
+
+### F11 · 前端 auto_exec 请求失败 fail-open（P1）
+- getAutoExec() 网络失败时 return true = 未知状态被当作「已开启自动执行」
+- 现 fail-closed：失败一律视为未开启，走人工确认安全路径
+
+### F12 · 调度器整份覆盖任务状态（P2）
+- 定时任务执行前读全部 jobs、执行后整份写回 → 并发修改互相丢任务
+- state 层新增 `update_cron_job(job_id, patch)`（RLock 内读-改-写），每任务执行后仅回写自身状态
+
+### F14 · 禁用的插件仍可被调用（P2）
+- 启停状态只影响界面展示，LLM 工具注入与执行均未校验
+- 现 `list_command_schemas()` 不注入禁用插件，`exec_command()` 执行时双重校验 enabled
+
+### F15 · API Secret / LLM Key / MCP Token 明文入 SQLite（P2）
+- 新增 `secrets.py`：Windows DPAPI（ctypes + crypt32，零新依赖）加密敏感 settings
+  （llm / BINANCE_API_KEY / BINANCE_API_SECRET / W3 密钥 / mcp_servers / mcp_token:*），
+  非 Windows 自动降级并显式标注 `plain:` 前缀；旧明文读取兼容、下次保存自动迁移为密文
+
+### F16 · 技能更新供应链：可变引用（P2）
+- baw 安装用 `@latest`、undici 用可变 spec、GitHub 目录引用 main 分支 → 内容随时可被替换
+- 现锁定具体版本（`@binance/agentic-wallet@1.10.0` / `undici@6.21.1`）集中常量管理并防版本回滚；
+  技能包不再后台静默升级，仅保留手动入口并打印来源日志
+
+### F17 · last_persona_conv 重复定义（P2）
+- 同名函数定义两次，后者覆盖前者并丢失 group/room 会话排除条件
+- 删除重复版本，保留带 kind 过滤的正确实现
+
+### 性能优化
+- **5.1 雷达扇出合并**：scanner 新增 `_dedupe_fetch()` in-flight 去重（相同缓存键的并发请求合并为一次，
+  带 30s 超时兜底防死锁），K 线/资金费率/持仓量历史三处扇出接入，冷启动 REST 调用大幅减少
+- **5.2 订单轮询节奏**：_tick 由「先 sleep 再执行」改为「先执行再 sleep」，消除启动即延迟
+- **5.3 前端流式与渲染**：三条 NDJSON 流补齐 res.ok 检查；逐 delta await rAF 改为缓冲 + 每帧批量 flush；
+  流结束/中止补齐终态；会话切换竞态用请求代号 + AbortController 双重隔离；
+  live.ts 快照 diff 合并（未变币保留旧引用，杜绝无意义重渲）；vite dev 代理补 `ws: true`
+
+### 回归验证
+- 新增 `tests/test_v1529_hardening.py`：23 个离线用例全部通过
+- 既有套件全部通过：test_v1528_fixes 15/15、test_v150_market ✓、test_v151_radar_track ✓
+- 前端 `tsc --noEmit` + `vite build` 通过；全部改动文件 py_compile 通过
+
 ## 📜 历史版本
 
 # BAZZ.AGENT v1.5.15
