@@ -70,7 +70,7 @@ export function ChatView({
   const [log, setLog] = useState<{ ts: string; line: string }[]>([]);
   const [files, setFiles] = useState<any[]>([]);
   const [fileCwd, setFileCwd] = useState("");
-  const [fileModal, setFileModal] = useState<{ name: string; path: string; size: number; is_text: boolean; content: string; too_large?: boolean; loading: boolean; error?: string; img_url?: string } | null>(null);
+  const [fileModal, setFileModal] = useState<{ name: string; path: string; size: number; is_text: boolean; content: string; too_large?: boolean; loading: boolean; error?: string; img_url?: string; minimized?: boolean } | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [convMenu, setConvMenu] = useState<string | null>(null); // 当前展开 ⋮ 菜单的会话 id
   // v1.4.3 会话搜索：防抖调 /api/conversations/search；convHits 非空 = 搜索态（列表显示命中结果）
@@ -2002,8 +2002,8 @@ export function ChatView({
         </div>
       )}
 
-      {/* 文件查看（Files 面板点文件后的查看器） */}
-      {fileModal && (
+      {/* 文件查看（Files 面板点文件后的查看器；最小化 → 右下角浮条） */}
+      {fileModal && !fileModal.minimized && (
         <div onClick={closeFileModal}
           className="fixed inset-0 z-50 flex items-center justify-center p-6"
           style={{ background: "rgba(4,6,9,0.72)", backdropFilter: "blur(4px)" }}>
@@ -2019,7 +2019,11 @@ export function ChatView({
                   {fileModal.is_text ? t("chat.fileText") : fileModal.size > 0 ? t("chat.fileBin") : ""}
                 </div>
               </div>
-              <button onClick={closeFileModal} className="ml-auto text-ink-mute hover:text-ink"><I.X size={16} /></button>
+              <button onClick={(e) => { e.stopPropagation(); setFileModal({ ...fileModal, minimized: true }); }}
+                className="ml-auto text-ink-mute hover:text-ink" title="最小化">
+                <I.Minus size={16} />
+              </button>
+              <button onClick={closeFileModal} className="text-ink-mute hover:text-ink" title="关闭"><I.X size={16} /></button>
             </div>
             <div className="flex-1 overflow-auto p-4 bg-canvas/40">
               {fileModal.loading ? (
@@ -2056,6 +2060,26 @@ export function ChatView({
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* 查看器最小化浮条：点名字或箭头恢复，X 关闭 */}
+      {fileModal?.minimized && (
+        <div className="fixed bottom-5 right-5 z-50 glass-bright flex items-center gap-2 pl-3.5 pr-2 py-2 shadow-lg"
+             style={{ borderRadius: 10, maxWidth: 320 }}>
+          <I.Download size={13} className="text-gold shrink-0" />
+          <button onClick={() => setFileModal({ ...fileModal, minimized: false })}
+            className="font-mono text-[12px] font-bold text-ink hover:text-gold truncate flex-1 text-left"
+            title={fileModal.path || t("chat.fileRoot")}>
+            {fileModal.name}
+          </button>
+          <button onClick={() => setFileModal({ ...fileModal, minimized: false })}
+            className="text-ink-mute hover:text-ink shrink-0" title="恢复">
+            <span style={{ display: "inline-block", transform: "rotate(-90deg)" }}><I.Arrow size={13} /></span>
+          </button>
+          <button onClick={closeFileModal} className="text-ink-mute hover:text-ink shrink-0" title="关闭">
+            <I.X size={14} />
+          </button>
         </div>
       )}
 

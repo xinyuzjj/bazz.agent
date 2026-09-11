@@ -91,6 +91,17 @@
 - 前端点图片 → 带 token 拉取 blob → 弹窗内直接渲染 `<img>`（深色底居中、最高 58vh），关闭时释放 objectURL
 - state.db 等非图片二进制行为不变（仍提示不可文本预览 + 删除按钮）
 
+# BAZZ.AGENT v1.5.25
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.25 更新要点（文件查看器：最小化 / 关闭窗口控制）
+
+### 查看器窗口控制
+- 文件查看弹窗标题栏新增 **最小化（−）** 按钮：收起为右下角浮条（文件名 + 恢复 + 关闭），看盘/操作时文件保持打开不丢
+- 点浮条文件名或 ↑ 恢复按钮回到完整窗口；X 或 Esc 彻底关闭（图片 objectURL 同步释放）
+- 图标库新增 Minus；tsc + vite build 验证通过
+
 ## 📜 历史版本
 
 # BAZZ.AGENT v1.5.15

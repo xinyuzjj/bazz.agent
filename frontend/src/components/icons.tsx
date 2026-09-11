@@ -95,6 +95,11 @@ export const I = {
       <path d="M6 6l12 12 M18 6l-12 12" />
     </svg>
   ),
+  Minus: (p: P = {}) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...base(p)}>
+      <path d="M5 12h14" />
+    </svg>
+  ),
   Arrow: (p: P = {}) => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" {...base(p)}>
       <path d="M5 12h14 M13 5l7 7-7 7" />
