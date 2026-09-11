@@ -88,22 +88,71 @@ The cockpit is a Hermes-style three-pane **trading desk**:
 
 ## ✨ What it does
 
-| | What you get |
-|---|---|
-| 📡 **Live market radar** | Full-market anomaly scan (top-300 by volume) · **Monster Radar** burst windows with track record (moon/dump/expired verdicts at 10x-leverage thresholds) · 24h auto-watch · Fear & Greed · funding / OI / top-trader long-short — **zero API key**. |
-| 🗣 **Conversational cockpit** | SSE/NDJSON streaming · live tool cards · file & voice input · multi-provider LLM + **fully offline rules-engine fallback**. |
-| ✅ **Human-in-the-loop** | Every trade / transfer / signed payment = a confirm card. Sensitive ops are **never silent**. Whitelist trusted flows to skip the click. |
-| 🧠 **Long-term memory** | Cross-session preferences & risk anchors, indexed & searchable, viewable in the Memory panel. |
-| 👛 **Agentic Wallet** | Keyless MPC on BSC / Ethereum / Base / Solana via `baw`; official daily limits enforced; **private keys never touch the app**. |
-| 💹 **Real CEX trading** | Spot / futures / convert on your real account via a whitelisted `binance-cli` profile; CEX and Web3 key sets **strictly isolated**. |
-| 🧩 **Skill Hub — 19 skills** | 19 official skills preloaded (audit, address info, tokenized stocks, sports AI, news sentiment…), intent-routed, path-traversal-protected. |
-| 📣 **Square rich-posting** | Market report → cover + chart + SMC article → published as an **image short-post**, local ledger keeps every post. |
-| 🤖 **Multi-bot + group chat** | Persona bots with own skills & memory domains; make a room, `@mention` bots, they answer in turns. |
-| ⏰ **CRON automation** | "Scan the market every day at 09:00" in plain words; run / pause / trigger manually — **runs even when closed to tray**. |
-| 💸 **x402 / B402** | Machine pays machine: offline Permit2 EIP-712 signing, verified by the official Facilitator, settled on-chain. |
-| 🖥 **Desktop + Web** | Frameless Windows installer (Electron + embedded PyInstaller backend, **no Python/Node needed**) *and* the same cockpit in a browser. One codebase. |
-| 🌓 **Bilingual & skinnable** | 中文 / English + deep-gold ↔ light, one key from the top bar. |
-| 🔒 **Local-first** | Sessions / memory / config live in `<install dir>\workspace` — updates replace only the program, **never your data**. |
+<table>
+<tr><td width="50%" valign="top">
+
+<img src="https://img.shields.io/badge/📡_Live_Market_Radar-FF6B00?style=for-the-badge" alt="radar"/><br><br><sub><b>Full-market anomaly scan</b> (top-300 by volume) · <b>Monster Radar</b> track record (moon/dump/expired at 10x thresholds) · 24h auto-watch · Fear & Greed · funding / OI / top-trader long-short — <b>zero API key</b></sub>
+
+</td><td width="50%" valign="top">
+
+<img src="https://img.shields.io/badge/🗣_Conversational_Cockpit-4A9EFF?style=for-the-badge" alt="cockpit"/><br><br><sub>SSE/NDJSON streaming · live tool cards · file & voice input · multi-provider LLM + <b>fully offline rules-engine fallback</b></sub>
+
+</td></tr>
+<tr><td valign="top">
+
+<img src="https://img.shields.io/badge/✅_Human_in_the_Loop·Default-2EA44F?style=for-the-badge" alt="approve"/><br><br><sub>Every trade / transfer / signed payment = a <b>Confirm card</b>. Sensitive ops are <b>never silent</b>; whitelist trusted flows to skip the click</sub>
+
+</td><td valign="top">
+
+<img src="https://img.shields.io/badge/🧠_Long_Term_Memory-B34EFF?style=for-the-badge" alt="memory"/><br><br><sub>Cross-session preferences & risk anchors, indexed & searchable, visualized in the Memory panel</sub>
+
+</td></tr>
+<tr><td valign="top">
+
+<img src="https://img.shields.io/badge/👛_Agentic_Wallet-F0B90B?style=for-the-badge&logo=binance&logoColor=black" alt="wallet"/><br><br><sub>Keyless MPC on BSC / Ethereum / Base / Solana via <code>baw</code>; official daily limits enforced; <b>private keys never touch the app</b></sub>
+
+</td><td valign="top">
+
+<img src="https://img.shields.io/badge/💹_Real_CEX_Trading-0EA5E9?style=for-the-badge" alt="trading"/><br><br><sub>Spot / futures / convert on your real account via a whitelisted <code>binance-cli</code> profile; CEX and Web3 key sets <b>strictly isolated</b></sub>
+
+</td></tr>
+<tr><td valign="top">
+
+<img src="https://img.shields.io/badge/🧩_Skill_Hub·19_Skills-16A34A?style=for-the-badge" alt="skills"/><br><br><sub>19 official skills preloaded (audit, address info, tokenized stocks, sports AI, news sentiment…), intent-routed, path-traversal-protected</sub>
+
+</td><td valign="top">
+
+<img src="https://img.shields.io/badge/📣_Square_Rich_Posting-E11D48?style=for-the-badge" alt="square"/><br><br><sub>One sentence → market data + dark cover + chart + SMC article → <b>image short-post</b> to Binance Square, local ledger for every post</sub>
+
+</td></tr>
+<tr><td valign="top">
+
+<img src="https://img.shields.io/badge/🤖_Multi_Bot_Group_Chat-6366F1?style=for-the-badge" alt="bots"/><br><br><sub>Persona bots with own skills & memory domains; make a room, <code>@mention</code> bots, they answer in turns</sub>
+
+</td><td valign="top">
+
+<img src="https://img.shields.io/badge/⏰_CRON_Automation-F59E0B?style=for-the-badge" alt="cron"/><br><br><sub>"Scan the market every day at 09:00" in plain words; run / pause / trigger manually — <b>runs even when closed to tray</b></sub>
+
+</td></tr>
+<tr><td valign="top">
+
+<img src="https://img.shields.io/badge/💸_x402_·_B402_Payments-10B981?style=for-the-badge" alt="x402"/><br><br><sub>Machine pays machine: offline Permit2 EIP-712 signing (gasless), verified by the official Facilitator, settled on-chain</sub>
+
+</td><td valign="top">
+
+<img src="https://img.shields.io/badge/🖥_Desktop_+_Web-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="desktop"/><br><br><sub>Frameless Windows installer (<b>no Python/Node needed</b>) *and* the same cockpit in a browser — one codebase, two shapes</sub>
+
+</td></tr>
+<tr><td valign="top">
+
+<img src="https://img.shields.io/badge/🌓_Bilingual_+_Themes-8B5CF6?style=for-the-badge" alt="i18n"/><br><br><sub>中文 / English + deep-gold ↔ light themes, one key from the top bar, remembered across restarts</sub>
+
+</td><td valign="top">
+
+<img src="https://img.shields.io/badge/🔒_Local_First-22C55E?style=for-the-badge&logo=shieldedlock&logoColor=white" alt="security"/><br><br><sub>Sessions / memory / config live in <code>&lt;install dir&gt;\workspace</code> — updates replace only the program, <b>never your data</b> (backup before update)</sub>
+
+</td></tr>
+</table>
 
 <details>
 <summary><b>🧩 The four native capabilities — real protocols, not widgets</b> <i>(click to expand)</i></summary>

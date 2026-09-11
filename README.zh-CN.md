@@ -88,22 +88,71 @@ AI 助手都在**说话**，BAZZ.AGENT 在**做事**——但你必须先批准�
 
 ## ✨ 它能干什么
 
-| | 你得到的 |
-|---|---|
-| 📡 **实时行情雷达** | 全市场异动扫描（成交额前 300）· **妖币雷达**暴动窗口 + 追踪战绩（10x 合约口径 moon/dump/expired 判定）· 24h 自动盯盘 · 恐惧贪婪 · 资金费率 / OI / 大户多空比——**零 API Key**。 |
-| 🗣 **对话式驾驶舱** | SSE/NDJSON 流式 · 工具实时卡片 · 文件/语音输入 · 多供应商 LLM + **完全离线的规则引擎兜底**。 |
-| ✅ **人在环中（默认）** | 每笔交易 / 转账 / 签名支付都是一张确认卡。敏感操作**绝不静默**；信任的流程可加白名单免点击。 |
-| 🧠 **长期记忆** | 跨会话学习你的偏好与风险锚点，可索引、可搜索、Memory 面板可视化。 |
-| 👛 **Agentic Wallet** | 无密钥 MPC，BSC / 以太坊 / Base / Solana 链上兑换走 `baw`；官方日限额硬约束；**私钥永远不进应用**。 |
-| 💹 **真实 CEX 交易** | 通过白名单 `binance-cli` profile 在真实账户现货 / 合约 / 兑换；CEX 与 Web3 密钥组**严格隔离**。 |
-| 🧩 **Skill Hub — 19 技能** | 19 个官方技能预装（代币审计、地址持仓、代币化美股、赛事 AI、新闻情绪……），意图驱动路由，防路径穿越。 |
-| 📣 **广场富媒体发文** | 行情 → 封面 + 走势图 + SMC 文章 → **带图短贴**发布，本地台账留底每一帖。 |
-| 🤖 **多 Bot + 群聊** | 人格 Bot 各带技能与记忆域；建房间 @多个 Bot，轮流接话共享日志。 |
-| ⏰ **CRON 自动化** | 一句「每天 09:00 扫描行情」即可建任务；运行 / 暂停 / 手动触发——**窗口缩到托盘也照跑**。 |
-| 💸 **x402 / B402** | 机器付机器：离线 Permit2 EIP-712 签名，官方 Facilitator 验证并上链结算。 |
-| 🖥 **桌面 + Web 双形态** | 无边框 Windows 安装包（Electron + 内嵌 PyInstaller 后端，**不需要装 Python/Node**），同一套驾驶舱也能跑在浏览器里。一套代码。 |
-| 🌓 **双语 + 皮肤** | 中文 / English + 深金 ↔ 浅色，顶栏一键切换。 |
-| 🔒 **本地优先** | 会话 / 记忆 / 配置都在 `<安装目录>\workspace`——更新只动程序，**永远不碰你的数据**。 |
+<table>
+<tr><td width="50%" valign="top">
+
+<img src="https://img.shields.io/badge/📡_实时行情雷达-FF6B00?style=for-the-badge" alt="雷达"/><br><br><sub><b>全市场异动扫描</b>（成交额前 300）· <b>妖币雷达</b>暴动窗口+追踪战绩（10x 口径 moon/dump/expired）· 24h 自动盯盘 · 恐惧贪婪 · 资金费率 / OI / 大户多空比 —— <b>零 API Key</b></sub>
+
+</td><td width="50%" valign="top">
+
+<img src="https://img.shields.io/badge/🗣_对话式驾驶舱-4A9EFF?style=for-the-badge" alt="驾驶舱"/><br><br><sub>SSE/NDJSON 流式输出 · 工具实时卡片 · 文件/语音输入 · 多供应商 LLM + <b>完全离线的规则引擎兜底</b></sub>
+
+</td></tr>
+<tr><td valign="top">
+
+<img src="https://img.shields.io/badge/✅_人在环中·默认-2EA44F?style=for-the-badge" alt="确认"/><br><br><sub>每笔交易 / 转账 / 签名支付都是一张 <b>Confirm 确认卡</b>，敏感操作<b>绝不静默</b>；信任的流程可加白名单免点击</sub>
+
+</td><td valign="top">
+
+<img src="https://img.shields.io/badge/🧠_长期记忆-B34EFF?style=for-the-badge" alt="记忆"/><br><br><sub>跨会话学习你的偏好与风险锚点，可索引、可搜索、Memory 面板可视化</sub>
+
+</td></tr>
+<tr><td valign="top">
+
+<img src="https://img.shields.io/badge/👛_Agentic_Wallet-F0B90B?style=for-the-badge&logo=binance&logoColor=black" alt="钱包"/><br><br><sub>无密钥 MPC，BSC / 以太坊 / Base / Solana 链上兑换走 <code>baw</code>；官方日限额硬约束；<b>私钥永远不进应用</b></sub>
+
+</td><td valign="top">
+
+<img src="https://img.shields.io/badge/💹_真实_CEX_交易-0EA5E9?style=for-the-badge" alt="交易"/><br><br><sub>白名单 <code>binance-cli</code> profile 在真实账户现货 / 合约 / 兑换；CEX 与 Web3 密钥组<b>严格隔离</b></sub>
+
+</td></tr>
+<tr><td valign="top">
+
+<img src="https://img.shields.io/badge/🧩_Skill_Hub·19技能-16A34A?style=for-the-badge" alt="技能"/><br><br><sub>19 个官方技能预装（代币审计、地址持仓、代币化美股、赛事 AI、新闻情绪……），意图驱动路由，防路径穿越</sub>
+
+</td><td valign="top">
+
+<img src="https://img.shields.io/badge/📣_广场富媒体发文-E11D48?style=for-the-badge" alt="广场"/><br><br><sub>一句话 → 行情取数 + 深色封面 + 走势图 + SMC 结构文章 → <b>带图短贴</b>发上币安广场，本地台账留底</sub>
+
+</td></tr>
+<tr><td valign="top">
+
+<img src="https://img.shields.io/badge/🤖_多_Bot_群聊-6366F1?style=for-the-badge" alt="群聊"/><br><br><sub>人格 Bot 各带技能与记忆域；建房间 <code>@</code> 多个 Bot，轮流接话共享日志</sub>
+
+</td><td valign="top">
+
+<img src="https://img.shields.io/badge/⏰_CRON_自动化-F59E0B?style=for-the-badge" alt="定时"/><br><br><sub>一句「每天 09:00 扫描行情」即可建任务；运行 / 暂停 / 手动触发 —— <b>窗口缩到托盘也照跑</b></sub>
+
+</td></tr>
+<tr><td valign="top">
+
+<img src="https://img.shields.io/badge/💸_x402_·_B402_支付-10B981?style=for-the-badge" alt="x402"/><br><br><sub>机器付机器：离线 Permit2 EIP-712 签名（免 gas），官方 Facilitator 验证并上链结算</sub>
+
+</td><td valign="top">
+
+<img src="https://img.shields.io/badge/🖥_桌面_+_Web_双形态-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="桌面"/><br><br><sub>无边框 Windows 安装包（<b>不需要装 Python/Node</b>），同一套驾驶舱也能跑在浏览器里 —— 一套代码两种形态</sub>
+
+</td></tr>
+<tr><td valign="top">
+
+<img src="https://img.shields.io/badge/🌓_双语_+_皮肤-8B5CF6?style=for-the-badge" alt="双语"/><br><br><sub>中文 / English + 深金 ↔ 浅色主题，顶栏一键切换、重启不忘</sub>
+
+</td><td valign="top">
+
+<img src="https://img.shields.io/badge/🔒_本地优先-22C55E?style=for-the-badge&logo=shieldedlock&logoColor=white" alt="安全"/><br><br><sub>会话 / 记忆 / 配置都在 <code>&lt;安装目录&gt;\workspace</code> —— 更新只动程序，<b>永远不碰你的数据</b>（先备份再更新）</sub>
+
+</td></tr>
+</table>
 
 <details>
 <summary><b>🧩 四大原生能力 —— 真协议，不是挂件</b> <i>（点击展开）</i></summary>
