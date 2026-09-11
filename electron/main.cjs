@@ -3,7 +3,7 @@
 //   开发/仓库内  : electron .  → 拉起 .venv python desktop_app.py，加载后端托管页面
 //   打包分发 exe : app.isPackaged → 拉起内嵌 ScoutBackend.exe（resources/scout-bundle），
 //                  加载后端托管页面（默认 8080，被占自动换端口）；/api/* 走本机随机 token 鉴权
-const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, Tray, Menu, dialog, nativeImage } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
@@ -38,6 +38,50 @@ const RES_ICON_PNG = PACKAGED ? PKG_ICON_PNG : DEV_ICON_PNG;
 let backendProc = null;
 let mainWin = null;
 let splashWin = null;                 // 启动动画窗（splash），主界面就绪后淡出销毁
+
+// —— v1.5.26：关闭 → 可选最小化到系统托盘（后台继续跑：后端/定时监控/更新检查不死）——
+let tray = null;
+let isQuitting = false;               // 托盘「退出」或用户选择退出时置 true，放行真正关闭
+const prefsPath = () => path.join(app.getPath("userData"), "window-prefs.json");
+function loadPrefs() { try { return JSON.parse(fs.readFileSync(prefsPath(), "utf8")) || {}; } catch { return {}; } }
+function savePrefs(p) { try { fs.writeFileSync(prefsPath(), JSON.stringify(p)); } catch {} }
+
+function showMain() {
+  if (!mainWin || mainWin.isDestroyed()) { createWindow(); return; }
+  if (mainWin.isMinimized()) mainWin.restore();
+  mainWin.show();
+  mainWin.focus();
+}
+
+function ensureTray() {
+  if (tray) return tray;
+  const iconFile = fs.existsSync(RES_ICON_ICO) ? RES_ICON_ICO : (fs.existsSync(RES_ICON_PNG) ? RES_ICON_PNG : null);
+  if (!iconFile) return null;         // 无图标资源（如裸 dev）→ 不建托盘，关闭回退为退出
+  tray = new Tray(iconFile);
+  tray.setToolTip(APP_TITLE + " — 后台运行中");
+  const menu = Menu.buildFromTemplate([
+    { label: "打开 " + APP_TITLE, click: () => showMain() },
+    { type: "separator" },
+    { label: "退出", click: () => { isQuitting = true; app.quit(); } },
+  ]);
+  tray.on("click", () => showMain());                          // 左键回窗口
+  tray.on("right-click", () => tray.popUpContextMenu(menu));   // 右键菜单
+  tray.on("double-click", () => showMain());
+  return tray;
+}
+
+function hideToTray() {
+  const t = ensureTray();
+  if (!t) { isQuitting = true; app.quit(); return; }
+  mainWin.hide();
+  try {
+    if (!hideToTray._tipped && typeof t.displayBalloon === "function") {
+      t.displayBalloon({ iconType: "info", title: APP_TITLE,
+        content: "已最小化到系统托盘，后台任务继续运行。点托盘图标可重新打开，右键可退出。" });
+    }
+    hideToTray._tipped = true;
+  } catch {}
+}
 const SPLASH_SWAP_MS = 280;           // 动画窗淡出时长
 // splash 启动时间锚点；保底展示 = max(SPLASH_MIN_MS, 后端就绪时间)，
 // 否则后端拉得太快时动画会被 cut 掉看不到全貌
@@ -261,6 +305,32 @@ function createWindow() {
   });
   mainWin.setMenuBarVisibility(false);
   mainWin.on("page-title-updated", (e) => e.preventDefault());   // 固定产品名，不被页面 title 覆盖
+  // v1.5.26：点 X → 询问「最小化到托盘 / 退出」，可勾选记住选择；托盘模式下窗口只隐藏不销毁
+  mainWin.on("close", (e) => {
+    if (isQuitting) return;
+    const mode = loadPrefs().closeMode;
+    if (mode === "quit") return;               // 记住过「退出」→ 放行
+    if (mode !== "tray") {
+      e.preventDefault();
+      dialog.showMessageBox(mainWin, {
+        type: "question",
+        buttons: ["最小化到托盘", "退出应用"],
+        defaultId: 0, cancelId: 0,
+        checkboxLabel: "记住我的选择，不再询问",
+        checkboxChecked: false,
+        title: APP_TITLE,
+        message: "关闭窗口时想做什么？",
+        detail: "最小化到托盘：应用与后台任务（定时监控、行情、更新检查）继续运行，点任务栏托盘图标可随时回到窗口。",
+      }).then(({ response, checkboxChecked }) => {
+        const pick = response === 0 ? "tray" : "quit";
+        if (checkboxChecked) savePrefs({ ...loadPrefs(), closeMode: pick });
+        if (pick === "tray") hideToTray(); else { isQuitting = true; app.quit(); }
+      }).catch(() => {});
+      return;
+    }
+    e.preventDefault();                        // 记住过「托盘」→ 静默隐藏
+    hideToTray();
+  });
   mainWin.once("ready-to-show", swapToMain);
   mainWin.on("maximize", () => mainWin.webContents.send("bazz:win-max-changed", true));
   mainWin.on("unmaximize", () => mainWin.webContents.send("bazz:win-max-changed", false));
