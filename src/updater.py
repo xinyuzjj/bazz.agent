@@ -176,10 +176,13 @@ def _pick_asset(rel: dict) -> dict:
 
 
 def _fetch_checksums(rel: dict) -> dict:
-    """解析 release 的 SHA256SUMS 资产 → {文件名: sha256小写}。拿不到返回 {}。"""
+    """解析 release 的 SHA256SUMS 资产 → {文件名: sha256小写}。拿不到返回 {}。
+    v1.5.28（F01 修复）：此前把资产名转小写后再与 "SHA256SUMS"（全大写常量）比较，
+    永不相等 → 永远返回 {} → 安装时跳过完整性校验。现统一小写比较。"""
     out = {}
+    want = CHECKSUM_ASSET.lower()
     for a in rel.get("assets", []) or []:
-        if a.get("name", "").lower() != CHECKSUM_ASSET:
+        if (a.get("name", "") or "").lower() != want:
             continue
         url = a.get("browser_download_url", "")
         try:
@@ -219,9 +222,11 @@ def _safe_rel(r: str) -> str:
 
 
 def _fetch_manifest(rel: dict) -> dict:
-    """从 release 资产里拉 MANIFEST.json。拿不到 / 结构不对返回 {}。"""
+    """从 release 资产里拉 MANIFEST.json。拿不到 / 结构不对返回 {}。
+    v1.5.28（F01 修复）：资产名匹配同 _fetch_checksums，统一小写比较。"""
+    want = MANIFEST_ASSET.lower()
     for a in rel.get("assets", []) or []:
-        if a.get("name", "").lower() != MANIFEST_ASSET:
+        if (a.get("name", "") or "").lower() != want:
             continue
         url = a.get("browser_download_url", "")
         try:
@@ -978,23 +983,29 @@ def apply(zip_path: str, wait_pid: int = 0) -> dict:
         # SHA256 校验（防下载包被篡改/损坏）：
         #   · 本地「增量差分」构建的 zip → 构建时已逐文件校验清单 sha，整包 blob 与官方不同，
         #     直接跳过整包比对。
-        #   · 官方整包（zip / setup.exe）→ 能从官 release 拿到校验和就强校验，不符即中止。
-        #   拿不到（网络抖动 / 旧 release 未挂 SHA256SUMS）则仅忽略，不阻塞正常更新。
+        #   · 官方整包（zip / setup.exe）→ v1.5.28（F01）起 fail-closed：拿不到官方校验和
+        #     （网络异常 / release 缺 SHA256SUMS）一律拒绝安装，不再「缺失则跳过」。
+        #     否则完整性声明形同虚设（配合 F01 的大小写 bug 曾导致校验 100% 被跳过）。
         if os.path.abspath(zip_path) in _PATCH_BUILT:
             print(f"[updater] 本地增量构建包，跳过整包 SHA256（逐文件校验已通过）：{zip_path}")
         else:
             try:
                 sums = _fetch_checksums(fetch_latest(timeout=15))
-                expected = sums.get(os.path.basename(zip_path), "")
-                if expected:
-                    actual = _sha256_of(zip_path)
-                    if actual != expected:
-                        return {"ok": False,
-                                "error": "更新包校验和不一致（可能被篡改或下载损坏）。已中止替换以保证安全，请重新下载。",
-                                "log": log}
-                    print(f"[updater] SHA256 校验通过：{zip_path}")
             except Exception as e:
-                print(f"[updater] 校验和获取失败，跳过校验：{e}")
+                return {"ok": False,
+                        "error": f"无法获取官方 SHA256 校验和（{e}）。为防安装被篡改的更新包，已中止，请稍后重试。",
+                        "log": log}
+            expected = sums.get(os.path.basename(zip_path), "")
+            if not expected:
+                return {"ok": False,
+                        "error": "官方 release 未提供本更新包的 SHA256 校验值，无法验证完整性，已中止安装。",
+                        "log": log}
+            actual = _sha256_of(zip_path)
+            if actual != expected:
+                return {"ok": False,
+                        "error": "更新包校验和不一致（可能被篡改或下载损坏）。已中止替换以保证安全，请重新下载。",
+                        "log": log}
+            print(f"[updater] SHA256 校验通过：{zip_path}")
         ps1 = (_write_installer_script(zip_path, int(wait_pid or 0), os.getpid()) if is_setup
                else _write_updater_script(zip_path, int(wait_pid or 0), os.getpid()))
     except Exception as e:

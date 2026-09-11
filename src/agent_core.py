@@ -1802,7 +1802,9 @@ def _run_mcp_call(args: dict) -> Dict[str, Any]:
                                "detail": "需 OAuth 授权"}],
                     "data": {"needs_oauth": True, "server": server, "tool": tool}}
         res = call_tool(server, tool, arguments)
-        ok = bool(res.get("ok"))
+        # v1.5.28（F10 修复）：call_tool 成功返回 {"status":"ok", data:...}，此前用
+        # res.get("ok") 判断 → 成功也显示为失败。两种契约都兼容。
+        ok = (res.get("status") == "ok") or bool(res.get("ok"))
         txt = (res.get("text") or res.get("error") or res.get("result") or "")[:1500]
         import json as _json
         try:
@@ -2498,7 +2500,9 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
             # 的最终回答被再次强推，造成重复扫描/卡死）。
             forced_cand = (not forced_once) and (not accumulated_tools) and _intent_to_tool(_detect(message))
             allowed = _persona_allowed_tools(persona)
-            forced = forced_cand and (allowed is None or forced_cand in allowed)
+            # v1.5.28（F08 修复）：`forced_cand and (...)` 在允许条件下得到 True（布尔），
+            # 分派器对工具名做字符串操作时抛 TypeError。改为显式保留工具名，不合法时置空。
+            forced = forced_cand if (forced_cand and (allowed is None or forced_cand in allowed)) else ""
             # 单币深度分析兜底：强推 scan_market 只会给模型全市场数据（没有该币的 K线/费率/OI），
             # 迫使其后续自行直连 API 抓数 → 受限地区必失败。改为强推 run_skill(coin-report)，
             # 一次拿齐该币全维度数据（走本机行情网关，稳定可达）。

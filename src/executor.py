@@ -210,14 +210,29 @@ def confirm_and_place(signal: dict, confirm: bool = False) -> dict:
 
 
 def place_report(res: dict) -> dict:
-    """把 cex_wallet.place_order / 钱包下单结果归一化成下单单所需字段（orderId/symbol/status/error）。"""
-    if res.get("status") == "ok":
+    """把 cex_wallet.place_order / 钱包下单结果归一化成下单单所需字段（orderId/symbol/status/error）。
+    v1.5.28（F02 修复）：此前只认 cex 通道的 status=="ok"，钱包通道返回的
+    TRADE_FINISHED（已成交）/ TRADE_PENDING（待确认）全部误报成「下单失败」，
+    诱导用户/Agent 重复下单。现按 orderId 有无 + 状态映射归一：
+    TRADE_FINISHED→FILLED；TRADE_PENDING→PENDING（待查证，不自动重试）。"""
+    st = str(res.get("status") or "").upper()
+    if st == "OK":
         d = res.get("order", {})
         return {"orderId": d.get("orderId", "N/A"),
                 "symbol": d.get("symbol", ""),
                 "status": d.get("status", "NEW"),
                 "executedQty": d.get("executedQty"),
                 "fills_cnt": len(d.get("fills", []) or [])}
+    if res.get("orderId") or st in ("TRADE_FINISHED", "TRADE_PENDING"):
+        mapped = "FILLED" if st in ("TRADE_FINISHED", "FINISHED") else "PENDING"
+        return {"orderId": str(res.get("orderId") or "N/A"),
+                "symbol": str(res.get("symbol") or ""),
+                "status": mapped,
+                "raw_status": st or "UNKNOWN",       # 保留原始状态便于审计/排障
+                "executedQty": res.get("executedQty"),
+                "fills_cnt": 0,
+                "command": res.get("command"),
+                "output": res.get("output")}
     return {"error": res.get("message") or res.get("detail") or res.get("output") or "下单失败"}
 
 

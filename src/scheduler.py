@@ -193,8 +193,10 @@ def _run_meme_scan():
     """妖币雷达日报：取 Monster Radar 同源 ignition + takeoff 两组，按 RPS 给简报。"""
     try:
         from scanner import get_ignition_coins, get_monster_coins
-        ign = get_ignition_coins(limit=8) or []
-        tkf = get_monster_coins(limit=8) or []
+        # v1.5.28（F13 修复）：此前误传 limit=8（实参是 force/top_n/min_qv）→ TypeError，
+        # 且返回值是 dict{coins:[...]} 而非 list，直接迭代取不到行。现按真实契约调用。
+        ign = (get_ignition_coins() or {}).get("coins") or []
+        tkf = (get_monster_coins() or {}).get("coins") or []
     except Exception as e:
         return f"（妖币雷达暂不可用：{e}）"
 

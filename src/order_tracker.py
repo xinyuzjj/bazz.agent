@@ -29,8 +29,12 @@ HIT_COOLDOWN = 6 * 3600.0
 _started = False
 _cooldown: dict = {}   # (tid, kind) -> last_ts
 
-# 已终态（不再轮询、不再提醒）
+# 查单终态（不再轮询交易所同步状态；FILLED/DONE 说明订单生命周期已结束）
 _CLOSED = {"CANCELED", "REJECTED", "EXPIRED", "FILLED", "DONE", "FAILED"}
+# v1.5.28（F04 修复）：提醒监控的终态。FILLED 只是订单成交——持仓还活着，
+# 止损/止盈必须继续监控。此前 FILLED 混在 _CLOSED 里导致「未成交时有提醒，
+# 真正成交后反而静默」。注意：提醒只是提示，不是止损执行，触发后靠冷却限频。
+_CLOSED_FOR_ALERTS = {"CANCELED", "REJECTED", "EXPIRED", "FAILED", "DONE"}
 
 
 def _warn_price_scope(symbol: str) -> str:
@@ -94,7 +98,7 @@ def _check_sl_tp(o: dict) -> None:
     """对 active 订单做止损/止盈接近与触发检测（多头：SL<entry<TP；空头镜像）。"""
     if not market_ws:
         return
-    if not o.get("active") or o.get("status") in _CLOSED:
+    if not o.get("active") or o.get("status") in _CLOSED_FOR_ALERTS:
         return
     sl, tp = float(o.get("stop_loss") or 0), float(o.get("take_profit") or 0)
     if sl <= 0 and tp <= 0:

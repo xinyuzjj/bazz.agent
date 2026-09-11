@@ -12,7 +12,7 @@
 
 <div align="center">
 
-[![Release](https://img.shields.io/github/v/release/xinyuzjj/bazz.agent?logo=github&logoColor=white&label=v1.5.27&color=f0b90b)](https://github.com/xinyuzjj/bazz.agent/releases/latest)
+[![Release](https://img.shields.io/github/v/release/xinyuzjj/bazz.agent?logo=github&logoColor=white&label=v1.5.28&color=f0b90b)](https://github.com/xinyuzjj/bazz.agent/releases/latest)
 [![Download](https://img.shields.io/badge/⬇_Download-setup.exe-2ea44f?logo=windows&logoColor=white)](https://github.com/xinyuzjj/bazz.agent/releases/latest)
 [![Delta Update](https://img.shields.io/badge/🔄_Update-delta_~MB-4a9eff)](#-incremental-auto-update)
 [![Pages](https://img.shields.io/badge/🎬_Live_Demo-Pages-181717?logo=githubpages&logoColor=white)](https://xinyuzjj.github.io/bazz.agent/)

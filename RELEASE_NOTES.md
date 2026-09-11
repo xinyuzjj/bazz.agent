@@ -137,6 +137,49 @@
 - 竖排选项卡 + → 箭头指示，退出应用红色警示；Esc/点遮罩 = 取消，留在当前窗口
 - 兜底：页面未就绪收不到 IPC 时 1.5s 后自动隐藏到托盘，关闭操作不卡死
 
+# BAZZ.AGENT v1.5.28
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.28 更新要点（审查缺陷修复：交易链路 6 项 P1/P2）
+
+> 来源：第三方源码工程审查报告（提交 944ca16）。本次修复其中 6 项确定性缺陷，
+> 每项均附离线回归测试（tests/test_v1528_fixes.py，15/15 通过）。
+
+### F02 · 钱包已成交/待确认被误报「下单失败」（P1）
+- `executor.place_report()` 此前只认 CEX 通道的 `status=="ok"`，钱包通道返回的
+  `TRADE_FINISHED`/`TRADE_PENDING` 全部落入 error 分支 → 界面误报失败、跟踪登记跳过、诱导重复下单
+- 现统一归一：`TRADE_FINISHED→FILLED`、`TRADE_PENDING→PENDING`（待查证，不自动重试），保留原始状态与命令回执供审计
+
+### F10 · MCP 调用成功被显示为失败（P1）
+- `agent_core._run_mcp_call()` 用 `res.get("ok")` 判断，而 `mcp_client.call_tool()` 成功返回 `{"status":"ok"}`
+- 现两种契约兼容：`status=="ok" or bool(ok)`
+
+### F04 · 订单成交后止损止盈提醒静默（P1）
+- `order_tracker` 的 `_CLOSED` 把 FILLED 算终态 → 成交后 `_check_sl_tp()` 直接返回，
+  「未成交时有提醒，真正成交后反而静默」
+- 拆分两组终态：查单轮询仍含 FILLED（成交后不再查单），提醒监控改用 `_CLOSED_FOR_ALERTS`
+  （不含 FILLED）→ **持仓存续期间止损/止盈持续监控**
+
+### F01 · 更新完整性校验 100% 失效（P1）
+- `updater._fetch_checksums/_fetch_manifest` 把资产名转小写后与全大写常量比较，永不相等 →
+  永远拿不到校验和 → 安装时「缺失则跳过」形同虚设
+- 修复①：统一小写比较；修复②：**fail-closed**——官方整包拿不到校验和（网络异常/缺 SHA256SUMS）
+  一律拒绝安装，不再静默跳过（本地增量包仍走逐文件清单校验）
+
+### F08 · 强制兜底工具名变布尔值（P1）
+- `forced = forced_cand and (...)` 在允许条件下得到 `True`，分派器做字符串操作抛 TypeError
+- 改为条件表达式显式保留工具名，不合法时置空
+
+### F13 · 妖币雷达日报必然 TypeError（P2）
+- `scheduler._run_meme_scan()` 误传 `limit=8`（真实签名 `force/top_n/min_qv`），且把返回的
+  `dict{coins:[...]}` 当 list 迭代 → 日报永远失败
+- 现按真实契约调用并显式读取 `coins`
+
+### 回归验证
+- 新增 `tests/test_v1528_fixes.py`：15 个离线用例全部通过（AST/函数提取 + 桩隔离，不联网不下单）
+- 既有测试套件（test_v150_market / test_v151_radar_track）49 项全部通过
+
 ## 📜 历史版本
 
 # BAZZ.AGENT v1.5.15
