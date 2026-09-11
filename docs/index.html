@@ -344,27 +344,40 @@
     </p>
   </section>
 
+  <section>
+    <h2><span class="h">§ NEW</span>v1.5 系列新东西</h2>
+    <p class="h2-sub">从 v1.5.11 到 v1.5.26，把「能用」打磨成「好用」—— 这些能力全部已在桌面版上线。</p>
+    <div class="news">
+      <div class="new"><span class="ico">🧩</span><b>增量自动更新</b><span>MANIFEST 差分只下变更文件 · SHA256 逐文件校验 · 备份 workspace · 秒级应用 · 版本守卫永不降级</span></div>
+      <div class="new"><span class="ico">🛡</span><b>内置代理池</b><span>mihomo 内核随包内置 · 订阅导入 / 延迟测速 / 一键启用 · 全应用流量统一走代理 · 故障自动切换节点</span></div>
+      <div class="new"><span class="ico">🎯</span><b>妖币雷达战绩</b><span>发现即记录 · moon / dump / expired 三态判定（10x 合约口径）· 胜率大数字 + 结局占比可视化</span></div>
+      <div class="new"><span class="ico">📰</span><b>广场富媒体发文</b><span>SMC 4h 推理链（BOS/CHoCH · OTE · OB · FVG）· 封面图 + 24h 分时图自动生成 · 一键发布币安广场</span></div>
+      <div class="new"><span class="ico">🫥</span><b>关闭缩托盘</b><span>点 ✕ 可最小化到系统托盘 · 定时监控 / 妖币复查关窗后照常跑 · 记住你的选择不再打扰</span></div>
+      <div class="new"><span class="ico">🖼</span><b>文件图片预览</b><span>文件管理器直接查看 png/jpg/gif/webp · 查看窗口可最小化成浮条挂在一旁 · 删除带二次确认</span></div>
+    </div>
+  </section>
+
   <section id="download">
     <h2><span class="h">§ 下载</span>Windows 桌面版</h2>
     <p class="h2-sub">内置 Electron + 冻结后端，无需 Python / Node；支持深/浅主题与中/英一键切换（重启记住）。</p>
     <div class="dl">
       <div class="card">
-        <h4>便携版 · zip</h4>
-        <p class="note">免安装：解压 → 双击 BAZZ.AGENT.exe → 开箱即用。整个文件夹可随意搬走。</p>
-        <a class="dbtn" href="https://github.com/xinyuzjj/bazz.agent/releases/latest/download/BAZZ.AGENT-v1.2.18-win32-x64-portable.zip">↓ 下载 portable.zip</a>
+        <h4>安装版 · setup.exe（推荐）</h4>
+        <p class="note">Inno Setup 制作，无需管理员；数据存放在 <code>&lt;安装根&gt;\workspace</code>，更新 / 重装都不碰数据。装完支持应用内增量更新（只下变更文件，秒级应用）。</p>
+        <a class="dbtn" href="https://github.com/xinyuzjj/bazz.agent/releases/latest">↓ 下载最新 setup.exe</a>
       </div>
       <div class="card">
-        <h4>安装版 · setup.exe</h4>
-        <p class="note">Inno Setup 制作，装到 <code>%LOCALAPPDATA%</code>（无需管理员），带开始菜单 / 桌面快捷方式与卸载器。</p>
-        <a class="dbtn" href="https://github.com/xinyuzjj/bazz.agent/releases/latest/download/BAZZ.AGENT-v1.2.18-setup.exe">↓ 下载 setup.exe</a>
+        <h4>校验与历史</h4>
+        <p class="note">每个版本附 <code>SHA256SUMS</code> + <code>MANIFEST.json</code>：逐文件哈希校验，防篡改防降级；旧版本与增量包也在 Release 页。</p>
+        <a class="dbtn alt" href="https://github.com/xinyuzjj/bazz.agent/releases">→ 全部 Release 与校验文件</a>
       </div>
     </div>
     <div class="card" style="margin-top:16px">
       <ol>
-        <li>下载 → 解压 / 安装到任意目录（建议英文路径）</li>
+        <li>下载 <code>setup.exe</code> → 安装到任意目录（建议英文路径）</li>
         <li>双击 <code>BAZZ.AGENT.exe</code>，首次启动等 3–5 秒后端预热</li>
-        <li>数据外置在 <code>%APPDATA%\BAZZ.AGENT\workspace</code> —— 便携版整个文件夹随意搬，数据跟着走</li>
-        <li>窗口无边框：按住顶栏拖动，右上 <code>─ / □ / ✕</code> 控制</li>
+        <li>数据外置在 <code>&lt;安装根&gt;\workspace</code> —— 更新只换程序，不碰你的数据</li>
+        <li>窗口无边框：按住顶栏拖动，右上 <code>─ / □ / ✕</code> 控制；点 ✕ 可缩到托盘后台常驻</li>
       </ol>
     </div>
   </section>
