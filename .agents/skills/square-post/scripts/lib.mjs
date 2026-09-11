@@ -81,10 +81,30 @@ function proxyEnvUsed() {
     process.env.ALL_PROXY || process.env.all_proxy);
 }
 
+// v1.5.23：网络抖动内部重试（mihomo 内核被 APP 拉起的重启空窗会瞬间 ECONNREFUSED /
+// 慢节点偶发超时）——只对网络类错误重试，业务错误（401/参数）立即抛
+const _NET_ERR_RE = /ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|UND_ERR|UNDIC|fetch failed|timeout|socket/i;
+async function withRetry(fn, label, tries = 3) {
+  let last;
+  for (let i = 0; i < tries; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      last = e;
+      const code = String(e?.cause?.code || e?.code || e?.message || "");
+      if (i === tries - 1 || !_NET_ERR_RE.test(code)) throw e;
+      const wait = 3000 * (i + 1);
+      console.log(`  ${label} 网络抖动（${code}），${wait / 1000}s 后第 ${i + 2}/${tries} 次尝试…`);
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+  throw last;
+}
+
 export async function api(endpoint, apiKey, body, baseUrl = BASE_URL_V2) {
   let res;
   try {
-    res = await fetch(`${baseUrl}${endpoint}`, {
+    res = await withRetry(() => fetch(`${baseUrl}${endpoint}`, {
       method: "POST",
       headers: {
         "X-Square-OpenAPI-Key": apiKey,
@@ -92,7 +112,7 @@ export async function api(endpoint, apiKey, body, baseUrl = BASE_URL_V2) {
         clienttype: "binanceSkill",
       },
       body: JSON.stringify(body),
-    });
+    }), `API ${endpoint}`);
   } catch (e) {
     // v1.5.19：把底层网络原因码带出来，并给出代理池自助指引（APP 侧会自动切代理重试）
     const code = e?.cause?.code || e?.code || e?.message || "fetch failed";

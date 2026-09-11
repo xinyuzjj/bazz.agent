@@ -543,19 +543,34 @@ def active_url():
 
 _NET_TEST_TIMEOUT = 6.0
 
+# v1.5.23：发文全链路端点——此前只 ping api.binance.com，节点 ping 通但
+# www.binance.com / S3 图片域超时时检测照样放行（RUNE 发文 4 连败实测踩坑）
+_REACH_URLS = ("https://www.binance.com/", "https://public.bnbstatic.com/")
+
 
 def _url_alive(url, timeout=_NET_TEST_TIMEOUT):
-    """实测某代理 URL 能否连通 Binance（socks 协议在无 PySocks 时直接判不可用）。"""
+    """实测某代理 URL 能否连通 Binance 发文全链路（socks 无 PySocks 直接判不可用）。
+
+    api ping 必须返回 200；_REACH_URLS 里任何 HTTP 响应（含 404/307）都算连通——
+    关键是不经代理转发就到不了对端。三端点全过才算该节点可用。"""
     if not url:
         return False
     proto = (urlparse(url).scheme or "").lower()
     if proto.startswith("socks") and not _HAS_SOCKS:
         return False
+    proxies = {"http": url, "https": url}
     try:
-        r = requests.get(TEST_URL, proxies={"http": url, "https": url}, timeout=timeout)
-        return r.status_code == 200
+        r = requests.get(TEST_URL, proxies=proxies, timeout=timeout)
+        if r.status_code != 200:
+            return False
     except Exception:
         return False
+    for u in _REACH_URLS:
+        try:
+            requests.get(u, proxies=proxies, timeout=timeout)  # 有响应即连通，不看状态码
+        except Exception:
+            return False
+    return True
 
 
 def ensure_working_proxy(max_candidates: int = 6):

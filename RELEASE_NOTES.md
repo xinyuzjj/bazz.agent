@@ -64,6 +64,21 @@
 - 你的代理节点经 7899 对 bapi / api / S3 三域全通，发文链路真机验证通过（帖子 ID 365432062242575 / 365434349443879）
 - 注意：mihomo 内核崩溃后 APP 会自动拉起，**重启空窗几秒内发文会 ECONNREFUSED**——属瞬时故障，重试即可（v1.5.19 起已自动重试一次）
 
+# BAZZ.AGENT v1.5.23
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.23 更新要点（发文抗抖加固：检测测全链路 · 网络错误自动重试）
+
+### 1. 代理节点检测从「单点 ping」升级为「发文全链路」
+- **实测踩坑**：v1.5.21 发文 4 连败——节点 ping api.binance.com 通，但 www.binance.com / S3 图片域超时，检测照样放行、发文必败
+- `_url_alive` 现在要求**三端点全过**：api ping（200）+ www.binance.com + public.bnbstatic.com（任何 HTTP 响应算连通）；任一不过即判该节点不可用，ensure_working_proxy 会换下一个
+
+### 2. square-post 网络错误内部自动重试
+- mihomo 内核被 APP 自动拉起的**重启空窗**（数秒）会让发文瞬间 ECONNREFUSED——此前一次即死
+- `api()` 与 S3 `uploadToS3()` 现在对网络类错误（ETIMEDOUT/ECONNRESET/ECONNREFUSED/UND_ERR 等）**自动重试 3 次**（3s/6s 退避），业务错误（401/参数）仍立即抛
+- 叠加 APP 侧的换节点重试，单次发文最多 6 次尝试、跨 2 个节点
+
 ## 📜 历史版本
 
 # BAZZ.AGENT v1.5.15
