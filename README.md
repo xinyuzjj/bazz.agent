@@ -10,54 +10,61 @@
 ║   ██████╔╝██║  ██║███████╗███████╗   ██║  ██║╚██████╔╝███████╗ ║
 ║   ╚═════╝ ╚═╝  ╚═╝╚══════╝╚══════╝   ╚═╝  ╚═╝ ╚═════╝ ╚══════╝ ║
 ║                                                              ║
-║            —— Your Binance Co-Pilot. It asks before it fires. —— ║
+║        —— Your Binance Co-Pilot. It asks before it fires. —— ║
 ╚══════════════════════════════════════════════════════════════╝
 ```
 
-**An AI trading copilot that fuses all four native Binance Agent OS capabilities**
-**(MCP / Agentic Wallet / x402 Payments / Skill Hub) into one real loop.**
+# ⚡ BAZZ.AGENT — An Agent OS That *Acts*
 
-> `Scan → Analyze → Propose → Human-Approval → Execute`
+### Fuse the four native Binance Agent OS capabilities into one real trading loop
+
+**MCP · Agentic Wallet · x402 Payments · Skill Hub** — not widgets. Real protocols, real execution.
+
+> `📡 SCAN → 🧠 ANALYZE → 💡 PROPOSE → ✅ APPROVE → ⚡ EXECUTE`
 >
-> **Every other AI chatbox just *talks*. BAZZ.AGENT *acts* — but only after you nod.** Portable desktop · Local web · Same codebase.
+> **Every other AI chatbox just *talks*. BAZZ.AGENT *acts* — but only after you nod.**
 
 **🌐 English | [中文文档](./README.zh-CN.md)**
 
-[![Release](https://img.shields.io/github/v/release/xinyuzjj/bazz.agent?logo=github&logoColor=white&label=Release&color=f0b90b)](https://github.com/xinyuzjj/bazz.agent/releases/latest)
-[![Portable](https://img.shields.io/badge/Download-portable.zip-2ea44f?logo=windows&logoColor=white)](https://github.com/xinyuzjj/bazz.agent/releases/latest)
-[![Setup](https://img.shields.io/badge/Download-setup.exe-4a9eff?logo=windows&logoColor=white)](https://github.com/xinyuzjj/bazz.agent/releases/latest)
-[![Pages](https://img.shields.io/badge/Live-Pages-181717?logo=githubpages&logoColor=white)](https://xinyuzjj.github.io/bazz.agent/)
-[![中文](https://img.shields.io/badge/README-中文-f0b90b)](./README.zh-CN.md)
+</div>
 
-[![Track A](https://img.shields.io/badge/Binance%20Agent%20OS-Track%20A-f0b90b)](#-hackathon)
-[![Python](https://img.shields.io/badge/Python-3.11%2B-3776ab?logo=python&logoColor=white)](#-tech-stack)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688?logo=fastapi&logoColor=white)](#-tech-stack)
-[![React](https://img.shields.io/badge/React%2018-61dafb?logo=react&logoColor=222)](#-tech-stack)
-[![Electron](https://img.shields.io/badge/Electron-31-47848f?logo=electron&logoColor=white)](#-architecture)
-[![Vite](https://img.shields.io/badge/Vite-5-646cff?logo=vite&logoColor=white)](#-tech-stack)
-[![MIT](https://img.shields.io/badge/license-MIT-success)](#-license)
+<div align="center">
+
+[![Release](https://img.shields.io/github/v/release/xinyuzjj/bazz.agent?logo=github&logoColor=white&label=v1.5.26&color=f0b90b)](https://github.com/xinyuzjj/bazz.agent/releases/latest)
+[![Download](https://img.shields.io/badge/⬇_Download-setup.exe-2ea44f?logo=windows&logoColor=white)](https://github.com/xinyuzjj/bazz.agent/releases/latest)
+[![Delta Update](https://img.shields.io/badge/🔄_Update-delta_~MB-4a9eff)](#-incremental-auto-update)
+[![Pages](https://img.shields.io/badge/🎬_Live_Demo-Pages-181717?logo=githubpages&logoColor=white)](https://xinyuzjj.github.io/bazz.agent/)
+[![中文](https://img.shields.io/badge/📖_README-中文-f0b90b)](./README.zh-CN.md)
+
+[![Track A](https://img.shields.io/badge/Binance_Agent_OS-Track_A-f0b90b)](#-hackathon)
+[![Python](https://img.shields.io/badge/Python-3.11-3776ab?logo=python&logoColor=white)](#-tech-stack)
+[![FastAPI](https://img.shields.io/badge/FastAPI-SSE_Streaming-009688?logo=fastapi&logoColor=white)](#-tech-stack)
+[![React](https://img.shields.io/badge/React_18-TypeScript-61dafb?logo=react&logoColor=222)](#-tech-stack)
+[![Electron](https://img.shields.io/badge/Electron-Frameless-47848f?logo=electron&logoColor=white)](#-architecture)
+[![License](https://img.shields.io/badge/License-MIT-success)](#-license)
+
+</div>
+
+<div align="center">
 
 ![Main cockpit](./docs/screenshot.png)
 
-> 🎬 **88s real-footage walkthrough** — history → market radar → one-tap "Spot Buy" dropped into an Agent chat and analyzed → memory → wallet → settings.
-> [▶ Watch on Pages](https://xinyuzjj.github.io/bazz.agent/#demo) · [⬇ MP4 (3.2 MB)](./docs/video/BAZZ-demo-v1.mp4)
+**🎬 [88s real-footage walkthrough](https://xinyuzjj.github.io/bazz.agent/#demo)** — history → market radar → one-tap trade analyzed in chat → memory → wallet → settings · [⬇ MP4](./docs/video/BAZZ-demo-v1.mp4)
 
 </div>
 
 ---
 
-## 📑 Table of Contents
+## 🆕 Fresh out of the lab — v1.5.19 → v1.5.26
 
-1. [It is not another chatbox](#-it-is-not-another-chatbox)
-2. [The core loop](#-the-core-loop)
-3. [What it does](#-what-it-does)
-4. [Quick start](#-quick-start)
-5. [The four native capabilities](#-the-four-native-capabilities--real-protocols-not-widgets)
-6. [Tech stack](#-tech-stack)
-7. [Architecture](#-architecture)
-8. [Security model](#-security-model)
-9. [Project layout](#-project-layout)
-10. [Hackathon](#-hackathon)
+| | Highlight | What it means |
+|---|---|---|
+| 🛡 | **Auto proxy failover** | Skill network call dies? The app live-tests every proxy node (api + www + image CDN, the *real* publish chain), switches to a working one and **retries by itself** — 6 attempts across 2 nodes, zero babysitting. |
+| 📣 | **Rich Square publishing** | One sentence → auto market data + Pillow dark cover + 24h chart + SMC-structured article (BOS/CHoCH · OTE 0.618–0.705 · OB · FVG → position plan) → **short-post with images** to Binance Square. |
+| 🖥 | **Close-to-Tray** | ✕ asks once: *minimize to tray or quit?* Tray mode keeps **cron monitors & update checks running with the window closed**. Left-click tray to return, right-click to exit. |
+| 🖼 | **In-app image viewer** | Click any png/jpg/webp in the file manager → instant preview; viewer now minimizes to a corner pill so you can keep it open while trading. |
+| 🔄 | **Delta auto-update** | MANIFEST diff → only changed files (~MB, not the whole bundle), SHA256-verified, background-prefetched, applied in ~1s, **with install-version guard** (never downgrades). |
+| 🌐 | **Built-in proxy pool** | Import nodes/subscriptions, latency-test kernels (vless/vmess/hysteria2 via bundled mihomo), one-click enable — **all app traffic** routes through it, loopback excluded. |
 
 ---
 
@@ -69,45 +76,46 @@ This is **not** a chat skin over the Binance API. It is an **agent operating sys
 
 - It reads the **real market** exposed by Agent OS;
 - It drives the **four native capabilities** (MCP / Wallet / x402 / Skill Hub) directly;
-- Every sensitive action (order / transfer / signed payment) drops a `Confirm` card into the chat — **executed only after you click** it, on your real keys / keyless MPC wallet.
+- Every sensitive action (order / transfer / signed payment) drops a `Confirm` card into the chat — **executed only after you click it**, on your real keys / keyless MPC wallet.
 
 The cockpit is a Hermes-style three-pane **trading desk**:
 
-| Pane | Holds |
-|------|-------|
-| **Left** | Sessions / personas / tools / files |
-| **Center** | Agent chat · live tool cards · SSE streaming |
-| **Right** | Live signal feed · positions & account panel |
-
-The top bar toggles **dark/light theme** and **Chinese/English** in one click — remembered across restarts.
+```
+┌──────────────┬─────────────────────────────┬──────────────────┐
+│  LEFT        │  CENTER                     │  RIGHT           │
+│  Sessions    │  Agent chat                 │  Live signals    │
+│  Personas    │  · SSE/NDJSON streaming     │  Market radar    │
+│  Tools       │  · live tool cards          │  Positions       │
+│  Files       │  · Confirm cards            │  Account         │
+└──────────────┴─────────────────────────────┴──────────────────┘
+        dark ⇄ light theme · 中文 ⇄ EN — one click, remembered
+```
 
 ---
 
 ## 🔁 The core loop
 
 ```
-        ┌─────────────┐
-   ┌───▶│   📡 SCAN    │  Full-market radar · Monster Radar · 24h watch
-   │    └──────┬──────┘
-   │           ▼
-   │    ┌─────────────┐
-   │    │   🧠 ANALYZE │  Multi-model LLM · multi-tool · rules engine fallback
-   │    └──────┬──────┘
-   │           ▼
-   │    ┌─────────────┐
-   │    │   💡 PROPOSE  │  Signal card with leverage / position / TP-SL
-   │    └──────┬──────┘
-   │           ▼
-   │    ┌─────────────┐
-   │    │   ✅ APPROVE  │  ←── key: you press Confirm in the chat
-   │    └──────┬──────┘
-   │           ▼
-   │    ┌─────────────┐
-   │    │   ⚡ EXECUTE │  CEX / Agentic Wallet / x402
-   │    └─────────────┘
-   └──────────────────┘ (after execution, back to scanning)
-
-   Sensitive actions require approval by default; whitelist trusted ones if you want.
+   ┌─────────────┐
+   │   📡 SCAN    │   Full-market radar · Monster Radar · 24h watch
+   └──────┬──────┘
+          ▼
+   ┌─────────────┐
+   │  🧠 ANALYZE  │   Multi-model LLM · 19+ skills · rules-engine fallback
+   └──────┬──────┘
+          ▼
+   ┌─────────────┐
+   │  💡 PROPOSE  │   Signal card: leverage / position / TP-SL
+   └──────┬──────┘
+          ▼
+   ┌─────────────┐
+   │  ✅ APPROVE  │   ◄── the key: YOU press Confirm in the chat
+   └──────┬──────┘
+          ▼
+   ┌─────────────┐
+   │  ⚡ EXECUTE  │   CEX / Agentic Wallet / x402 — real orders
+   └──────┬──────┘
+          └────────────► back to scanning ◄
 ```
 
 ---
@@ -116,39 +124,58 @@ The top bar toggles **dark/light theme** and **Chinese/English** in one click �
 
 | | What you get |
 |---|---|
-| 📡 **Live market radar** | Full-market anomaly scan · Monster Radar burst windows · 24h auto-watch · real-time BTC/ETH/SOL/BNB prices — **zero API key**. |
-| 🗣 **Conversational agent cockpit** | SSE/NDJSON streaming · live tool cards · file/voice input · multi-provider LLM, plus a **fully offline deterministic rules engine** fallback. |
-| ✅ **Human-in-the-loop (default)** | Every trade / transfer / signed payment has a confirm card — **sensitive ops are never silent**. |
-| 🧠 **Long-term memory** | Learns cross-session preferences & risk anchors from your chats; indexed, searchable, viewable in the Memory panel. |
-| 👛 **Agentic Wallet (keyless MPC)** | Swap BSC / Ethereum / Base / Solana via `baw`, respecting official daily limits; **private keys never touch the app**. |
-| 💹 **Real CEX trading** | Spot / futures / convert on your real account via whitelisted `binance-cli` profile; CEX and Web3 key sets strictly isolated. |
-| 🧩 **Skill Hub** | 14 official skills preloaded · intent-driven · install/run/remove with path-traversal protection. |
-| 🔌 **Plugins** | Drop into `plugins/` to extend (e.g. `scout-signals`) — one `main.py` + manifest hooks into the loop without touching core. |
-| 🤖 **Multi-bot workspaces** | Spin up persona bots (own skills, own memory domains), each with its own conversations. |
-| 👥 **Group chat · assign to bots** | Make a room, `@mention` several bots, drop a task, they answer in turns and share a room log. |
-| ⏰ **Scheduled automation (CRON)** | Visual cron panel: write "scan the market every day at 09:00" — run / pause / trigger manually. |
-| 💸 **x402 / B402 payments** | Machine-to-machine payments: offline Permit2 EIP-712 signing, verified by the official Facilitator and settled on-chain. |
-| 📣 **Square publishing** | Text / long-form / image / video to Binance Square, with a local ledger of everything you've posted. |
-| 🖥 **Desktop + Web, one codebase** | Frameless Windows portable (Electron + embedded PyInstaller backend, no Python/Node needed) *and* the same cockpit in a browser. |
-| 🌓 **Bilingual & skinnable** | Chinese / English + deep-gold ↔ light, each one-key from the top bar, remembered on restart. |
-| 🔄 **Incremental auto-update** | MANIFEST + delta pack — downloads only the changed files (~a few MB vs the whole bundle), prefetches in the background, applies in about a second. |
-| 🔒 **Local-first, data separated** | Sessions / memory / config live outside the app in `%APPDATA%\BAZZ.AGENT` — updates replace only the program, **never touch your data**. |
+| 📡 **Live market radar** | Full-market anomaly scan (top-300 by volume) · **Monster Radar** burst windows with track record (moon/dump/expired verdicts at 10x-leverage thresholds) · 24h auto-watch · Fear & Greed · funding / OI / top-trader long-short — **zero API key**. |
+| 🗣 **Conversational cockpit** | SSE/NDJSON streaming · live tool cards · file & voice input · multi-provider LLM + **fully offline rules-engine fallback**. |
+| ✅ **Human-in-the-loop** | Every trade / transfer / signed payment = a confirm card. Sensitive ops are **never silent**. Whitelist trusted flows to skip the click. |
+| 🧠 **Long-term memory** | Cross-session preferences & risk anchors, indexed & searchable, viewable in the Memory panel. |
+| 👛 **Agentic Wallet** | Keyless MPC on BSC / Ethereum / Base / Solana via `baw`; official daily limits enforced; **private keys never touch the app**. |
+| 💹 **Real CEX trading** | Spot / futures / convert on your real account via a whitelisted `binance-cli` profile; CEX and Web3 key sets **strictly isolated**. |
+| 🧩 **Skill Hub — 19 skills** | 19 official skills preloaded (CEX + Web3 + research: audit, address info, tokenized stocks, sports AI, news sentiment…), intent-routed, path-traversal-protected. |
+| 📣 **Square rich-posting** | Market report → cover + chart + SMC article → published as an **image short-post**, local ledger keeps every post. |
+| 🤖 **Multi-bot + group chat** | Persona bots with own skills & memory domains; make a room, `@mention` bots, they answer in turns. |
+| ⏰ **CRON automation** | Write "scan the market every day at 09:00" in plain words; run / pause / trigger manually — **runs even when the window is closed to tray**. |
+| 💸 **x402 / B402** | Machine pays machine: offline Permit2 EIP-712 signing, verified by the official Facilitator, settled on-chain. |
+| 🖥 **Desktop + Web** | Frameless Windows installer (Electron + embedded PyInstaller backend, **no Python/Node needed**) *and* the same cockpit in a browser. One codebase. |
+| 🌓 **Bilingual & skinnable** | 中文 / English + deep-gold ↔ light, one key from the top bar. |
+| 🔒 **Local-first** | Sessions / memory / config live in `<install dir>\workspace` — updates replace only the program, **never your data** (backup before update, abort on backup failure). |
+
+<details>
+<summary><b>🧩 The four native capabilities — real protocols, not widgets</b> <i>(click to expand)</i></summary>
+
+| | Detail |
+|---|---|
+| **① MCP Server** · `agent.binance.com` | Streamable HTTP (JSON-RPC 2.0) · protocol `2025-06-18` · OAuth 2.0 **RFC 9728** + PKCE(S256) → Bearer · runtime `tools/list` discovery, zero hardcoded tool names · public market data unauthenticated; account/trading uses a **least-privilege scope (no withdrawals)**. See `src/mcp_client.py`. |
+| **② Agentic Wallet** · `baw` CLI | Keyless MPC, BSC / ETH / Base / SOL · official limits: swap $50k/day · DeFi $100k/day · x402 $20/day · the agent only calls `baw` through a **whitelisted command shim** — the private key is never seen. |
+| **③ x402 / B402** · machine pays machine | B402 Facilitator `/papi/v2/b402/{supported,verify,settle}` (BSC) · seller replies 402 → buyer signs **offline Permit2 EIP-712** (no gas) → Facilitator verifies → on-chain settle (Facilitator pays gas) · `/supported` fetched live; degrades gracefully to demo without credentials. |
+| **④ Skill Hub** · official skills | 19 preloaded official skills, locked via `skills-lock.json` · `install/run/remove` with path-traversal protection · intent-driven · plugins share the runtime: `plugins/<id>/{main.py, plugin.json}`. |
+
+**Real CEX channel — `binance-cli`**: two key sets, **strictly isolated**:
+
+| System | Key | Use |
+|------|------|------|
+| **Binance CEX** | API Key + Secret (HMAC, System Generated) | Spot / futures / balance via `binance-cli` profile |
+| **Web3 Agentic Wallet** | keyless MPC (`baw`) | on-chain swap, x402, DeFi |
+
+</details>
 
 ---
 
 ## ⚡ Quick start
 
-### Option 1 · Windows, one-click download (recommended)
+### Option 1 · Windows, one-click (recommended)
 
-| Artifact | How to run |
-|------|--------|
-| 🎒 [portable.zip](https://github.com/xinyuzjj/bazz.agent/releases/latest) | Unzip anywhere → double-click `BAZZ.AGENT.exe` |
-| 📦 [setup.exe](https://github.com/xinyuzjj/bazz.agent/releases/latest) | Installs to `%LOCALAPPDATA%` with Start Menu / desktop shortcuts / uninstaller |
+<div align="center">
 
-- **No Python, no Node, no install** — Electron + PyInstaller fused into one app.
-- First launch warms the backend for ~3–5 s, then the hatch opens.
-- Data lives in `<install dir>\workspace` (auto-falls back to `%APPDATA%\BAZZ.AGENT\workspace` if the install drive is read-only) — move the whole portable folder and your data comes with it.
-- Frameless window: drag by the top bar; `─ / □ / ✕` on the top-right.
+**[⬇ Download latest setup.exe](https://github.com/xinyuzjj/bazz.agent/releases/latest)** — install & go. No Python, no Node.
+
+`setup.exe` · `delta-<ver>.zip` (auto-consumed by in-app updater) · `SHA256SUMS` · `MANIFEST.json`
+
+</div>
+
+- First launch warms the backend ~3–5 s behind a splash animation, then the hatch opens.
+- Data lives in `<install dir>\workspace` (auto-falls back to `%APPDATA%\BAZZ.AGENT\workspace` if the drive is read-only).
+- Frameless window: drag the top bar; `─ / □ / ✕` top-right; **close-to-tray** keeps background jobs alive.
+- In-app updater: version-guarded, delta-pack, SHA256-verified, auto-restart after install.
 
 > For Windows 10/11 x64. macOS / Linux: run from source.
 
@@ -168,8 +195,7 @@ cd frontend && npm install && npm run build && cd ..
 # → http://127.0.0.1:8080
 ```
 
-> The public market radar (Binance spot tickers & 24h stats) needs **no key**. In Settings, fill any OpenAI-compatible `base_url` + key
-> (DeepSeek / OpenAI / Moonshot / Ollama / custom). A rules-engine fallback means **the main flow works offline too**.
+> The market radar needs **no key**. In Settings, fill any OpenAI-compatible `base_url` + key (DeepSeek / OpenAI / Moonshot / Ollama / custom). The rules-engine fallback means **the main flow works offline too**.
 
 ### Desktop dev mode (Windows)
 
@@ -180,21 +206,23 @@ start-dev.bat         # FastAPI + Vite hot-reload for UI work
 
 ---
 
-## 🧩 The four native capabilities — real protocols, not widgets
+## 🔄 Incremental auto-update
 
-| | Detail |
-|---|---|
-| **① MCP Server** · `agent.binance.com` | Streamable HTTP (JSON-RPC 2.0) · protocol `2025-06-18` · OAuth 2.0 **RFC 9728** + PKCE(S256) → Bearer · runtime `tools/list` discovery, zero hardcoded tool names · public market data unauthenticated; account/trading uses a **least-privilege scope (no withdrawals)**. See `src/mcp_client.py`. |
-| **② Agentic Wallet** · `baw` CLI | Keyless MPC, multi-chain BSC / ETH / Base / SOL · official limits: swap $50k/day · DeFi $100k/day · x402 $20/day · the agent only calls `baw` through a **whitelisted command shim** — the private key is never seen. |
-| **③ x402 / B402** · machine pays machine | B402 Facilitator `/papi/v2/b402/{supported,verify,settle}` (BSC) · seller replies 402 → buyer signs **offline Permit2 EIP-712** (no gas) → Facilitator verifies → on-chain settle (Facilitator pays the gas) · `/supported` fetched live; degrades gracefully to demo without credentials. |
-| **④ Skill Hub** · official skills | 14 preloaded official skills (CEX 5 + Web3 9), locked via `skills-lock.json` · `install/run/remove` with path-traversal protection · intent-driven · plugins share the same runtime: `plugins/<id>/{main.py, plugin.json}`. |
+```
+   app checks GitHub Releases ──► MANIFEST.json diff vs local
+            │                            │
+            ▼                            ▼
+   version guard (never        delta-<ver>.zip: ONLY changed
+   downgrade, resume-verified) files, SHA256 every file
+            │                            │
+            └──────────┬─────────────────┘
+                       ▼
+   background prefetch ──► backup workspace ──► apply (~1s)
+                       ▼
+   setup.exe /VERYSILENT in-place ──► auto-restart ──► done ✅
+```
 
-**Real CEX channel — binance-cli**: two key sets are **strictly isolated**; this app never mixes them.
-
-| System | Key | Use |
-|------|------|------|
-| **Binance CEX** (exchange account) | API Key + Secret (HMAC, 64-char, System Generated) | Spot / futures, balance, fills, via `binance-cli` profile |
-| **Web3 Agentic Wallet** | keyless MPC (BX-/Ed25519 via `baw`) | on-chain swap, x402, DeFi |
+Network blocked? The updater rides the **same proxy pool** as everything else, with live node failover.
 
 ---
 
@@ -204,15 +232,15 @@ start-dev.bat         # FastAPI + Vite hot-reload for UI work
 |----|------|
 | Agent core | FastAPI + SSE/NDJSON streaming · intent → tool → approval → execute |
 | LLM | Multi-provider OpenAI-compatible layer + deterministic rules-engine fallback |
-| Desktop shell | Electron 31 (frameless) + PyInstaller backend packaging |
-| Memory | SQLite (`state.db`) — sessions / messages / long-term preferences |
-| Frontend | React 18 + TypeScript + Vite + Tailwind (deep-gold ↔ light · CN/EN) |
-| Charts | Pure CSS + SVG, zero chart-dependency |
+| Desktop shell | Electron (frameless, tray-resident) + PyInstaller backend |
+| Memory | SQLite (`state.db`) — WAL + busy-timeout + serialized writes |
+| Frontend | React 18 + TypeScript + Vite + Tailwind (dark/light · CN/EN) |
+| Charts | Pure CSS + SVG (sparklines, gradients) — zero chart-dependency |
 | Realtime | Server-Sent Events + polling |
+| Proxy | Bundled mihomo kernel + multi-node pool with live health failover |
 
----
-
-## 🏗 Architecture
+<details>
+<summary><b>🏗 Architecture</b> <i>(click to expand)</i></summary>
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -236,28 +264,32 @@ start-dev.bat         # FastAPI + Vite hot-reload for UI work
 
 The desktop build embeds a PyInstaller-frozen backend (`ScoutBackend.exe`) that serves the same React build — **one codebase, two shapes**.
 
----
+</details>
 
-## 🗽 Security model
+<details>
+<summary><b>🔒 Security model</b> <i>(click to expand)</i></summary>
 
 - Every real trade / transfer / signed payment carries `needs_approval`; the backend proceeds only on an explicit `confirm: true`.
 - Keys are never written to disk in plaintext; CEX keys are typed into the UI per session and mirrored into the local `binance-cli` profile only after you connect and authorize.
 - The agent never touches raw private keys — the Agentic Wallet is keyless.
-- `run_command` whitelist is limited to `baw` / `binance-cli` / `node` — arbitrary shell is rejected outright.
-- Skills are protected against path traversal externally; Square posts keep a local ledger; keys are masked in the UI.
+- `run_command` whitelist: `baw` / `node` / `python` / `git` + read-only wrappers — arbitrary shell rejected; destructive patterns (`rm -rf`, `format`, `shutdown`) hard-blocked.
+- Local API enforces per-launch random-token auth (when run from the desktop shell) and strict path guards: no traversal, no workspace-root deletion, binaries flagged instead of garbled.
+- Skills are path-traversal-protected; Square posts keep a local ledger; keys masked in the UI.
+- Update packages are SHA256-verified and version-guarded before install; workspace is backed up first, update aborts if backup fails.
 
----
+</details>
 
-## 📦 Project layout
+<details>
+<summary><b>📦 Project layout</b> <i>(click to expand)</i></summary>
 
 ```
 bazz.agent/
 ├── desktop_app.py            FastAPI backend (serves frontend/dist + /api/*)
 ├── launcher.py               PyInstaller desktop backend entry
-├── electron/                 Desktop shell: main.cjs + preload.cjs (frameless)
+├── electron/                 Desktop shell: main.cjs + preload.cjs (frameless + tray)
 ├── src/
 │   ├── agent_core.py         intent → tool orchestration → approval → execute
-│   ├── updater.py            incremental auto-update (MANIFEST + delta + background prefetch)
+│   ├── updater.py            incremental auto-update (MANIFEST + delta + version guard)
 │   ├── mcp_client.py         Binance Agentic MCP (OAuth 2.0 + runtime discovery)
 │   ├── x402_client.py        x402 / B402 payments (Permit2 EIP-712)
 │   ├── wallet_client.py      Agentic Wallet (baw CLI wrapper)
@@ -265,21 +297,26 @@ bazz.agent/
 │   ├── binance_cli.py        real trading channel: binance-cli profile sync
 │   ├── skills_client.py      Skill Hub (install / run / remove)
 │   ├── scanner.py            full-market Binance market radar
+│   ├── radar_tracker.py      Monster Radar track record (moon/dump/expired)
+│   ├── square_rich.py        Square rich-post composer (cover + SMC article)
+│   ├── proxy_pool.py         proxy pool: import / test / mihomo kernel / failover
 │   ├── llm.py                multi-provider LLM + rules-engine fallback
 │   ├── scheduler.py          cron daemon
 │   └── state.py              SQLite persistence
 ├── frontend/                 React 18 + TS + Vite + Tailwind (dark/light · CN/EN)
 ├── plugins/scout-signals/    example plugin
-├── .agents/bots/             bot personas · .agents/skills/ 14 official skills
+├── .agents/bots/             bot personas · .agents/skills/ 19 official skills
 ├── wallet_bridge/            Node bridge for on-chain wallets
 └── docs/                     GitHub Pages landing page
 ```
+
+</details>
 
 ---
 
 ## 🏷 Topics
 
-`binance` · `agent-os` · `ai-agent` · `hackathon` · `trading` · `crypto` · `web3` · `mcp` · `x402` · `oauth` · `electron` · `fastapi` · `react`
+`binance` · `agent-os` · `ai-agent` · `trading` · `crypto` · `web3` · `mcp` · `x402` · `oauth` · `electron` · `fastapi` · `react` · `smc` · `binance-square`
 
 ---
 
@@ -292,6 +329,12 @@ bazz.agent/
 
 ---
 
-## 📜 License
+<div align="center">
 
-MIT
+**If BAZZ.AGENT saves you screen-time, drop a ⭐ — it makes the radar stronger.**
+
+`Scan → Analyze → Propose → Approve → Execute` · *It asks before it fires.*
+
+MIT License © 2026
+
+</div>
