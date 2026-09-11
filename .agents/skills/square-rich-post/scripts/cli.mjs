@@ -27,7 +27,7 @@ function usageExit(msg) {
 }
 
 async function backendGet(pathname) {
-  let lastErr;
+  let lastErr, httpErr;
   for (const port of PORTS) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
@@ -38,13 +38,14 @@ async function backendGet(pathname) {
       clearTimeout(timer);
       const json = await res.json().catch(() => ({}));
       if (res.ok) return json;
-      lastErr = new Error(`HTTP ${res.status}: ${json.error || res.statusText}`);
+      httpErr = new Error(`HTTP ${res.status}: ${json.error || res.statusText}`);   // 有明确响应：优先上报
+      lastErr = httpErr;
     } catch (e) {
       clearTimeout(timer);
       lastErr = e;
     }
   }
-  throw lastErr;
+  throw httpErr || lastErr;   // 401/500 等业务错误优先于连接错误
 }
 
 async function compose(sym, market) {

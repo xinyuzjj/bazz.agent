@@ -926,7 +926,10 @@ def apply(zip_path: str, wait_pid: int = 0) -> dict:
                else _write_updater_script(zip_path, int(wait_pid or 0), os.getpid()))
     except Exception as e:
         return {"ok": False, "error": f"生成更新脚本失败：{e}", "log": log}
-    flags = 0x00000008 | 0x00000200 | 0x08000000   # DETACHED_PROCESS|CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW
+    # v1.5.16 修复（实测复现）：DETACHED_PROCESS(0x8) 会让 powershell.exe 立即静默退出
+    # （exit 0 且不执行 -File 脚本）—— 历次「点更新没反应、安装器从不运行」的真正根因。
+    # 只保留 CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW：同样无窗口闪烁，脚本正常执行。
+    flags = 0x00000200 | 0x08000000   # CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW
     # v1.5.13 修复：System32\WindowsPowerShell\v1.0 不在 CreateProcess 的固有搜索目录里，
     # 只能靠 PATH；Electron 拉起的后端若 PATH 被裁剪，裸 "powershell" 解析失败 → 应用退了安装器却没跑。
     # 改用 SystemRoot 绝对路径，找不到再退回 PATH。
