@@ -647,6 +647,50 @@ def _log_path() -> str:
     return os.path.join(tempfile.gettempdir(), "bazz-updater.log")
 
 
+# 安装进度小窗（v1.5.17）：应用退出后由更新脚本弹出的置顶跑马灯进度窗，给用户可见反馈。
+# PowerShell 自带 WinForms 实现，零新增依赖；窗体随脚本进程退出自动关闭。
+# 以 {UI} 占位符注入脚本模板（作为 .format 参数值，内部花括号不需转义）；$ver 由模板先行赋值。
+_UI_PRELUDE = """\
+# ---- 安装进度小窗（v1.5.17）：关闭应用后向用户展示安装进度 ----
+try {
+  Add-Type -AssemblyName System.Windows.Forms
+  Add-Type -AssemblyName System.Drawing
+  $form = New-Object System.Windows.Forms.Form
+  $form.Text = 'BAZZ.AGENT 更新'
+  $form.FormBorderStyle = 'FixedDialog'
+  $form.StartPosition = 'CenterScreen'
+  $form.Size = New-Object System.Drawing.Size(430, 158)
+  $form.TopMost = $true
+  $form.MaximizeBox = $false
+  $form.MinimizeBox = $false
+  $form.ShowInTaskbar = $false
+  $form.BackColor = [System.Drawing.Color]::FromArgb(10, 11, 13)
+  $lblTitle = New-Object System.Windows.Forms.Label
+  $lblTitle.Text = ('正在更新 BAZZ.AGENT ' + $ver)
+  $lblTitle.ForeColor = [System.Drawing.Color]::White
+  $lblTitle.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 10.5, [System.Drawing.FontStyle]::Bold)
+  $lblTitle.SetBounds(24, 18, 372, 26)
+  $form.Controls.Add($lblTitle)
+  $bar = New-Object System.Windows.Forms.ProgressBar
+  $bar.Style = 'Marquee'
+  $bar.MarqueeAnimationSpeed = 30
+  $bar.SetBounds(24, 54, 372, 18)
+  $form.Controls.Add($bar)
+  $lblStep = New-Object System.Windows.Forms.Label
+  $lblStep.Text = '准备中…'
+  $lblStep.ForeColor = [System.Drawing.Color]::FromArgb(194, 202, 212)
+  $lblStep.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9)
+  $lblStep.SetBounds(24, 84, 372, 22)
+  $form.Controls.Add($lblStep)
+  $form.Show()
+  [System.Windows.Forms.Application]::DoEvents()
+} catch {}
+function Set-Step($t) {
+  try { $script:lblStep.Text = $t; [System.Windows.Forms.Application]::DoEvents() } catch {}
+}
+"""
+
+
 def _write_updater_script(zip_path: str, wait_pid: int, backend_pid: int) -> str:
     """生成 PowerShell 更新脚本（路径内嵌防编码坑；UTF-8 带 BOM 防 PS5.1 按 ANSI 误读）。
 
@@ -688,6 +732,8 @@ def _write_updater_script(zip_path: str, wait_pid: int, backend_pid: int) -> str
 
     script = """$ErrorActionPreference = 'Continue'
 function L($msg) {{ {L_BODY} }}
+$ver = '{ver}'
+{UI}
 $oldRoot = '{root}'
 $parent  = '{parent}'
 $newRoot = '{newRoot}'
@@ -705,6 +751,7 @@ if ($waitPid -gt 0) {{
   $gone = $false
   for ($i = 0; $i -lt 90; $i++) {{
     if (-not (Get-Process -Id $waitPid -ErrorAction SilentlyContinue)) {{ $gone = $true; break }}
+    Set-Step '等待应用退出…'
     Start-Sleep -Seconds 2
   }}
   if (-not $gone) {{ L 'ERR wait-electron-timeout'; exit 3 }}
@@ -714,8 +761,10 @@ if ($backendPid -gt 0) {{ Stop-Process -Id $backendPid -Force -ErrorAction Silen
 Get-Process -Name 'BAZZ.AGENT','ScoutBackend' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
 # 3) 前置校验（zip 可能随后因 workspace 备份被挪到 $zipBak）
+Set-Step '正在校验更新包…'
 if (-not (Test-Path -LiteralPath $zip) -and -not (Test-Path -LiteralPath $zipBak)) {{ L 'ERR zip-missing'; exit 4 }}
 # 4) 备份 WORKSPACE（同卷原子改名；失败不中止，但会记录 —— 用户数据优先）
+Set-Step '正在备份用户数据…'
 $wsMoved = $false
 if ($ws -and (Test-Path -LiteralPath $ws)) {{
   try {{
@@ -743,6 +792,7 @@ function Restore-Ws {{
   }}
 }}
 try {{
+  Set-Step '正在移除旧版本…'
   if ($newRoot -ne $oldRoot) {{
     if (Test-Path -LiteralPath $newRoot) {{ Remove-Item -LiteralPath $newRoot -Recurse -Force -ErrorAction Stop }}
   }}
@@ -753,6 +803,7 @@ try {{
   exit 6
 }}
 try {{
+  Set-Step '正在解压新版本…（大包可能需要一两分钟）'
   Expand-Archive -LiteralPath $zip -DestinationPath $parent -Force -ErrorAction Stop
   if (-not (Test-Path -LiteralPath $newExe)) {{ throw 'new exe missing after expand' }}
 }} catch {{
@@ -762,6 +813,7 @@ try {{
 }}
 L 'swap ok'
 # 6) 还原 WORKSPACE 到新应用
+Set-Step '正在还原用户数据…'
 if ($wsMoved -and (Test-Path -LiteralPath $wsBak)) {{
   try {{
     $dst = Split-Path -Parent $newWs
@@ -772,6 +824,7 @@ if ($wsMoved -and (Test-Path -LiteralPath $wsBak)) {{
   }} catch {{ L ('ERR ws-restore (backup kept at ' + $wsBak + '): ' + $_.Exception.Message) }}
 }}
 # 7) 清理更新包（v1.3.6：update-cache 在安装根 $newRoot 下而非 workspace 内；zip 已在 $zipBak）
+Set-Step '正在清理更新包…'
 try {{
   $uc = Join-Path $newRoot 'update-cache'
   if (Test-Path -LiteralPath $uc) {{
@@ -781,6 +834,7 @@ try {{
   L 'zip removed'
 }} catch {{}}
 # 8) 重启新版本
+Set-Step '启动新版本…'
 try {{
   Start-Process -FilePath $newExe -WorkingDirectory (Split-Path -Parent $newExe)
   L 'relaunch ok'
@@ -790,7 +844,8 @@ try {{
            newRoot=_ps1_quote(new_root), newExe=_ps1_quote(new_exe),
            ws=_ps1_quote(ps_ws), wsBak=_ps1_quote(ws_bak), newWs=_ps1_quote(new_ws),
            zip=_ps1_quote(zip_path), zipBak=_ps1_quote(zip_bak),
-           wait=int(wait_pid), backend=int(backend_pid))
+           wait=int(wait_pid), backend=int(backend_pid),
+           ver=_ver_disp(zip_path), UI=_UI_PRELUDE)
     ps1 = os.path.join(update_cache_dir(), "apply-update.ps1")
     with open(ps1, "w", encoding="utf-8-sig") as f:
         f.write(script)
@@ -805,6 +860,12 @@ def _path_inside(child: str, parent: str) -> bool:
         return c == p or c.startswith(p.rstrip("\\/") + os.sep)
     except Exception:
         return False
+
+
+def _ver_disp(path: str) -> str:
+    """从更新包文件名里取 v<版本> 用于进度窗标题（取不到返回空串）。"""
+    m = re.search(r"v\d+\.\d+\.\d+", os.path.basename(path or ""))
+    return m.group(0) if m else ""
 
 
 def _write_installer_script(setup_path: str, wait_pid: int, backend_pid: int) -> str:
@@ -826,6 +887,8 @@ def _write_installer_script(setup_path: str, wait_pid: int, backend_pid: int) ->
 
     script = """$ErrorActionPreference = 'Continue'
 function L($msg) {{ {L_BODY} }}
+$ver = '{ver}'
+{UI}
 $oldRoot = '{root}'
 $newExe  = '{newExe}'
 $setup   = '{setup}'
@@ -838,6 +901,7 @@ if ($waitPid -gt 0) {{
   $gone = $false
   for ($i = 0; $i -lt 90; $i++) {{
     if (-not (Get-Process -Id $waitPid -ErrorAction SilentlyContinue)) {{ $gone = $true; break }}
+    Set-Step '等待应用退出…'
     Start-Sleep -Seconds 2
   }}
   if (-not $gone) {{ L 'ERR wait-electron-timeout'; exit 3 }}
@@ -847,25 +911,30 @@ if ($backendPid -gt 0) {{ Stop-Process -Id $backendPid -Force -ErrorAction Silen
 Get-Process -Name 'BAZZ.AGENT','ScoutBackend' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
 # 3) 前置校验 + 挪出安装根
+Set-Step '正在校验更新包…'
 if (-not (Test-Path -LiteralPath $setup)) {{ L 'ERR setup-missing'; exit 4 }}
 if ($setupBak -ne $setup) {{
   try {{ Move-Item -LiteralPath $setup -Destination $setupBak -Force -ErrorAction Stop; $setup = $setupBak; L 'setup relocated out of root' }}
   catch {{ L ('ERR setup-relocate: ' + $_.Exception.Message) }}
 }}
 # 4) 静默安装：原地覆盖（/DIR 固定当前安装根，防便携解压目录无注册表记录时跑到默认路径）
+Set-Step '正在安装新版本…（约半分钟）'
 L 'silent install start'
 $dirArg = '/DIR="' + $oldRoot + '"'
-$p = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCANCEL',$dirArg -Wait -PassThru
+$p = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCANCEL',$dirArg -PassThru
+while (-not $p.HasExited) {{ Start-Sleep -Milliseconds 250; [System.Windows.Forms.Application]::DoEvents() }}
 L ('installer exit code: ' + $p.ExitCode)
 if ($p.ExitCode -ne 0) {{ L 'ERR install-failed'; exit 6 }}
 if (-not (Test-Path -LiteralPath $newExe)) {{ L 'ERR new-exe-missing'; exit 7 }}
 L 'install ok'
 # 5) 清理安装包与更新缓存
+Set-Step '正在清理…'
 try {{
   Remove-Item -LiteralPath $setup -Force -ErrorAction SilentlyContinue
   Get-ChildItem -Path (Join-Path $oldRoot 'update-cache') -Include *.zip,*.exe -Recurse -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
 }} catch {{}}
 # 6) 重启新版本
+Set-Step '启动新版本…'
 try {{
   Start-Process -FilePath $newExe -WorkingDirectory $oldRoot
   L 'relaunch ok'
@@ -873,7 +942,8 @@ try {{
 """.format(L_BODY=log_cmd,
            root=_ps1_quote(root), newExe=_ps1_quote(exe),
            setup=_ps1_quote(setup_path), setupBak=_ps1_quote(setup_bak),
-           wait=int(wait_pid), backend=int(backend_pid))
+           wait=int(wait_pid), backend=int(backend_pid),
+           ver=_ver_disp(setup_path), UI=_UI_PRELUDE)
     ps1 = os.path.join(update_cache_dir(), "apply-update-setup.ps1")
     with open(ps1, "w", encoding="utf-8-sig") as f:
         f.write(script)
