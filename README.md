@@ -23,7 +23,7 @@
 [![License](https://img.shields.io/badge/License-MIT-success)](#-license)
 
 <p>
-  <a href="https://skillicons.dev"><img src="https://skillicons.dev/icons?i=py,fastapi,react,ts,vite,tailwind,electron,nodejs,sqlite,git&theme=dark" alt="Tech Stack"/></a>
+  <a href="https://github.com/LelouchFR/skill-icons"><img src="https://go-skill-icons.vercel.app/api/icons?i=python,fastapi,react,typescript,vite,tailwindcss,electron,nodejs,sqlite,git&titles=true" alt="Tech Stack"/></a>
 </p>
 
 </div>
