@@ -75,16 +75,33 @@ export function resolveApiKey(args = []) {
   );
 }
 
+function proxyEnvUsed() {
+  return Boolean(process.env.HTTPS_PROXY || process.env.https_proxy ||
+    process.env.HTTP_PROXY || process.env.http_proxy ||
+    process.env.ALL_PROXY || process.env.all_proxy);
+}
+
 export async function api(endpoint, apiKey, body, baseUrl = BASE_URL_V2) {
-  const res = await fetch(`${baseUrl}${endpoint}`, {
-    method: "POST",
-    headers: {
-      "X-Square-OpenAPI-Key": apiKey,
-      "Content-Type": "application/json",
-      clienttype: "binanceSkill",
-    },
-    body: JSON.stringify(body),
-  });
+  let res;
+  try {
+    res = await fetch(`${baseUrl}${endpoint}`, {
+      method: "POST",
+      headers: {
+        "X-Square-OpenAPI-Key": apiKey,
+        "Content-Type": "application/json",
+        clienttype: "binanceSkill",
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    // v1.5.19：把底层网络原因码带出来，并给出代理池自助指引（APP 侧会自动切代理重试）
+    const code = e?.cause?.code || e?.code || e?.message || "fetch failed";
+    throw new Error(
+      `网络请求失败（${code}）：无法连接 ${baseUrl}${endpoint}。` +
+      `本次${proxyEnvUsed() ? "已尝试经代理连接" : "为直连（未启用代理）"}；` +
+      `请在 APP「设置 → 代理池」导入/启用可用节点后重试。`,
+    );
+  }
   const raw = await res.text();
 
   if (endpoint === "/content/add" && res.status === 504) {

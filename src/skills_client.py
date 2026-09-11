@@ -395,6 +395,26 @@ def _cli_uses_meta_url_dispatch(cli: str) -> bool:
         return False
 
 
+# v1.5.19：网络失败识别（技能跑完 exit≠0 且输出命中 → 尝试切代理重试一次）
+_NET_ERR_RE = re.compile(
+    r"fetch failed|etimedout|timeout|timed ?out|econnreset|econnrefused|enotfound|"
+    r"eai_again|getaddrinfo|socket hang up|und_err|network|网络|超时|连接失败",
+    re.I)
+
+
+def looks_network_error(text: str) -> bool:
+    return bool(_NET_ERR_RE.search(text or ""))
+
+
+def _ensure_proxy_or_empty() -> str:
+    """网络失败兜底：激活一个实测可用的代理节点，返回其 URL；池子空/全挂返回 ""。"""
+    try:
+        import proxy_pool
+        return proxy_pool.ensure_working_proxy()
+    except Exception:
+        return ""
+
+
 def run_skill(skill_name: str, args: str = "") -> dict:
     """按真实机制运行已安装 skill。
 
@@ -439,11 +459,21 @@ def run_skill(skill_name: str, args: str = "") -> dict:
             return {"status": "ok", "skill": skill_name,
                     "stdout": f"(技能 {skill_name} 为 HTTP/扩展型，无本地 cli.mjs — 以下为官方 SKILL.md 使用指引，请在有网真机按指引调用)\n\n{guide}",
                     "note": "api_reference"}
-        proc = subprocess.run(["cmd", "/c"] + base + toks,
+        cmd = ["cmd", "/c"] + base + toks
+        proc = subprocess.run(cmd,
                               capture_output=True, text=True, timeout=120,
                               encoding="utf-8", errors="replace")  # node 输出 UTF-8，按 GBK 读会乱码
+        # v1.5.19：网络失败自动兜底 —— 切到实测可用的代理节点后重试一次
+        if proc.returncode != 0 and looks_network_error((proc.stdout or "") + (proc.stderr or "")):
+            purl = _ensure_proxy_or_empty()
+            if purl:
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120,
+                                      encoding="utf-8", errors="replace")
+                tag = f"\n[auto-proxy] 首次网络失败，已自动启用代理 {purl} 重试"
+                tag += "（成功）" if proc.returncode == 0 else "（仍失败）"
+                proc.stdout = (proc.stdout or "") + tag
         # 广场发帖记账：手动「运行」发布的真实结果也落本地台账
-        if skill_name == "square-post":
+        if skill_name in ("square-post", "square-rich-post"):
             try:
                 import square_store
                 square_store.record_from_run(skill_name, arg_s, proc.stdout or "", proc.returncode, via="manual")

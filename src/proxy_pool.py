@@ -541,6 +541,61 @@ def active_url():
     return proxy_url(active_entry())
 
 
+_NET_TEST_TIMEOUT = 6.0
+
+
+def _url_alive(url, timeout=_NET_TEST_TIMEOUT):
+    """实测某代理 URL 能否连通 Binance（socks 协议在无 PySocks 时直接判不可用）。"""
+    if not url:
+        return False
+    proto = (urlparse(url).scheme or "").lower()
+    if proto.startswith("socks") and not _HAS_SOCKS:
+        return False
+    try:
+        r = requests.get(TEST_URL, proxies={"http": url, "https": url}, timeout=timeout)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+def ensure_working_proxy(max_candidates: int = 6):
+    """网络失败兜底（v1.5.19）：确保存在一个「实测能连 Binance」的代理节点并激活它。
+
+    顺序：active 节点实测 → 按缓存延迟升序逐个 set_active + 实测（内核型自动拉起内核
+    并切 selector，同时注入 env + NODE_OPTIONS preload）。全部失败则恢复原 active 并
+    返回 ""（池子为空 / 全挂时调用方维持原状，把直连错误如实抛给用户）。
+    返回值：可用代理 URL，或 ""（无可用代理）。"""
+    with _LOCK:
+        original_id = _state["active_id"]
+        entries = [dict(e) for e in _state["entries"]]
+    if not entries:
+        return ""
+    # 1) 当前 active 先实测（最常见的快路径）
+    cur = active_url()
+    if cur and _url_alive(cur):
+        return cur
+    # 2) 候选排序：延迟已知且小的优先，未测过的次之，dead 靠后；跳过原 active
+    def _key(e):
+        lat = e.get("latency_ms")
+        dead = e.get("status") == "dead"
+        return (dead, 1 if not isinstance(lat, (int, float)) or lat <= 0 else 0, lat or 0)
+    candidates = [e for e in sorted(entries, key=_key) if e["id"] != original_id][:max_candidates]
+    for e in candidates:
+        try:
+            set_active(e["id"])
+        except Exception:
+            continue
+        url = active_url()
+        if url and _url_alive(url):
+            return url
+    # 3) 全部失败：恢复原状态
+    try:
+        set_active(original_id)
+    except Exception:
+        pass
+    return ""
+
+
 def set_active(entry_id):
     """启用某节点（entry_id 空串 = 直连）。内核型节点会自动拉起内核并切换 selector。"""
     with _LOCK:

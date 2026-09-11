@@ -898,7 +898,17 @@ def run_skill_cmd(skill_name: str, args: str = "", timeout: int = 180, max_out: 
         raise
     except Exception as e:
         raise SandboxError(f"skill 命令构造失败: {e}")
-    return run_command(cmd, timeout=timeout, max_out=max_out)
+    r = run_command(cmd, timeout=timeout, max_out=max_out)
+    # v1.5.19：网络失败自动兜底 —— 激活一个实测可用的代理节点后重试一次
+    if r.get("exit_code") and skills_client.looks_network_error(r.get("output", "")):
+        purl = skills_client._ensure_proxy_or_empty()
+        if purl:
+            r2 = run_command(cmd, timeout=timeout, max_out=max_out)
+            tag = f"\n[auto-proxy] 首次网络失败，已自动启用代理 {purl} 重试"
+            tag += "（成功）" if r2.get("exit_code") == 0 else "（仍失败）"
+            r2["output"] = (r2.get("output", "") + tag)[-max_out:]
+            return r2
+    return r
 
 
 def skill_is_executable(skill_name: str) -> bool:

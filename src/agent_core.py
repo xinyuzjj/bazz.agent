@@ -372,6 +372,15 @@ def _system_prompt(locale: str = "zh") -> str:
             "     `coin-report`（args='report <SYMBOL>'，一键全维度研报落盘）或 `market-data`（args='klines|funding|oi|longshort|fng|overview|liquidations <JSON>'，逐项取数）；\n"
             "     数据走本机行情网关（自带缓存 + 代理出口，稳定可达）。**禁止用 run_command 跑 python/node 直连币安 API、"
             "禁止用 fetch_url 抓 api.binance.com**——受限地区直连必失败，白耗轮次**；\n"
+            "   **其余已装技能按需直调（均真实可执行；记不准子命令就传空 args，run_skill 会返回用法指引）：\n"
+            "     新闻快讯/情绪/舆论/利好利空 → run_skill('news-sentiment', args='latest|coin <SYM>|sentiment')；\n"
+            "     资产快照/复盘/周报/成交统计/盈亏 → run_skill('portfolio-review', args='<子命令> [参数]')；\n"
+            "     妖币追踪复查/盯盘/『追踪的币有动静吗』→ run_skill('track-monitor', args='check [阈值%默认15]')；\n"
+            "     代币安全审计/貔貅/蜜罐/『这个币安全吗』→ run_skill('query-token-audit', args=\"<子命令> '<JSON>'\")；\n"
+            "     某地址持有什么币 → run_skill('query-address-info', args=\"<子命令> '<JSON>'\")；\n"
+            "     代币化美股/RWA 股票行情 → run_skill('binance-tokenized-securities-info', args=\"<子命令> '<JSON>'\")；\n"
+            "     合约逐笔聪明钱信号（BSC/Solana 买卖事件）→ run_skill('binance-trading-signal', args=\"<子命令> '<JSON>'\")；\n"
+            "     世界杯/AI 赛事预测 → run_skill('binance-sports-ai-analyzer', args=\"<子命令> '<JSON>'\")**。\n"
             "   风险/风控 → check_risk；买卖/多空 → propose_trade（仅出方案，下单需确认）；\n"
             "   支付/x402/402 → explain_x402；skills/技能 → list_skills；\n"
             "   链上/钱包/defi → onchain_ops；『记住…』→ memory_write；能力介绍 → get_help；\n"
@@ -379,9 +388,16 @@ def _system_prompt(locale: str = "zh") -> str:
             "   **妖币 / 启动前 / 埋伏 / 蓄势 / meme / 百倍币 → 立即用 meme_watch（**直接调取行情模块 Monster Radar 同源数据**——scanner.get_ignition_coins/get_monster_coins，与「行情→妖币雷达」展示内容 100% 一致），"
             "**不要**自己用价量/费率二次筛；拿到候选后可用 market_quote 查某币实时行情、propose_trade 给方案。\n"
             "   **mode 必须按用户语义传**：用户说『启动前/埋伏/蓄势/点火前/吸筹/二买点』→ `mode='ignition'`；说『起飞中/追涨/已爆发/拉升中/暴涨中/加速/起飞』→ `mode='takeoff'`；说『妖币/meme/百倍币/十倍币』等无明确阶段 → `mode='both'`。\n"
-            "   **发币安广场 / Square 发文 / 发推 / 发图文 / 『把这篇分析发出去』→ 必须用 run_skill(\n"
-            "       skill_name='square-post', args='<text|article|image|video 子命令 + JSON 参数>'\n"
-            "     ),不要走 mcp_call —— MCP binance 网关只有公开行情/账户/交易端点，没有发广场的能力，OAuth 授权也帮不上**。\n"
+            "   **发币安广场 / Square 发文 → 绝不走 mcp_call（MCP 网关没有发广场能力），按形态二选一：\n"
+            "   a) 【默认】生成文章/行情文/深度分析发文/图文帖/发图文/行情快报/SMC 拆解——用户让『写文章发广场』"
+            "『把这篇分析发出去』『发行情文』且没给现成正文 → 一律 run_skill(skill_name='square-rich-post', "
+            "args='<SYMBOL> [futures|spot] --publish')：自动取数+Pillow 封面+固定结构组稿"
+            "（开头行情人话段 → 合约+情绪 → 我的看法竖排 SMC 推理链 结构/BOS・CHoCH/OTE 0.618-0.705/OB/FVG → "
+            "操作计划竖排点位+100U 仓位算法 → 风险提示+GitHub 链接 github.com/xinyuzjj/bazz.agent）+ $cashtag/#hashtag。"
+            "**严禁绕过它自己手写简版文直接 square-post 发**——那会丢 SMC 推理链/仓位算法/GitHub 链接/封面，不合规；\n"
+            "   b) 例外：用户**给了现成正文**（『把这段文字发出去』/发短帖/发视频）或 rich 稿改稿重发 → "
+            "run_skill(skill_name='square-post', args='<text|article|image|video 子命令 + 参数>')；"
+            "改 rich 稿重发用 square-rich-post args='<SYMBOL> --publish --reuse <目录>'**。\n"
             "   **『帮我做个定时任务 / 每天 9 点分析妖币 / 每天早上定时扫描 / 每隔 30 分钟扫一次 / 加个日报 / 加个定时提醒 / cron / 自动定时』→ 立即用 schedule_task(action='create', name=…, time=…, task=…) 在后台真实注册 cron / interval 任务（不是给一句手动话术，也不要走 mcp_call 写系统级 cron）**。time 支持 `09:00`/`9 点`/`0 9 * * *`/`interval:30m`；task 默认 daily_scan_report，做妖币雷达传 meme_scan_report；**用户给出自定义周期指令（如『每天 9 点总结 BTC 行情并给关键位』）→ task='custom_prompt' 且把完整指令写进 prompt 参数（Agent 到点带全部工具无头真实执行）**。内置任务结果写『BAZZ Agent 日报』会话，custom_prompt 写专属会话「定时任务 · <name>」（都不需要用户在场）。**\n"
             "   **需求存在关键分叉（币种/周期/方向/预算不明且猜错代价高）→ 用 clarify 工具发结构化选择题让用户点选；能用合理默认值继续就不要问**。\n"
             "   **币种识别 — 严禁猜交易对**：用户用中文名/展示名/别名指代币种（如『牛市』『未来』『小狗币』）→ 把『<名字>USDT』原样传给技能；\n"
@@ -2105,7 +2121,11 @@ def _square_post_fail_hint(out: str) -> str:
         return ("**Node 环境或脚本路径问题。** 请确认 Node ≥18、`node scripts/cli.mjs` 在 square-post 目录下可执行；"
                 "或直接走 run_skill 工具重试。")
     if re.search(r"network|timeout|econnreset|fetch failed|网络|超时", ol):
-        return ("**网络问题。** 检查网络后重试；若持续失败，多为币安广场 OpenAPI 网关临时不可用。")
+        if "[auto-proxy]" in o:
+            return ("**直连与代理重试均失败。** 系统已自动切换代理节点重试仍连不上币安——代理节点可能全部失效，"
+                    "请到「设置 → 代理池」测速并启用可用节点，然后回一句「重发」即可（文章正文已保留，无需重写）。")
+        return ("**网络问题（已自动重试）。** 系统已尝试自动启用代理池节点重试一次仍失败，"
+                "说明代理池没有可用节点（未配置或全部失效）。请到「设置 → 代理池」导入/启用节点后让我重发。")
     return ""
 
 
@@ -2157,7 +2177,7 @@ def _tool_run_skill(args: dict, confirmed: bool = False) -> Dict[str, Any]:
     out = r.get("output", "")
     detail = f"exit={r['exit_code']} · {r['elapsed']}s" + (("\n" + out[:240].rstrip()) if out else "")
     # 广场发帖记账：真实发布成功 / 失败都落本地台账（广场页展示），失败不打断主流程
-    if name == "square-post":
+    if name in ("square-post", "square-rich-post"):
         try:
             import square_store
             square_store.record_from_run(name, arg_s, out, r["exit_code"], via="agent")
