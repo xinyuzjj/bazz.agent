@@ -63,6 +63,17 @@ app = FastAPI(title="BAZZ Agent")
 # dev 直接跑 desktop_app.py（无该环境变量）→ 不启用，行为与旧版完全一致。
 AUTH_TOKEN = os.environ.get("BAZZ_AUTH_TOKEN", "").strip()
 
+
+@app.on_event("startup")
+async def _resume_pending_update():
+    # v1.5.13 兜底：上次更新若 spawn 安装器静默失败（应用退了但没装上），
+    # 本次启动时补跑 update-cache 里遗留的 setup.exe（后台线程，失败不阻塞启动）
+    import asyncio as _aio
+    try:
+        await _aio.get_running_loop().run_in_executor(None, updater.resume_pending_update)
+    except Exception as e:
+        print(f"[updater] 恢复安装检查失败：{e}")
+
 if AUTH_TOKEN:
     @app.middleware("http")
     async def _local_auth(request: Request, call_next):

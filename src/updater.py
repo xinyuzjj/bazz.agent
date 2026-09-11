@@ -927,9 +927,23 @@ def apply(zip_path: str, wait_pid: int = 0) -> dict:
     except Exception as e:
         return {"ok": False, "error": f"生成更新脚本失败：{e}", "log": log}
     flags = 0x00000008 | 0x00000200 | 0x08000000   # DETACHED_PROCESS|CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW
+    # v1.5.13 修复：System32\WindowsPowerShell\v1.0 不在 CreateProcess 的固有搜索目录里，
+    # 只能靠 PATH；Electron 拉起的后端若 PATH 被裁剪，裸 "powershell" 解析失败 → 应用退了安装器却没跑。
+    # 改用 SystemRoot 绝对路径，找不到再退回 PATH。
+    ps_exe = "powershell"
+    if os.name == "nt":
+        ps_exe = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                              "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+        if not os.path.exists(ps_exe):
+            ps_exe = "powershell"
     try:
+        # 新一轮更新流程开始 → 清掉上次恢复安装的尝试计数
+        try:
+            os.remove(os.path.join(update_cache_dir(), "apply-attempts.txt"))
+        except OSError:
+            pass
         subprocess.Popen(
-            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+            [ps_exe, "-NoProfile", "-ExecutionPolicy", "Bypass",
              "-WindowStyle", "Hidden", "-File", ps1],
             creationflags=flags if os.name == "nt" else 0,
             close_fds=True,
@@ -938,3 +952,39 @@ def apply(zip_path: str, wait_pid: int = 0) -> dict:
         return {"ok": False, "error": f"启动更新进程失败：{e}", "log": log}
     return {"ok": True, "started": True, "log": log,
             "tip": "更新脚本已在后台运行：应用会自动退出，完成后自动替换并重启，期间请勿关机。"}
+
+
+def resume_pending_update() -> dict:
+    """v1.5.13 兜底：上次会话 spawn PowerShell 静默失败（应用已退出但安装器没跑）时，
+    开机检测 update-cache 遗留的 *-setup.exe + apply-update-setup.ps1 → 补跑安装。
+    尝试计数防死循环：连续 3 次仍未成功则停止自动重试，保留现场供排查。
+    安装成功后 ps1 会清掉 setup.exe；新一轮 apply() 会清掉计数文件。"""
+    if not is_packaged():
+        return {"resumed": False, "reason": "not-packaged"}
+    cache = update_cache_dir()
+    ps1 = os.path.join(cache, "apply-update-setup.ps1")
+    try:
+        setups = [os.path.join(cache, f) for f in os.listdir(cache)
+                  if f.lower().endswith("-setup.exe")]
+    except OSError:
+        return {"resumed": False, "reason": "cache-unreadable"}
+    if not (os.path.exists(ps1) and setups):
+        return {"resumed": False}
+    cnt_file = os.path.join(cache, "apply-attempts.txt")
+    try:
+        with open(cnt_file, "r", encoding="utf-8") as f:
+            n = int((f.read() or "0").strip() or "0")
+    except Exception:
+        n = 0
+    if n >= 3:
+        print("[updater] 连续 3 次恢复安装未成功，停止自动重试。"
+              "可手动运行 update-cache\\apply-update-setup.ps1 并把 Temp\\bazz-updater.log 反馈排查")
+        return {"resumed": False, "reason": "max-attempts"}
+    try:
+        with open(cnt_file, "w", encoding="utf-8") as f:
+            f.write(str(n + 1))
+    except Exception:
+        pass
+    r = apply(setups[0], wait_pid=0)
+    print(f"[updater] 开机恢复安装（第 {n + 1} 次尝试）：{r}")
+    return {"resumed": True, "attempt": n + 1, "result": r}

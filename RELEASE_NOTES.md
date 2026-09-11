@@ -1,4 +1,23 @@
-﻿# BAZZ.AGENT v1.5.13
+﻿# BAZZ.AGENT v1.5.14
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.14 更新要点（自动更新修复 · 思考泄漏修复 · 中文代币参数修复）
+
+### 1. 自动更新链路修复（重要）
+- **安装器 spawn 静默失败修复**：裸 powershell 依赖 PATH，Electron 拉起的后端 PATH 被裁剪时找不到 → 应用退出但安装器没跑（v1.5.13 实测踩坑）。改用 SystemRoot 绝对路径 spawn
+- **开机恢复兜底**：启动时检测 update-cache 遗留的 setup.exe + 安装脚本 → 自动补跑安装；连续 3 次失败停止重试并保留现场，新一轮更新自动清零计数
+
+### 2. Agent 深度思考修复
+- 修复推理模型（deepseek-v4-flash 等）同时返回原生 reasoning_content 与正文 <thinking> 块时，elif 短路导致思考泄漏成正文的问题；两种思考现在合并进深度思考面板
+
+### 3. 中文展示名代币参数修复
+- coin-report 传 牛来USDT 会被拼成 牛来USDTUSDT（后缀判断正则仅 ASCII）；改为结尾匹配，中文带后缀原样、裸名才补 USDT
+
+## 历史
+
+---
+
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
 

@@ -1058,12 +1058,14 @@ def chat_with_tools(messages: List[Dict[str, Any]], tools: List[Dict[str, Any]] 
                 # 无工具调用时把思考链兜成正文，避免用户看到空回复
                 if not content.strip() and not tool_calls:
                     out["content"] = rc
-            elif deep and content:
-                # 普通模型没原生推理字段：从 content 抽 <thinking>...</thinking>
+            if deep and content:
+                # v1.5.14 修复泄漏：原为 elif —— 推理模型（deepseek-v4-flash 等）既回原生
+                # reasoning_content 又在 content 里写 <thinking> 块时，elif 短路导致
+                # 思考块留在正文被当回答流式输出。改为独立判断，两种思考合并进 reasoning。
                 thinking, clean = _extract_thinking_block(content)
                 if thinking:
-                    out["reasoning"] = thinking
-                    out["content"] = clean  # 正文里去思考
+                    out["reasoning"] = ((out.get("reasoning", "") + "\n\n" + thinking).strip())
+                    out["content"] = clean
             _last_error = None
             return out
         except Exception as e:

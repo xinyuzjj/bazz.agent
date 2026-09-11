@@ -46,8 +46,8 @@ const usd = (v) => {
 async function report(rest) {
   const [sym0, mkt0] = rest;
   if (!sym0) throw Object.assign(new Error("report: 需要 SYMBOL"), { exitCode: 1 });
-  // 裸基础资产（如 WLD / SOL）自动补 USDT；已带常见计价后缀（BTCUSDT/WLDUSDC…）则原样
-  const sym = /^[A-Z0-9]+(USDT|USDC|FDUSD|TUSD|BUSD|TRY|BRL)$/.test(sym0.toUpperCase())
+  // 已带常见计价后缀（含中文展示名代币如 牛来USDT）则原样；否则补 USDT
+  const sym = /(USDT|USDC|FDUSD|TUSD|BUSD|TRY|BRL)$/i.test(sym0)
     ? sym0.toUpperCase() : `${sym0.toUpperCase()}USDT`;
   const market = mkt0 === "spot" ? "spot" : "futures";
   const enc = encodeURIComponent;
