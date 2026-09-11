@@ -140,6 +140,35 @@
   footer{margin-top:96px;padding-top:28px;border-top:1px solid var(--border);color:var(--muted);
     font-size:13px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px}
   footer .hack{color:var(--gold);font-weight:700}
+
+  /* 核心闭环跑马灯 */
+  .loop{margin-top:34px;border:1px solid rgba(240,185,11,.35);border-radius:999px;background:rgba(240,185,11,.05);
+    overflow:hidden;position:relative;max-width:640px;margin-left:auto;margin-right:auto}
+  .loop-inner{display:inline-flex;white-space:nowrap;animation:loopmove 16s linear infinite;padding:8px 0;
+    font-family:var(--mono);font-size:14px;color:var(--gold)}
+  .loop-inner b{color:#fff}
+  .loop:hover .loop-inner{animation-play-state:paused}
+  @keyframes loopmove{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+
+  /* v1.5 新特性 */
+  .news{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  @media(max-width:960px){.news{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:640px){.news{grid-template-columns:1fr}}
+  .new{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--border);
+    border-radius:var(--radius);padding:20px;transition:transform .16s,border-color .16s;position:relative;overflow:hidden}
+  .new:hover{transform:translateY(-2px);border-color:rgba(240,185,11,.5)}
+  .new::before{content:"";position:absolute;inset:0 0 auto 0;height:2px;
+    background:linear-gradient(90deg,transparent,var(--gold),transparent);opacity:.55}
+  .new .ico{font-size:22px}
+  .new b{display:block;font-size:15px;margin:8px 0 6px;color:var(--gold2)}
+  .new span{color:#c6cad3;font-size:13.5px;line-height:1.6;display:block}
+
+  /* 联系方式 */
+  .contact{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;margin-top:22px}
+  .contact a.c,.contact span.c{display:inline-flex;align-items:center;gap:9px;padding:11px 20px;border-radius:12px;
+    font-weight:700;font-size:14px;border:1px solid var(--border);background:var(--panel);color:var(--text);transition:all .16s}
+  .contact a.c:hover{transform:translateY(-2px);border-color:var(--gold);color:var(--gold)}
+  .contact .ic{font-size:17px}
 </style>
 </head>
 <body>
@@ -277,9 +306,9 @@
       </div>
 
       <div class="cap">
-        <h3>Skill Hub <span class="badge">14 skills</span></h3>
+        <h3>Skill Hub <span class="badge">19 skills</span></h3>
         <div class="cmd">npx skills add &lt;github path&gt;</div>
-        <p>14 个官方 Binance skill（CEX 5 + Web3 9），意图驱动：对话里表达意图，skill 自己决定调哪个底层 API / CLI。</p>
+        <p>19 个官方 Binance skill（CEX + Web3 + 自研富媒体发文），意图驱动：对话里表达意图，skill 自己决定调哪个底层 API / CLI。</p>
         <ul>
           <li>本地已装 <code>.agents/skills/*</code>，锁文件 <code>skills-lock.json</code></li>
           <li>install / run / remove 全套，带路径穿越防护</li>
