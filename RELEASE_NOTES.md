@@ -1,3 +1,43 @@
+# BAZZ.AGENT v1.5.33
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.33 更新要点（修上一版引入的启动竞态：内核端口被并发探活清零）
+
+### 背景
+v1.5.32 修好了「内核型代理跨进程识别」，但它给 `_recover()` 加的「探活失败即清空端口缓存」
+是无条件的 —— 而 `start()` 里端口是**先写、后起进程**的：
+
+```python
+_write_config()        # 写入 mixed_port / ctrl_port
+logf = open(LOG_PATH, "a", ...)
+_proc = subprocess.Popen(...)   # ← 在这两行之间 _proc 仍是 None
+```
+
+若前端此刻正好轮询 `/api/proxies`（`status()` → `is_running()` → `_recover()`），
+内核尚未就绪 → 探活失败 → **把刚写好的端口清零** → 等待循环 40 次都在请求
+`http://127.0.0.1:0/version` → 误报「内核启动超时」，并把 `mixed_port: 0` 写进 `state.json`。
+
+**症状与「代理没启用」完全一致 —— 等于把刚修好的 bug 换个入口又放回来。**
+
+### 修复
+1. 新增 `_recovered` 标记：区分端口是「落盘恢复来的」还是「本进程 `start()` 刚写的」；
+   `_recover()` **只清前者**，绝不碰后者
+2. `_write_config()` 写入端口时置 `_recovered = False`（本进程权威）
+3. `stop()` 同步归零端口缓存 —— 此前停掉内核后 `mixed_port()` 仍会返回过期端口
+4. `_revive_kernel_async()` 在线程内**重读** active 节点 —— 启动期间用户已在界面上换过节点时，
+   不会再把旧节点选回去
+
+### 验证
+- `tests/test_v1532_proxy_kernel_state.py` 扩到 **14/14**，新增两条：
+  `test_recover_does_not_clobber_inprocess_ports`、`test_stop_resets_ports`
+- **已确认这两条能抓住旧行为**：临时回退 `src/proxy_kernel.py` → **12/14**（两条 FAIL），
+  恢复后 **14/14** —— 不是摆设断言
+- 全套回归：test_v150 ✓ · test_v151 ✓ · test_v1528 15/15 · test_v1529 23/23
+  · test_v1530 20/20 · test_v1531 14/14 · test_v1532 **14/14**
+
+## 📌 历史版本（更早版本）
+
 # BAZZ.AGENT v1.5.32
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
@@ -76,8 +116,6 @@ zh-CN Windows 上 `subprocess.run(text=True)` 默认按 **locale(GBK) 严格**�
 
 - 全套回归：test_v150 ✓ · test_v151 ✓ · test_v1528 **15/15** · test_v1529 **23/23**
   · test_v1530 **20/20** · test_v1531 **14/14** · test_v1532 **12/12**
-
-## 📌 历史版本（v1.5.31 及更早）
 
 # BAZZ.AGENT v1.5.31
 

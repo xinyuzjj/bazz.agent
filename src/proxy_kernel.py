@@ -44,6 +44,11 @@ _LOCK = threading.RLock()
 _proc = None
 _mixed_port = 0
 _ctrl_port = 0
+# v1.5.33：端口是「落盘恢复来的」还是「本进程 start() 刚写的」。_recover() 只清前者 ——
+# 否则并发请求（前端轮询 /api/proxies）会在 start() 的 _write_config() → Popen() 之间
+# 触发一次探活失败，把刚写好的端口清零，导致等待循环一直打 :0/version、最终报「内核启动超时」，
+# 并把 mixed_port:0 写进 state.json。
+_recovered = False
 
 # 下载进度（前端轮询）
 _dl = {"active": False, "total": 0, "done": 0, "error": "", "ready": False, "version": ""}
@@ -176,17 +181,21 @@ def _recover():
 
     这里按 state.json → config.yaml 的顺序恢复端口，再用控制面探活确认内核真在跑。
     """
-    global _mixed_port, _ctrl_port
+    global _mixed_port, _ctrl_port, _recovered
     if not _ctrl_port:
         _, mp, cp = _read_state()
         if not cp:
             mp, cp = _ports_from_config()
         _mixed_port, _ctrl_port = mp, cp
+        _recovered = True
     if _probe_ctrl(_ctrl_port):
         return True
-    # 探不通：清掉缓存，下次重新解析（内核可能换过端口）
-    _mixed_port = 0
-    _ctrl_port = 0
+    # 探不通：清掉「恢复来的」缓存，下次重新解析（内核可能换过端口）。
+    # ⚠️ 绝不能清 start() 刚写好的端口 —— 那会让本次启动必然超时（v1.5.33 修复的竞态）。
+    if _recovered:
+        _mixed_port = 0
+        _ctrl_port = 0
+        _recovered = False
     return False
 
 
@@ -256,9 +265,10 @@ def _provider_files():
 # ---------------- 配置生成 / 启停 ----------------
 
 def _write_config():
-    global _mixed_port, _ctrl_port
+    global _mixed_port, _ctrl_port, _recovered
     _mixed_port = _free_port(7899)
     _ctrl_port = _free_port(9099)
+    _recovered = False      # 端口由本进程权威写入，不再是「恢复值」
     providers = _provider_files()
     lines = [
         f"mixed-port: {_mixed_port}",
@@ -383,10 +393,15 @@ def _kill_recovered():
 
 
 def stop():
+    global _mixed_port, _ctrl_port, _recovered
     with _LOCK:
         _kill_proc()
         _kill_recovered()
         _clear_state()
+        # v1.5.33：端口随内核一起失效，必须清掉，否则 mixed_port() 会返回过期端口
+        _mixed_port = 0
+        _ctrl_port = 0
+        _recovered = False
     return {"ok": True}
 
 

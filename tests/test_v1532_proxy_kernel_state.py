@@ -18,6 +18,13 @@
   含非 ASCII 时 _readerthread 抛 UnicodeDecodeError 直接死掉，proc.stdout 变空 ——
   技能「明明跑了但没有任何输出」，排障时极具误导性。
 
+缺陷三（v1.5.33，修缺陷一时引入的竞态）—— _recover() 会清掉 start() 刚写好的端口
+  start() 里 _write_config() 已写好端口、Popen() 还没返回时，若前端轮询 /api/proxies
+  触发 status() → is_running() → _recover()，探活必然失败（内核还没起），
+  于是把刚写好的端口清零 → 等待循环一直打 http://127.0.0.1:0/version → 误报
+  「内核启动超时」，并把 mixed_port:0 写进 state.json。表现与「代理没启用」一模一样。
+  → 引入 _recovered 标记，_recover() 只清「落盘恢复来的」端口；stop() 同时归零端口。
+
 本文件离线运行：只做模块级行为测试 + 源码 AST 断言，不访问外网、不动用户数据
 （所有落盘路径都重定向到临时目录）。运行：python tests/test_v1532_proxy_kernel_state.py
 """
@@ -59,6 +66,7 @@ def _reset_kernel_state(pk, tmp: Path, *, state=None, config=None):
     pk._proc = None
     pk._mixed_port = 0
     pk._ctrl_port = 0
+    pk._recovered = False
     sp = Path(pk.STATE_PATH)
     cp = Path(pk.CONFIG_PATH)
     sp.unlink(missing_ok=True)
@@ -121,6 +129,45 @@ def test_recover_reports_dead_when_probe_fails():
 
         assert pk.is_running() is False
         assert pk.mixed_port() == 0, "探活失败后仍返回端口 → 会写出指向空端口的代理 URL"
+
+
+def test_recover_does_not_clobber_inprocess_ports():
+    """v1.5.33 竞态回归：并发 is_running() 不得清掉 start() 刚写好的端口。
+
+    触发路径：start() 内 _write_config() 已写好端口、Popen() 还没返回时，前端轮询
+    /api/proxies → status() → is_running() → _recover()。若此时探活失败就无条件清零，
+    等待循环会一直打 http://127.0.0.1:0/version，最终误报「内核启动超时」，
+    并把 mixed_port:0 写进 state.json —— 表现与「代理没启用」完全一样。"""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        pk, _ = _mods(tmp)
+        _reset_kernel_state(pk, tmp, config=CONFIG_YAML)
+        # 模拟 start() 已写入端口（_recovered=False），内核尚未就绪
+        pk._mixed_port = 7899
+        pk._ctrl_port = 9099
+        pk._probe_ctrl = lambda p: False
+
+        assert pk.is_running() is False
+        assert pk._ctrl_port == 9099, "并发 is_running() 清掉了 start() 刚写好的控制端口 → 启动必然超时"
+        assert pk._mixed_port == 7899, "并发 is_running() 清掉了 start() 刚写好的混合端口"
+
+
+def test_stop_resets_ports():
+    """停内核后端口必须归零，否则 mixed_port() 会返回过期端口。
+
+    断言看的是模块内端口缓存（不是 mixed_port()）—— 后者在 stop 后会走 _recover()
+    重新解析 config.yaml，那是正确行为，不代表残留。"""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        pk, _ = _mods(tmp)
+        _reset_kernel_state(pk, tmp, config=CONFIG_YAML)
+        pk._pid_image = lambda pid: ""      # 不触发 taskkill
+        pk._mixed_port = 7899
+        pk._ctrl_port = 9099
+        pk.stop()
+        assert pk._mixed_port == 0, f"stop() 后 _mixed_port 仍为 {pk._mixed_port}"
+        assert pk._ctrl_port == 0, f"stop() 后 _ctrl_port 仍为 {pk._ctrl_port}"
+        assert pk._recovered is False
 
 
 def test_proxy_url_uses_recovered_port():

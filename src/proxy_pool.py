@@ -99,7 +99,10 @@ def _revive_kernel_async():
         try:
             k = _kernel()
             k.ensure_running()          # 已在跑则立即返回（含被上一进程拉起的孤儿内核）
-            k.select(e.get("kernel_name") or e["name"])   # 内核重启后 selector 会回到默认，需重选
+            # v1.5.33：启动期间用户可能已在界面上换过节点 —— 重读一次，别把旧节点选回去
+            cur = active_entry() or e
+            if not cur.get("direct", True):
+                k.select(cur.get("kernel_name") or cur["name"])   # 内核重启后 selector 会回默认，需重选
             _apply_env()
         except Exception:
             pass
