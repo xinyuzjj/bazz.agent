@@ -74,9 +74,9 @@ export function SubscriptionPanel({ onUse }: { onUse?: (providerId: string) => v
                   userCode: r.user_code, verificationUri: r.verification_uri, detail: r.detail });
         beginPoll(sub.id, r.session, (r.interval ?? 3) * 1000);
       } else {
-        // 浏览器 PKCE：先起本地回调轮询，再开浏览器
+        // 浏览器 PKCE：先起本地回调轮询，再开系统默认浏览器（Electron 下裸弹窗会开应用内窗口）
         beginPoll(sub.id, r.session, 2000);
-        try { window.open(r.auth_url, "_blank"); } catch { /* 弹窗拦截时用户手动点按钮 */ }
+        api.openExternal(r.auth_url);
         setFlow({ provider: sub.id, mode: "browser", session: r.session, authUrl: r.auth_url, detail: r.detail });
       }
     } catch (e: any) {
@@ -184,13 +184,13 @@ export function SubscriptionPanel({ onUse }: { onUse?: (providerId: string) => v
                           className="btn-ghost !px-2 !py-1 text-[10.5px]">{t("sub.copy")}</button>
                 </div>
                 <div className="font-mono text-[11px] text-ink-dim mb-1">{t("sub.deviceStep2")}</div>
-                <button onClick={() => { try { window.open(flow.verificationUri, "_blank"); } catch { /* ignore */ } }}
+                <button onClick={() => api.openExternal(flow.verificationUri)}
                         className="btn-gold w-full !py-2 mt-1">{t("sub.openVerify")}</button>
               </>
             ) : (
               <>
                 <div className="font-mono text-[11px] text-ink-dim mb-2">{t("sub.browserWait")}</div>
-                <button onClick={() => { try { window.open(flow.authUrl, "_blank"); } catch { /* ignore */ } }}
+                <button onClick={() => api.openExternal(flow.authUrl)}
                         className="btn-gold w-full !py-2">{t("sub.reopenBrowser")}</button>
               </>
             )}

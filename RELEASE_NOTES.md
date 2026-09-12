@@ -1,6 +1,39 @@
-# BAZZ.AGENT v1.5.41
+# BAZZ.AGENT v1.5.42
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.42 更新要点（订阅登录授权页改开系统默认浏览器，不再弹应用内窗口）
+
+**用户实测反馈**（v1.5.41）：设置 → 订阅登录，点「连接」，弹出来的不是浏览器，
+而是一个软件内置的小窗口（Nous Portal 页面带着应用的标题栏和菜单）。
+
+### 根因
+
+订阅登录组件里三处授权链接用的是裸 `window.open()`。普通浏览器里它开新标签页；
+但在 Electron 里，渲染层 `window.open` 的默认行为是**再开一个应用内 BrowserWindow**——
+于是授权页出现在软件自己的窗口里。这不只是观感问题：
+
+- 应用内窗口没有你浏览器里的登录态（Cookie），OAuth 授权页每次都要重新登录账号；
+- 部分厂商（如 Anthropic / Copilot）的授权页在嵌入式 WebView 里会触发风控或直接拒绝；
+- PKCE 回调靠系统浏览器回连 `127.0.0.1:1455`，内置窗口授权完成后流程照样卡住。
+
+### 修复
+
+三处（PKCE 自动拉起、设备码「打开验证页」、「重新打开浏览器」按钮）全部改走
+`api.openExternal()` → preload `bazzWindow.openUrl` → 主进程 `shell.openExternal`
+→ **系统默认浏览器**。这条链路 v1.2.11 就有（设置页「打开下载页」等在用），
+只放行 `http(s)`，订阅组件此前没接上而已。
+
+### 验证
+
+- 新增护栏用例 `test_frontend_opens_system_browser_not_in_app_window`：
+  扫描 SubscriptionAuth.tsx **禁止出现裸弹窗调用**、必须走 `api.openExternal`，
+  并校验 preload `bazz:open-url` 通道与主进程 `shell.openExternal` 链路完整；
+  `tests/test_v1541_llm_auth.py` **22/22**；`tsc --noEmit` 退出码 0。
+
+---
+
+# BAZZ.AGENT v1.5.41
 
 ## 🆕 v1.5.41 更新要点（LLM 订阅 OAuth 登录：四家订阅直连，不用 API Key）
 

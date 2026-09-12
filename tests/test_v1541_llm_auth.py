@@ -383,6 +383,21 @@ def test_frontend_wiring():
     assert locales.count('"sub.title"') == 2, "i18n sub.* 需 zh/en 双语齐全"
 
 
+def test_frontend_opens_system_browser_not_in_app_window():
+    """用户实测：点「连接」弹的是软件内置浏览器窗口（Electron window.open 的默认行为）。
+    订阅组件的授权链接必须统一走 api.openExternal（→ preload bazzWindow.openUrl →
+    主进程 shell.openExternal → 系统默认浏览器），禁止裸 window.open。"""
+    comp = (ROOT / "frontend" / "src" / "components" / "SubscriptionAuth.tsx").read_text(encoding="utf-8-sig")
+    assert "window.open" not in comp, \
+        "SubscriptionAuth.tsx 仍在用裸 window.open —— Electron 下会开应用内窗口而非系统浏览器"
+    assert "api.openExternal" in comp, "订阅授权链接未走 api.openExternal"
+    # 链路完整性：preload 暴露 openUrl、主进程只放行 http(s) 并调 shell.openExternal
+    preload = (ROOT / "electron" / "preload.cjs").read_text(encoding="utf-8-sig")
+    assert "bazz:open-url" in preload, "preload.cjs 缺 bazz:open-url 通道"
+    main_cjs = (ROOT / "electron" / "main.cjs").read_text(encoding="utf-8-sig")
+    assert "shell.openExternal" in main_cjs, "main.cjs 缺 shell.openExternal"
+
+
 # ---------------- runner ----------------
 
 def main():
