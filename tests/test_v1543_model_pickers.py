@@ -56,6 +56,16 @@ def test_i18n_keys_bilingual():
     assert "backupHint" not in src, "废弃 i18n 键 settings.backupHint 未清理"
 
 
+def test_settings_save_gives_feedback():
+    """用户反馈：点「保存配置」成功后没有任何提示。save() 必须弹 toast（成功/失败都要有回馈）。"""
+    src = (ROOT / "frontend" / "src" / "views" / "SettingsView.tsx").read_text(encoding="utf-8-sig")
+    anchor = src.index("const save = async")
+    seg = src[anchor:src.index("const test = async", anchor)]
+    assert "pushToast" in seg, "保存配置成功后没有互动回馈（toast）"
+    assert '"common.saved"' in seg, "保存成功提示未用 common.saved"
+    assert "catch" in seg and '"common.opFailed"' in seg, "保存失败也没有错误提示"
+
+
 # ---------------- runner ----------------
 
 def main():

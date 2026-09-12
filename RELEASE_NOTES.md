@@ -1,6 +1,27 @@
-# BAZZ.AGENT v1.5.43
+# BAZZ.AGENT v1.5.44
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.44 更新要点（保存配置补互动回馈）
+
+**用户实测反馈**（v1.5.43）：点「保存配置」其实保存成功了，但界面毫无反应，
+不知道到底存没存上。
+
+### 修复
+
+设置页 `save()` 补上 toast 回馈：
+
+- **成功**：右上角弹「✅ 已保存 · 保存配置 · <当前主模型名>」；
+- **失败**：弹「操作失败」+ 真实错误详情（原来异常会静默吞掉）。
+
+### 验证
+
+- 回归护栏 `tests/test_v1543_model_pickers.py` 扩到 **5/5**（save() 必须弹 toast，
+  成功用 `common.saved`、失败用 `common.opFailed`）；`tsc --noEmit` 0、`vite build` 成功。
+
+---
+
+# BAZZ.AGENT v1.5.43
 
 ## 🆕 v1.5.43 更新要点（模型选择三处改造：对话框只显已选模型 · 全部改下拉）
 

@@ -1364,6 +1364,7 @@ export const zh: Dict = {
 export const en: Dict = {
   // ===== Common =====
   "common.opFailed": "Operation failed",
+  "common.saved": "Saved",
   "common.copyFail": "Copy failed",
 
   // ===== Top navigation (Shell NAV) — designed on top of the Chinese baseline =====

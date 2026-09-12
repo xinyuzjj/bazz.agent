@@ -14,18 +14,19 @@
 
 - **形态**：Windows 桌面端（Electron 壳）+ FastAPI Python 后端 + TS/Vite 前端；同一套代码也能纯浏览器跑
 - **定位**：币安 AI 交易终端 —— Agent 对话、行情（现货/合约/股票化代币）、交易方案卡、CEX 连接、Agentic Wallet、广场发文、Skills Hub、多 Bot 群聊、x402 支付
-- **当前版本**：**v1.5.41（LLM 订阅 OAuth 登录：GitHub Copilot / ChatGPT-Codex / Anthropic / Nous Portal 四家订阅直连，免 API Key）**；
-  `package.json` 与最新 git tag 均为 v1.5.41
+- **当前版本**：**v1.5.44（保存配置按钮补 toast 互动回馈：成功「已保存」/ 失败弹错误详情）**；
+  `package.json` 与最新 git tag 均为 v1.5.44
 - **规模**：后端 `src/` 32 个 py 模块 + `desktop_app.py`（**130 条路由** = 129 个 `@app.<method>(` + 1 个 `@app.websocket`）；前端 12 个视图 / 40 个文件；**10 个离线回归测试套件** + 1 套浏览器视觉验收（`tests/ui_preview_check.py`）
 - **工作区**：安装目录 `<安装根>/workspace`（state.db / proxies.json / 附件 / 日志 / spill / 复盘 / square_rich）；只读盘回退 `%APPDATA%\BAZZ.AGENT\workspace`
 - **预置资产**：`.agents/skills/` 官方技能包 + `.agents/bots/` 5 个 Bot 人设（default-assistant / trend-hunter / liquidity-hunter / onchain-fox / risk-sentinel）
 
 ---
 
-## 二、近期发布版本（v1.5.12 → v1.5.43）
+## 二、近期发布版本（v1.5.12 → v1.5.44）
 
 | 版本 | 核心内容 |
 |---|---|
+| **v1.5.44** | **保存配置补互动回馈（用户实测：保存成功无任何提示）**：SettingsView `save()` 原来成功/失败都静默 → 成功弹 toast「已保存 · 保存配置 · <主模型名>」（i18n `common.saved` zh/en 新增），失败弹「操作失败」+ 真实错误详情（异常不再吞掉）。**验证**：`test_v1543_model_pickers.py` 扩到 **5/5**（save 必须 toast + 键正确）；`tsc --noEmit` 0、`vite build` 成功 |
 | **v1.5.43** | **模型选择三处改造（用户实测：对话框模型选不了；「拉取模型」几百个铺成墙）**：① **对话框模型下拉只显示设置里选了的**——ChatView `loadAvailableModels` 原把全量目录塞进下拉（Nous 300+），现只合并 主模型 + 备用 fallback + aux 槽位，去重；② **设置页主模型 datalist → `<select>` 下拉**（选项=拉取目录+厂商预设+当前值，当前值不在清单保留为独立选项防丢）；③ **备用模型按钮墙 → 「下拉添加 + 已选 chip」**（chip 点 ✕ 移除、主模型 ★ 标记）；aux 三槽位同步改下拉（datalist 移除）。**验证**：新增 `tests/test_v1543_model_pickers.py` **4/4**（禁拉全量目录 / 必须 select / 禁按钮墙 / i18n 双语）；`tsc --noEmit` 0、`vite build` 成功 |
 | **v1.5.42** | **订阅登录授权页改开系统默认浏览器（用户实测：点「连接」弹的是软件内置窗口）**。根因：SubscriptionAuth.tsx 三处授权链接用裸 `window.open()`，Electron 渲染层的默认行为是**再开一个应用内 BrowserWindow**（无浏览器登录态、部分厂商授权页在 WebView 里触发风控、PKCE 回调流程卡住）→ 三处（PKCE 自动拉起 / 设备码打开验证页 / 重新打开浏览器按钮）全部改走 `api.openExternal()` → preload `bazz:open-url` → 主进程 `shell.openExternal`（v1.2.11 就有的链路，只放行 http(s)）。**验证**：`test_v1541_llm_auth.py` 扩到 **22/22**（新增护栏：订阅组件禁止裸弹窗调用 + 链路完整性校验）；`tsc --noEmit` 0 |
 | **v1.5.41** | **LLM 订阅 OAuth 登录（四家订阅直连，免 API Key）**：新增 `src/llm_auth.py` —— ① **GitHub Copilot** 设备码流（browser-in）；② **ChatGPT/Codex** PKCE 本地回环（127.0.0.1:1455）+ Responses API 适配（`/chat/completions` → SSE 流式解析，含 `message` item 正文提取）；③ **Anthropic Claude (Pro/Max)** OAuth 回环 + Messages API 适配（system 拆头、多模态 content 分块、max_tokens 默认，响应统一回 OpenAI 形状）；④ **Nous Portal** 设备码 + sk- API Key 兜底。`llm.py` 的 `_post/test_connection/stream_chat` 挂订阅路由（未登录抛带指引错误，fallback 链接住）；token 存 `llm_oauth` 敏感 key 走 state.py DPAPI 加密钩子，到期自动刷新且 **rotating refresh token 刷新后立即回存**；`desktop_app.py` 新增 `/api/llm/auth/*` 5 条路由（走既有鉴权中间件）；前端新增 `SubscriptionAuth.tsx` 订阅登录卡片（状态/账号/到期/断开重连/点「使用」直切主模型）+ api.ts 5 个接口 + i18n 双语。**验证**：`tests/test_v1541_llm_auth.py` **21/21**（PKCE URL/state、SSE 解析、rotating 回存、_post/stream 路由等）；既有套件全绿；`tsc --noEmit` 0、`vite build` 成功 |

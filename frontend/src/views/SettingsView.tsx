@@ -89,11 +89,16 @@ export function SettingsView({ settings, onSaved, onNav }: { settings: any; onSa
   };
 
   const save = async () => {
-    const merged = { ...(settings || {}), llm };
-    await api.saveSettings(merged);
-    // 保存接口只回 {ok:true}，含不了 configured 标志 → 必须回拉一次让顶栏 LLM ARMED/OFFLINE 立刻翻转
-    const fresh = await api.settings().catch(() => null);
-    if (fresh) onSaved(fresh);
+    try {
+      const merged = { ...(settings || {}), llm };
+      await api.saveSettings(merged);
+      // 保存接口只回 {ok:true}，含不了 configured 标志 → 必须回拉一次让顶栏 LLM ARMED/OFFLINE 立刻翻转
+      const fresh = await api.settings().catch(() => null);
+      if (fresh) onSaved(fresh);
+      pushToast(t("common.saved"), `${t("settings.saveCfg")} · ${llm.model || ""}`.trim(), "ok");
+    } catch (e: any) {
+      pushToast(t("common.opFailed"), String(e?.message ?? e).slice(0, 160), "bad");
+    }
   };
 
   const test = async () => {
