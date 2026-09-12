@@ -200,31 +200,37 @@ def test_source_no_longer_hardcodes_90d_low_in_invalidation():
     src = SRC_PATH.read_text(encoding="utf-8-sig")
     tree = ast.parse(src)
 
-    # _article 必须调用 _invalid_line()
-    art = next(n for n in tree.body
-               if isinstance(n, ast.FunctionDef) and n.name == "_article")
-    calls = set()
-    for sub in ast.walk(art):
-        if isinstance(sub, ast.Call):
-            f = sub.func
-            calls.add(f.id if isinstance(f, ast.Name) else getattr(f, "attr", ""))
-    assert "_invalid_line" in calls, "_article 没有走 _invalid_line()，反向剧本又散在正文里了"
-    assert "_plan_levels" in calls or "_plan" in calls, "_article 没有算点位"
+    # v1.5.40 起文章有四套风格，但事实只有一份：_facts() 统一产出方向/点位/计划/反向剧本，
+    # _article_full() 负责分发。护栏从「盯 _article」上移到「盯这三个入口」——
+    # 约束更强了：任何一种风格都不可能绕开它另算作废线。
+    names = {"_article", "_article_full", "_facts"}
+    arts = [n for n in tree.body
+            if isinstance(n, ast.FunctionDef) and n.name in names]
+    assert len(arts) == len(names), f"文章入口函数不全（缺 {sorted(names - {a.name for a in arts})}）"
+    all_calls = set()
+    for art in arts:
+        for sub in ast.walk(art):
+            if isinstance(sub, ast.Call):
+                f = sub.func
+                all_calls.add(f.id if isinstance(f, ast.Name) else getattr(f, "attr", ""))
+    assert "_invalid_line" in all_calls, "_facts/_article 没有走 _invalid_line()，反向剧本又散在正文里了"
+    assert "_plan_levels" in all_calls or "_plan" in all_calls, "_facts/_article 没有算点位"
 
-    # 旧写法 `lo*0.995` 不许再出现在 _article 里。
+    # 旧写法 `lo*0.995` 不许再出现在这些入口里。
     # ⚠️ 一律用 AST 判定 —— `ast.get_source_segment()` 会把**注释**一起带出来，
     #    而这个仓库的注释里正好写着「旧实现 `bias != "short"` …」「`lo*0.995` …」，
     #    纯文本断言必然误伤（v1.5.37 / v1.5.38 / 本版已连踩三次）。
-    for sub in ast.walk(art):
-        if isinstance(sub, ast.BinOp) and isinstance(sub.op, ast.Mult):
-            if isinstance(sub.left, ast.Name) and sub.left.id == "lo":
-                raise AssertionError("_article 里又出现 `lo * …`（90 日低点当多头的作废线）")
-        if isinstance(sub, ast.Compare) and isinstance(sub.left, ast.Name) and sub.left.id == "bias":
-            if any(isinstance(op, ast.NotEq) for op in sub.ops):
-                vals = [c.value for c in sub.comparators if isinstance(c, ast.Constant)]
-                if "short" in vals:
-                    raise AssertionError(
-                        '检测到 `bias != "short"` 判定 —— 它会把 neutral(观望) 归到多头剧本里')
+    for art in arts:
+        for sub in ast.walk(art):
+            if isinstance(sub, ast.BinOp) and isinstance(sub.op, ast.Mult):
+                if isinstance(sub.left, ast.Name) and sub.left.id == "lo":
+                    raise AssertionError(f"{art.name} 里又出现 `lo * …`（90 日低点当多头的作废线）")
+            if isinstance(sub, ast.Compare) and isinstance(sub.left, ast.Name) and sub.left.id == "bias":
+                if any(isinstance(op, ast.NotEq) for op in sub.ops):
+                    vals = [c.value for c in sub.comparators if isinstance(c, ast.Constant)]
+                    if "short" in vals:
+                        raise AssertionError(
+                            f'{art.name} 检测到 `bias != "short"` 判定 —— 它会把 neutral(观望) 归到多头剧本里')
 
     # _invalid_line 必须复用 _plan_levels 的 stop
     inv = next(n for n in tree.body

@@ -10,6 +10,8 @@ PyInstaller 已打包 PIL，不引 matplotlib，包体积零增量）
 """
 import json
 import os
+import random
+import re
 import time
 
 import workspace
@@ -603,21 +605,40 @@ def _bias(stat: dict) -> tuple:
     return bias, why, smc
 
 
+# 仓位举例口径：本金 = 保证金，杠杆决定开单名义。名义 = 本金 × 杠杆。
+_CAPITAL_U = 100          # 举例本金（U）
+_LEVERAGE = 10            # 举例杠杆
+_RISK_TARGET_U = 10       # 单笔亏损的目标上限（U）= 本金的 10%，仅用于「偏重」时的降杠杆建议
+
+
 def _size_line(price: float, stop: float, direction: str) -> str:
-    """仓位算法（举例口径：100U 本金、单笔风险 5U）。"""
+    """仓位算法（举例口径：100U 本金 = 100U 保证金，10x 杠杆 → 开单名义 1000U）。
+
+    修复记录（2026-09-12，用户实测）：旧实现从「单笔只亏 5U」反推名义（= 5 / 止损%），
+    再除以 10 得保证金，末尾还叠一句自相矛盾的提示 ——
+    同一句里同时出现「10x 占保证金 ≈ 34U」和「10x 保证金要占 31U」，且建议「降到 9x」，
+    可**降杠杆只会让保证金变大**（310/9 ≈ 34U > 31U），方向是反的。
+    现在按「本金 = 保证金，名义 = 本金 × 杠杆」的直白口径写，不再有互相打架的数字。
+    风险照样点明：按这个仓位打到止损亏多少、占本金多少；偏重时给的降杠杆建议，
+    是**按「把单笔亏损压到本金 10% 左右」反推**的杠杆（此处降杠杆会同步缩小名义，方向是对的），
+    不会再出现「止损 8% 却只建议降到 5x、照做仍亏 40%」那种没用的提示。
+    """
     dist = abs(price - stop) / price * 100
     if dist < 0.5:
         dist = 0.5
-    notional = 5 / (dist / 100)          # 单笔想亏 5U → 名义 = 5 / 止损%
-    margin10 = notional / 10
-    tip = ""
-    if margin10 > 30:
-        lv = max(2, int(10 * 30 / margin10))
-        tip = f"（10x 保证金要占 {margin10:.0f}U，太重，建议降到 {lv}x 左右）"
-        margin10 = notional / lv
+    d = dist / 100
+    notional = _CAPITAL_U * _LEVERAGE                    # 开单名义 = 本金 × 杠杆
+    loss = notional * d                                  # 打到止损的亏损
     side = "做多" if direction == "long" else "做空"
-    return (f"· 仓位算法：止损位 {_fmt(stop)}（距离 {dist:.1f}%）。100U 本金、单笔亏 5U → "
-            f"{side}名义 ≈ {notional:.0f}U，10x 占保证金 ≈ {margin10:.0f}U{tip}")
+    txt = (f"· 仓位算法：{_CAPITAL_U}U 本金 = {_CAPITAL_U}U 保证金，{_LEVERAGE}x 杠杆 → "
+           f"{side}开单名义 ≈ {notional:.0f}U；止损位 {_fmt(stop)}（距离 {dist:.1f}%），"
+           f"打止损亏 ≈ {loss:.1f}U")
+    if loss > _RISK_TARGET_U:                            # 单笔亏损超过本金 10% → 提醒
+        lv = max(1, int(_RISK_TARGET_U / (_CAPITAL_U * d)))
+        n2 = _CAPITAL_U * lv
+        txt += (f"（占本金 {loss / _CAPITAL_U * 100:.0f}%，偏重；想稳一点把杠杆降到 {lv}x，"
+                f"名义 ≈ {n2:.0f}U、亏 ≈ {n2 * d:.1f}U）")
+    return txt + "。"
 
 
 def _plan_levels(stat: dict, bias: str, smc: dict = None) -> dict:
@@ -671,7 +692,7 @@ def _plan_levels(stat: dict, bias: str, smc: dict = None) -> dict:
 
 
 def _plan(stat: dict, bias: str, smc: dict = None) -> list:
-    """仓位/点位方案（举例口径：100U 本金、单笔风险 5U）。点位基于 4h SMC：OB/OTE/摆动点。"""
+    """仓位/点位方案（举例口径：100U 本金 = 100U 保证金，10x 杠杆）。点位基于 4h SMC：OB/OTE/摆动点。"""
     lv = _plan_levels(stat, bias, smc)
     if not lv:
         return ["· 数据不足，给不出靠谱点位，宁可错过不做没把握的。"]
@@ -685,7 +706,7 @@ def _plan(stat: dict, bias: str, smc: dict = None) -> list:
                 _size_line(lv["price"], lv["stop"], "short")]
     return ["· 观望为主：多空信号打架时，不进场就是最好的仓位。",
             f"· 若非要动：向上突破 {_fmt(lv['r10_hi']*1.01)} 小仓跟多 / 跌破 {_fmt(lv['r10_lo']*0.99)} 小仓跟空，"
-            "严格止损，仓位按「单笔亏 5U ÷ 止损距离%」反推名义。"]
+            "严格止损；仓位照「本金 = 保证金、开单名义 = 本金 × 杠杆」算，方向没走出来之前别上满。"]
 
 
 # 作废线允许离现价多远。超过就该换一种说法，而不是硬写一个读者按它扛单会亏 40% 的价位。
@@ -817,8 +838,8 @@ def _human_story(stat: dict, smc: dict) -> str:
     return " ".join(p)
 
 
-def _market_story(stat: dict) -> str:
-    """衍生品 + 情绪，融成一小段叙述。"""
+def _market_bits(stat: dict) -> list:
+    """衍生品 + 情绪拆成短句列表 —— 各风格换自己的话头来拼，不再共用一句固定开场白。"""
     s = []
     if stat["market"] == "futures":
         fr = stat.get("funding_rate")
@@ -826,7 +847,7 @@ def _market_story(stat: dict) -> str:
             frc = float(fr) * 100
             mood = ("多头不拥挤" if frc < 0.05 else
                     "多头有点拥挤，随时可能插针" if frc < 0.15 else "费率很热，杠杆情绪已经极端")
-            s.append(f"合约这边，资金费率 {frc:+.4f}%，{mood}")
+            s.append(f"资金费率 {frc:+.4f}%，{mood}")
         if stat.get("oi"):
             hot = "关注度不低" if float(stat["oi"]) >= 3e8 else "不温不火"
             s.append(f"OI 大概 {_fmt_usd(stat['oi'])} USDT，{hot}")
@@ -837,10 +858,73 @@ def _market_story(stat: dict) -> str:
                 "已经过热，要留个心眼" if v >= 75 else
                 "偏恐惧，机会往往是跌出来的" if v >= 25 else "极度恐惧，情绪冰点")
         s.append(f"恐惧贪婪指数 {v}，{mood}")
+    return s
+
+
+def _market_story(stat: dict) -> str:
+    """兼容旧调用：默认话头。"""
+    s = _market_bits(stat)
     if not s:
         return ""
     head = "合约和情绪面放在一块说：" if stat["market"] == "futures" else "情绪面上："
     return head + "；".join(s) + "。"
+
+
+def _news_picks(stat: dict) -> dict:
+    """消息面事实（来自 scanner.coin_news）。取不到就返回 {}，整段自然省略。"""
+    nd = stat.get("news") or {}
+    items = [x for x in (nd.get("items") or []) if x.get("title")]
+    if not items:
+        return {}
+    bull = sum(1 for x in items if x.get("sentiment") == "bull")
+    bear = sum(1 for x in items if x.get("sentiment") == "bear")
+    # 挑两条最值得引的：先要有情绪倾向，再优先中文源（读者好读），最后要新
+    order = {"bull": 0, "bear": 1, "neutral": 2}
+    picks = sorted(items, key=lambda x: (order.get(x.get("sentiment"), 3),
+                                         0 if x.get("source") == "PANews" else 1,
+                                         -(x.get("ts") or 0)))[:2]
+    return {"count": len(items), "bull": bull, "bear": bear,
+            "neutral": len(items) - bull - bear, "picks": picks,
+            "failed": nd.get("failed") or []}
+
+
+def _news_time(x: dict) -> str:
+    ts = x.get("ts") or 0
+    if not ts:
+        return ""
+    try:
+        return time.strftime("%m-%d %H:%M", time.localtime(ts / 1000))
+    except Exception:
+        return ""
+
+
+def _news_mood(p: dict) -> str:
+    b, r = p["bull"], p["bear"]
+    if b >= 2 and b > r * 1.5:
+        return "偏暖"
+    if r >= 2 and r > b * 1.5:
+        return "偏冷"
+    return "不一边倒"
+
+
+def _news_sentence(p: dict) -> str:
+    """消息面事实句（不含风格化的话头，各风格自己加）。
+
+    v1.5.40 按用户要求精简：不输出「某源没抓到」这类实现细节，
+    也不加「消息只是背景板…」的说教尾巴 —— 消息面只陈述事实。
+    """
+    if not p:
+        return ""
+    picked = []
+    for x in p["picks"]:
+        tm = _news_time(x)
+        picked.append(f"{x.get('source', '')}{(' ' + tm) if tm else ''}「{x['title']}」")
+    s = (f"跟它相关的标题扫到 {p['count']} 条，利多 {p['bull']} / 利空 {p['bear']} / "
+         f"中性 {p['neutral']} 条，整体{_news_mood(p)}")
+    if picked:
+        s += f"；比如：{'；'.join(picked)}"
+    return s + "。"
+
 
 
 def _view_story(stat: dict, bias: str, smc: dict) -> list:
@@ -901,8 +985,17 @@ def _view_story(stat: dict, bias: str, smc: dict) -> list:
     return p
 
 
-def _article(stat: dict) -> tuple:
-    """(title, body, tags)。叙述式人话文风：SMC 定方向，点位仓位给方案，事实与推测分栏。"""
+# ---------------- 风格库：同一份事实，四种说法 ----------------
+# 用户 2026-09-12 要求「每次的风格换一换试试」。原则：**只换叙述，不换数字** ——
+# 方向、点位、仓位、反向剧本全部出自 _facts() 的同一份结果，四套风格只是换说法，
+# 避免「换个写法把止损也换了」这种事故。
+STYLES = ("review", "diary", "qa", "blunt")
+STYLE_LABELS = {"review": "冷静复盘体", "diary": "交易员日记体",
+                "qa": "自问自答体", "blunt": "直给结论体"}
+
+
+def _facts(stat: dict) -> dict:
+    """把所有事实算一遍，四套风格共用 —— 换风格绝不换数字。"""
     sym = stat["symbol"]
     base = sym[:-4] if sym.endswith("USDT") else sym
     k = stat.get("k90") or {}
@@ -911,8 +1004,86 @@ def _article(stat: dict) -> tuple:
     chg24 = stat.get("change_pct")
     if chg24 is None and stat.get("c24") and len(stat["c24"]) > 1:
         chg24 = _pct(stat["c24"][-1], stat["c24"][0])
+    chg90 = _pct(c[-1], c[0]) if len(c) > 1 else None
+    lo = min(k["lows"]) if k.get("lows") else None
+    hi = max(k["highs"]) if k.get("highs") else None
     bias, why, smc = _bias(stat)
+    return {"sym": sym, "base": base, "price": price, "chg24": chg24, "chg90": chg90,
+            "lo90": lo, "hi90": hi, "bias": bias, "reasons": why, "smc": smc,
+            "human": _human_story(stat, smc), "market_bits": _market_bits(stat),
+            "view": _view_story(stat, bias, smc), "plan": _plan(stat, bias, smc),
+            "invalid": _invalid_line(stat, bias, smc), "news": _news_picks(stat)}
 
+
+def _pick_style(style: str = None) -> str:
+    """显式指定就用指定值，否则每次随机抽一个（「换一换」）。"""
+    if style in STYLES:
+        return style
+    return random.choice(STYLES)
+
+
+def _quote(f: dict) -> str:
+    s = f"${f['base']} 现价 {_fmt(f['price'])} USDT"
+    if f["chg24"] is not None:
+        s += f"，24h {f['chg24']:+.2f}%"
+    return s + "。"
+
+
+def _footer(base: str) -> list:
+    # v1.5.40：按用户要求去掉「封面图是 90 日 K线加成交量…」那行说明 —— 多余。
+    return ["",
+            "—— BAZZ.AGENT 自动生成｜数据源：币安公开行情（4h SMC 结构 + 90d 日线/费率/OI/恐惧贪婪/公开新闻）",
+            "项目开源：https://github.com/xinyuzjj/bazz.agent （觉得有用去点个 Star）"]
+
+
+def _tags(base: str) -> list:
+    tags = ["#行情分析", "#币安广场"]
+    ch = _CHAIN_TAG.get(base)
+    if ch:
+        tags.insert(0, f"#{ch}")
+    return tags
+
+
+def _sentences(text: str) -> list:
+    """按句号拆开，给日记体用 —— 一句一行，节奏立刻就不一样。"""
+    if not text:
+        return []
+    return [s.strip() for s in re.split(r"(?<=[。！？])", text) if s.strip()]
+
+
+def _time_of_day() -> str:
+    h = time.localtime().tm_hour
+    if 5 <= h < 11:
+        return "早上"
+    if 11 <= h < 13:
+        return "中午"
+    if 13 <= h < 18:
+        return "下午"
+    return "晚上"
+
+
+def _split_view(view: list) -> dict:
+    """把「我的看法」按内容归类：结构 / 位置(OTE·OB·FVG) / 动能(MA20) / 结论。
+
+    自问自答体按这个分组来提问，直给结论体按它挑「理由」。
+    """
+    out = {"struct": [], "pos": [], "mom": [], "tail": ""}
+    if not view:
+        return out
+    body, out["tail"] = view[:-1], view[-1]
+    for x in body:
+        if "MA20" in x:
+            out["mom"].append(x)
+        elif "OB" in x or "OTE" in x or "FVG" in x:
+            out["pos"].append(x)
+        else:
+            out["struct"].append(x)
+    return out
+
+
+def _style_review(f: dict, stat: dict) -> tuple:
+    """冷静复盘体：事实 / 情绪面 / 观点 / 计划 分栏陈述（原版风格）。"""
+    base, bias, smc = f["base"], f["bias"], f["smc"]
     title = {"long": f"{base}：4 小时结构在转多，说说我的打算",
              "short": f"{base}：反弹一个比一个矮，空头还没放手",
              "neutral": f"{base}：多空信号在打架，先别急着下场"}[bias]
@@ -923,43 +1094,138 @@ def _article(stat: dict) -> tuple:
     elif smc.get("ote") == "inside" and bias == "long":
         title = f"{base}：4 小时回踩进 OTE 窗口，我盯上了"
 
-    lines = [
-        f"${base} 现价 {_fmt(price)} USDT" + (f"，24h {chg24:+.2f}%。" if chg24 is not None else "。"),
-        "",
-        _human_story(stat, smc),
-        "",
-    ]
-    mk = _market_story(stat)
-    if mk:
-        lines += [mk, ""]
-    lines.append("我的看法（4 小时 SMC 视角，技术面推测不构成建议）：")
-    for w in _view_story(stat, bias, smc):
-        lines.append(f"· {w.rstrip('。')}。")
-    lines.append("")
-    lines.append("真要动手的话，我是这么安排的（举例 100U 本金，仅演示算法）：")
-    lines += _plan(stat, bias, smc)
-    # v1.5.39：反向剧本交给 _invalid_line()，它复用 _plan_levels() 的同一个止损 ——
-    # 不再出现「止损 2,495 / 作废线 1,503」这种自相矛盾，也修掉了
-    # neutral（观望）被 `bias != "short"` 误判成多头剧本的问题。
-    lines.append(_invalid_line(stat, bias, smc))
-    lines.append("")
-    lines += ["仓位比观点重要，活着比赚钱重要。以上全是个人思路，不构成投资建议，DYOR。",
-              "",
-              "—— BAZZ.AGENT 自动生成｜数据源：币安公开行情（4h SMC 结构 + 90d 日线/费率/OI/恐惧贪婪）",
-              "项目开源：https://github.com/xinyuzjj/bazz.agent （觉得有用去点个 Star）",
-              f"封面图是 90 日 K线加成交量，文中 4h 点位可在币安 App 切 4 小时图对照，${base}"]
+    L = [_quote(f), "", f["human"], ""]
+    mb = "；".join(f["market_bits"])
+    if mb:
+        head = "合约和情绪面放在一块说：" if stat.get("market") == "futures" else "情绪面上："
+        L += [head + mb + "。", ""]
+    if f["news"]:
+        L += [_news_sentence(f["news"]), ""]
+    L.append("我的看法（4 小时 SMC 视角，技术面推测不构成建议）：")
+    L += [f"· {w.rstrip('。')}。" for w in f["view"]]
+    L += ["", "真要动手的话，我是这么安排的（举例 100U 本金、10x 杠杆，仅演示算法）："]
+    L += f["plan"]
+    L.append(f["invalid"])
+    L += ["", "仓位比观点重要，活着比赚钱重要。以上全是个人思路，不构成投资建议，DYOR。"]
+    return title, L + _footer(base)
 
-    tags = ["#行情分析", "#币安广场"]
-    ch = _CHAIN_TAG.get(base)
-    if ch:
-        tags.insert(0, f"#{ch}")
-    return title, "\n".join(lines), tags
+
+def _style_diary(f: dict, stat: dict) -> tuple:
+    """交易员日记体：第一人称、一句一行、有盯盘的时间感。"""
+    base, bias = f["base"], f["bias"]
+    title = {"long": f"{base} 我盯了大半天，还是想等那个位置",
+             "short": f"{base} 今天这波我没接，理由写在这",
+             "neutral": f"{base} 今天纯看戏，没等到想下手的点"}[bias]
+    head = f"今天{_time_of_day()}一直在看 ${base}。现价 {_fmt(f['price'])} USDT"
+    if f["chg24"] is not None:
+        head += f"，24h {f['chg24']:+.2f}%"
+    L = [head + "。", "", "盘面是这样："]
+    L += _sentences(f["human"])
+    mb = "；".join(f["market_bits"])
+    if mb:
+        L += ["", "合约和情绪那边，我扫了一眼：", mb + "。"]
+    if f["news"]:
+        L += ["", "刷新闻的时候也留意了一下：", _news_sentence(f["news"])]
+    L += ["", "我自己是这么打算的："]
+    L += f["plan"]
+    L.append(f["invalid"])
+    L += ["", "以上是我自己的盘感，不是喊单。真金白银的事，自己拿主意。"]
+    return title, L + _footer(base)
+
+
+def _style_qa(f: dict, stat: dict) -> tuple:
+    """自问自答体：把读者会问的问题一个个摆出来回答。"""
+    base, bias = f["base"], f["bias"]
+    title = {"long": f"{base} 现在还能追吗？我把该问的问了一遍",
+             "short": f"{base} 还能空吗？几个关键问题拆开说",
+             "neutral": f"{base} 该不该等？我把犹豫的点列出来"}[bias]
+    v = _split_view(f["view"])
+    L = [_quote(f), ""]
+
+    def qa(q: str, a: str):
+        L.append(q)
+        L.append(a)
+        L.append("")
+
+    struct = " ".join(v["struct"]).strip()
+    qa("方向到底偏哪边？",
+       ((struct + " " if struct else "") + v["tail"] + "。") if v["tail"] else "结构没给出方向，接着看。")
+    qa("现在这个位置，追进去划算吗？",
+       ("；".join(v["pos"]) + "。") if v["pos"] else "位置不上不下，没有特别好的进场点，等。")
+    if v["mom"]:
+        qa("短线动能配合吗？", "；".join(v["mom"]) + "。")
+    mb = "；".join(f["market_bits"])
+    qa("合约和情绪面呢？", (mb + "。") if mb else "这块今天没什么可说的，略过。")
+    if f["news"]:
+        qa("消息面在说什么？", _news_sentence(f["news"]))
+    qa("那具体怎么下手？", "（举例 100U 本金、10x 杠杆，仅演示算法）\n" + "\n".join(f["plan"]))
+    qa("什么情况算你看错了？", f["invalid"])
+    L += ["问完了。不构成投资建议，DYOR。"]
+    return title, L + _footer(base)
+
+
+def _style_blunt(f: dict, stat: dict) -> tuple:
+    """直给结论体：开头三句给判断，再补理由；短句、零铺垫。"""
+    base, bias = f["base"], f["bias"]
+    concl = {"long": "偏多，但不追现价。", "short": "偏空，等反弹挂单，不追空。",
+             "neutral": "没方向，空着等。"}[bias]
+    title = {"long": f"{base}：偏多，但别追现价",
+             "short": f"{base}：偏空，等反弹再挂",
+             "neutral": f"{base}：没方向，先空着等"}[bias]
+    L = [f"${base} {_fmt(f['price'])}"
+         + (f"（24h {f['chg24']:+.2f}%）" if f["chg24"] is not None else "") + "。",
+         "",
+         f"结论：{concl}", ""]
+    if f["chg90"] is not None and f["lo90"] is not None:
+        L += [f"背景：90 日 {f['chg90']:+.0f}%，区间 {_fmt(f['lo90'])} ~ {_fmt(f['hi90'])}。", ""]
+    v = _split_view(f["view"])
+    reasons = list(v["struct"]) + v["pos"][:1] + v["mom"][:1]
+    if reasons:
+        L.append("理由：")
+        for i, r in enumerate(reasons[:3], 1):
+            L.append(f"{i}. {r.rstrip('。')}。")
+    mb = "；".join(f["market_bits"])
+    if mb:
+        L += ["", f"盘外：{mb}。"]
+    if f["news"]:
+        L += ["", "消息：" + _news_sentence(f["news"])]
+    L += ["", "方案（举例 100U 本金、10x 杠杆，仅演示算法）："]
+    L += f["plan"]
+    L.append(f["invalid"])
+    L += ["", "不构成投资建议。"]
+    return title, L + _footer(base)
+
+
+_RENDER = {"review": _style_review, "diary": _style_diary,
+           "qa": _style_qa, "blunt": _style_blunt}
+
+
+def _article_full(stat: dict, style: str = None) -> dict:
+    """完整发文素材：title/body/tags + 命中的风格（compose 记进 meta 便于追溯）。"""
+    f = _facts(stat)
+    st = _pick_style(style)
+    title, lines = _RENDER[st](f, stat)
+    return {"title": title, "body": "\n".join(lines), "tags": _tags(f["base"]),
+            "style": st, "style_label": STYLE_LABELS[st]}
+
+
+def _article(stat: dict, style: str = None) -> tuple:
+    """(title, body, tags)。SMC 定方向，点位仓位给方案；风格可指定，不指定则随机轮换。
+
+    事实与数字由 _facts() 统一产出，四种风格只是换说法 —— v1.5.39 那条
+    「反向剧本必须复用 _plan_levels() 的同一个止损」的约束在所有风格下都成立。
+    """
+    a = _article_full(stat, style)
+    return a["title"], a["body"], a["tags"]
 
 
 # ---------------- 入口 ----------------
 
-def compose(symbol: str, market: str = "futures") -> dict:
-    """合成富媒体发文素材，返回 {ok, dir, title_file, text_file, cover, extra_chart, stats, tags}。"""
+def compose(symbol: str, market: str = "futures", style: str = None) -> dict:
+    """合成富媒体发文素材，返回 {ok, dir, title_file, text_file, cover, extra_chart, stats, tags, style}。
+
+    style 不指定则四套风格随机抽一个；显式传 STYLES 里的值可锁定（回归测试用）。
+    """
     if Image is None:
         return {"ok": False, "error": "PIL 不可用，无法生成图表"}
     symbol = (symbol or "").strip().upper()
@@ -968,6 +1234,13 @@ def compose(symbol: str, market: str = "futures") -> dict:
     stat = _collect(symbol, market)
     if not (stat.get("k90") or {}).get("closes"):
         return {"ok": False, "error": f"{symbol} 行情数据不可用（90d K 线为空）"}
+
+    # 消息面：取不到就整段省略，绝不因为它让文章生成失败
+    try:
+        from scanner import coin_news
+        stat["news"] = coin_news(symbol, n=10)
+    except Exception:
+        stat["news"] = {}
 
     ts = time.strftime("%Y%m%d_%H%M%S")
     out_dir = os.path.join(OUT_ROOT, f"{symbol}_{ts}")
@@ -979,7 +1252,8 @@ def compose(symbol: str, market: str = "futures") -> dict:
     except Exception:
         extra = ""
 
-    title, body, tags = _article(stat)
+    art = _article_full(stat, style)
+    title, body, tags = art["title"], art["body"], art["tags"]
     title_f = os.path.join(out_dir, "title.txt")
     text_f = os.path.join(out_dir, "article.txt")
     meta_f = os.path.join(out_dir, "meta.json")
@@ -999,7 +1273,11 @@ def compose(symbol: str, market: str = "futures") -> dict:
     }
     with open(meta_f, "w", encoding="utf-8") as f:
         json.dump({"symbol": symbol, "market": market, "ts": int(time.time()),
-                   "stats": stats, "tags": tags, "title": title}, f, ensure_ascii=False, indent=1)
+                   "stats": stats, "tags": tags, "title": title,
+                   "style": art["style"], "style_label": art["style_label"],
+                   "news_count": (stat.get("news") or {}).get("count", 0)},
+                  f, ensure_ascii=False, indent=1)
 
     return {"ok": True, "dir": out_dir, "title_file": title_f, "text_file": text_f,
-            "cover": cover, "extra_chart": extra, "tags": tags, "stats": stats}
+            "cover": cover, "extra_chart": extra, "tags": tags, "stats": stats,
+            "style": art["style"], "style_label": art["style_label"]}

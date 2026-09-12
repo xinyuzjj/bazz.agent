@@ -1,7 +1,7 @@
 ﻿{
   "name": "agent-os-alpha-scout",
   "private": true,
-  "version": "1.5.39",
+  "version": "1.5.40",
   "description": "Agent OS Alpha Scout - Hermes-style Binance desktop agent (Electron + React, FastAPI backend)",
   "scripts": {
     "install:fe": "cd frontend && npm install",

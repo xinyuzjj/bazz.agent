@@ -6,6 +6,7 @@
 """
 import os
 import json
+import re
 import time
 import threading
 import urllib.parse
@@ -1814,6 +1815,168 @@ def fear_greed_index() -> dict:
     except Exception as e:
         return {"value": None, "classification": None, "history": [], "error": str(e)}
 
+
+
+# ---------------- 币种消息面（零 Key，中文快讯 + 英文头条） ----------------
+# 与 news-sentiment 技能同一批公开源，但用 Python 直接抓：这样广场文章合成不必依赖
+# Node 运行时，也不会走 run_skill() 里那条「网络失败自动切代理重试」的路径
+# （用户明确不喜欢应用偷偷连代理）。
+_NEWS_TTL = 300.0            # 5 分钟内存缓存，避免同一轮生成里重复打三个源
+_news_cache = {"ts": 0.0, "items": [], "failed": []}
+
+_NEWS_SOURCES = (
+    ("PANews", "https://api.panewslab.com/newsweb/v1/flashlist?language=cn"),
+    ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/?outputType=xml"),
+    ("Cointelegraph", "https://cointelegraph.com/rss"),
+)
+
+# 币 → 常见项目名/别名。中文按子串、英文按词边界匹配（不区分大小写）。
+COIN_ALIASES = {
+    "BTC": ["bitcoin", "比特币"], "ETH": ["ethereum", "以太坊", "以太"], "SOL": ["solana"],
+    "BNB": ["binance coin", "币安币"], "XRP": ["ripple", "瑞波"],
+    "DOGE": ["dogecoin", "狗狗币", "狗狗"], "ADA": ["cardano"], "LINK": ["chainlink"],
+    "TON": ["toncoin", "ton 链"], "TRX": ["tron", "波场"], "WLD": ["worldcoin"],
+    "RAY": ["raydium"], "AVAX": ["avalanche"], "DOT": ["polkadot", "波卡"],
+    "SUI": ["sui network", "sui 链"], "PEPE": ["pepe"], "ARB": ["arbitrum"],
+    "OP": ["optimism"], "APT": ["aptos"], "NEAR": ["near protocol"],
+    "ENA": ["ethena"], "HYPE": ["hyperliquid"], "TAO": ["bittensor"],
+    "JUP": ["jupiter"], "WIF": ["dogwifhat"], "BONK": ["bonk"], "SEI": ["sei network"],
+    "INJ": ["injective"], "FIL": ["filecoin"], "ATOM": ["cosmos"], "LTC": ["litecoin", "莱特币"],
+}
+
+_NEWS_BULL = ["涨", "突破", "利好", "看多", "买入", "增持", "上涨", "新高", "反弹", "飙升",
+              "流入", "获批", "上线", "合作", "回购", "销毁", "解锁增持",
+              "bullish", "surge", "rally", "gain", "soar", "jump", "record", "inflow",
+              "adopt", "approve", "upgrade", "breakout", "all-time", "partnership", "buyback"]
+_NEWS_BEAR = ["跌", "暴跌", "崩", "利空", "看空", "卖出", "抛售", "清算", "爆仓", "下跌",
+              "新低", "流出", "被查", "盗", "诉讼", "下架", "黑客", "漏洞", "抛压",
+              "bearish", "plunge", "crash", "dump", "liquidat", "hack", "exploit",
+              "lawsuit", "ban", "sell-off", "selloff", "outflow", "decline", "fraud", "delist"]
+
+
+def _news_hit(text: str, token: str) -> bool:
+    """中文按子串，英文按词首边界（避免 op 命中 operation 这类误伤由调用方处理）。"""
+    if not token:
+        return False
+    if any("\u4e00" <= ch <= "\u9fff" for ch in token):
+        return token in text
+    return re.search(r"\b" + re.escape(token.lower()), text.lower()) is not None
+
+
+def _news_match(title: str, sym: str) -> bool:
+    """标题是否在说这个币。"""
+    for alias in COIN_ALIASES.get(sym, []):
+        if _news_hit(title, alias):
+            return True
+    if len(sym) >= 3:
+        return _news_hit(title, sym)
+    # 1~2 个字母的 ticker（OP/SUI 之外还有 AR 等）只认原文里独立的大写出现，
+    # 否则「op」会命中 operation/option 等一大片无关标题。
+    return re.search(r"(?<![A-Za-z0-9])" + re.escape(sym) + r"(?![A-Za-z0-9])", title) is not None
+
+
+def _news_sentiment(title: str) -> str:
+    b = sum(1 for w in _NEWS_BULL if _news_hit(title, w))
+    r = sum(1 for w in _NEWS_BEAR if _news_hit(title, w))
+    return "bull" if b > r else "bear" if r > b else "neutral"
+
+
+def _news_ms(v) -> int:
+    """时间戳归一化到毫秒（源有 ms / s / ISO / RFC822 四种写法）。"""
+    try:
+        n = float(v)
+        if n <= 0:
+            return 0
+        return int(n * 1000) if n < 1e11 else int(n)
+    except (TypeError, ValueError):
+        s = str(v or "").strip()
+        if not s:
+            return 0
+        try:
+            from email.utils import parsedate_to_datetime
+            return int(parsedate_to_datetime(s).timestamp() * 1000)
+        except Exception:
+            pass
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ"):
+            try:
+                return int(time.mktime(time.strptime(s[:19], fmt)) * 1000)
+            except Exception:
+                continue
+        return 0
+
+
+def _news_panews() -> list:
+    r = _session.get(_NEWS_SOURCES[0][1], timeout=12)
+    r.raise_for_status()
+    d = r.json() or {}
+    data = d.get("data")
+    lst = data.get("list") or data.get("List") if isinstance(data, dict) else (data if isinstance(data, list) else [])
+    out = []
+    for x in (lst or [])[:60]:
+        if not isinstance(x, dict):
+            continue
+        t = re.sub(r"<[^>]+>", "", str(x.get("title") or x.get("Content") or x.get("content") or "")).strip()
+        if t:
+            out.append({"title": t[:160], "source": "PANews",
+                        "ts": _news_ms(x.get("time") or x.get("PublishTime") or x.get("publish_time"))})
+    return out
+
+
+def _news_rss(url: str, source: str) -> list:
+    r = _session.get(url, timeout=12)
+    r.raise_for_status()
+    out = []
+    for m in re.finditer(r"<item>([\s\S]*?)</item>", r.text, re.I):
+        body = m.group(1)
+
+        def pick(tag: str) -> str:
+            mm = re.search(r"<" + tag + r"[^>]*>([\s\S]*?)</" + tag + r">", body, re.I)
+            return mm.group(1).strip() if mm else ""
+
+        t = re.sub(r"<[^>]+>", "", pick("title").replace("<![CDATA[", "").replace("]]>", "")).strip()
+        if t:
+            out.append({"title": t[:160], "source": source,
+                        "ts": _news_ms(pick("pubDate") or pick("published"))})
+    return out
+
+
+def _news_fetch_all() -> dict:
+    """三源混合去重（新→旧）。某源失败只记 failed，不当致命错误。"""
+    items, failed = [], []
+    for name, url in _NEWS_SOURCES:
+        try:
+            items += _news_panews() if name == "PANews" else _news_rss(url, name)
+        except Exception:
+            failed.append(name)
+    seen, uniq = set(), []
+    for x in sorted(items, key=lambda v: v.get("ts") or 0, reverse=True):
+        k = x["title"].lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        x["sentiment"] = _news_sentiment(x["title"])
+        uniq.append(x)
+    return {"items": uniq[:80], "failed": failed}
+
+
+def coin_news(symbol: str, n: int = 10, force: bool = False) -> dict:
+    """某币相关新闻（标题/来源/时间/情绪）。全源失败返回空 items + failed，不抛异常。
+
+    返回 {symbol, count, items:[{title,source,ts,sentiment}], failed:[源名]}。
+    情绪为关键词启发式，只做消息面参考 —— 与 K 线/费率冲突时以后者为准。
+    """
+    sym = (symbol or "").strip().upper()
+    if sym.endswith("USDT"):
+        sym = sym[:-4]
+    if not sym:
+        return {"symbol": "", "count": 0, "items": [], "failed": []}
+    now = time.time()
+    if force or not _news_cache["items"] or now - _news_cache["ts"] > _NEWS_TTL:
+        got = _news_fetch_all()
+        _news_cache.update({"ts": now, "items": got["items"], "failed": got["failed"]})
+    hit = [x for x in _news_cache["items"] if _news_match(x["title"], sym)]
+    return {"symbol": sym, "count": len(hit), "items": hit[:max(1, int(n))],
+            "failed": list(_news_cache["failed"])}
 
 
 if __name__ == "__main__":
