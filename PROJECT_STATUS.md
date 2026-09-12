@@ -1,4 +1,4 @@
-# BAZZ.AGENT 项目状态交接（v1.5.43 模型选择三处改造 · 2026-09-13 更新）
+# BAZZ.AGENT 项目状态交接（v1.5.45 rich 稿 K 线降级保出稿 · 2026-09-13 更新）
 
 > 用途：开新任务/新会话前快速恢复上下文。读完即可继续开发，无需翻旧对话。
 > 仓库：`github.com/xinyuzjj/bazz.agent`
@@ -14,18 +14,19 @@
 
 - **形态**：Windows 桌面端（Electron 壳）+ FastAPI Python 后端 + TS/Vite 前端；同一套代码也能纯浏览器跑
 - **定位**：币安 AI 交易终端 —— Agent 对话、行情（现货/合约/股票化代币）、交易方案卡、CEX 连接、Agentic Wallet、广场发文、Skills Hub、多 Bot 群聊、x402 支付
-- **当前版本**：**v1.5.44（保存配置按钮补 toast 互动回馈：成功「已保存」/ 失败弹错误详情）**；
-  `package.json` 与最新 git tag 均为 v1.5.44
+- **当前版本**：**v1.5.45（rich 稿 90 日 K 线不足 → 4h×540 → 1h×720 降级保出稿，文案跟随实际周期）**；
+  `package.json` 与最新 git tag 均为 v1.5.45
 - **规模**：后端 `src/` 32 个 py 模块 + `desktop_app.py`（**130 条路由** = 129 个 `@app.<method>(` + 1 个 `@app.websocket`）；前端 12 个视图 / 40 个文件；**10 个离线回归测试套件** + 1 套浏览器视觉验收（`tests/ui_preview_check.py`）
 - **工作区**：安装目录 `<安装根>/workspace`（state.db / proxies.json / 附件 / 日志 / spill / 复盘 / square_rich）；只读盘回退 `%APPDATA%\BAZZ.AGENT\workspace`
 - **预置资产**：`.agents/skills/` 官方技能包 + `.agents/bots/` 5 个 Bot 人设（default-assistant / trend-hunter / liquidity-hunter / onchain-fox / risk-sentinel）
 
 ---
 
-## 二、近期发布版本（v1.5.12 → v1.5.44）
+## 二、近期发布版本（v1.5.12 → v1.5.45）
 
 | 版本 | 核心内容 |
 |---|---|
+| **v1.5.45** | **rich 稿 90 日 K 线不足 → 4h/1h 降级保出稿（用户实测出图失败）**：`_collect` 新增可用性检测（`_k_usable`：≥5 根且非占位平线），1d×90 不可用 → **4h×540（≈90日）→ 1h×720（≈30日）** 逐级兜底；降级后 `k90_label` 记录实际周期，封面「90d 高/低」「90日区间位置」chips、文章走势段、页脚全部跟随（不再写死 90日）；三档全空（刚上线/已下架）才返回带指引错误。**数字照实计算只换周期，绝不伪造数据**。**验证**：新增 `tests/test_v1545_kline_fallback.py` **8/8**（桩 scanner 验证降级链/平线触发/全空不伪造/文案跟随护栏）；styles 14/14、sizing 12/12、invalidation 10/10 全绿；`py_compile` 0。**踩坑**：同消息批量并行 Edit 同一文件会互相覆盖（本版 square_rich 三处、PROJECT_STATUS 标题两次被吞）——**同一文件的多处修改必须逐条顺序 Edit** |
 | **v1.5.44** | **保存配置补互动回馈（用户实测：保存成功无任何提示）**：SettingsView `save()` 原来成功/失败都静默 → 成功弹 toast「已保存 · 保存配置 · <主模型名>」（i18n `common.saved` zh/en 新增），失败弹「操作失败」+ 真实错误详情（异常不再吞掉）。**验证**：`test_v1543_model_pickers.py` 扩到 **5/5**（save 必须 toast + 键正确）；`tsc --noEmit` 0、`vite build` 成功 |
 | **v1.5.43** | **模型选择三处改造（用户实测：对话框模型选不了；「拉取模型」几百个铺成墙）**：① **对话框模型下拉只显示设置里选了的**——ChatView `loadAvailableModels` 原把全量目录塞进下拉（Nous 300+），现只合并 主模型 + 备用 fallback + aux 槽位，去重；② **设置页主模型 datalist → `<select>` 下拉**（选项=拉取目录+厂商预设+当前值，当前值不在清单保留为独立选项防丢）；③ **备用模型按钮墙 → 「下拉添加 + 已选 chip」**（chip 点 ✕ 移除、主模型 ★ 标记）；aux 三槽位同步改下拉（datalist 移除）。**验证**：新增 `tests/test_v1543_model_pickers.py` **4/4**（禁拉全量目录 / 必须 select / 禁按钮墙 / i18n 双语）；`tsc --noEmit` 0、`vite build` 成功 |
 | **v1.5.42** | **订阅登录授权页改开系统默认浏览器（用户实测：点「连接」弹的是软件内置窗口）**。根因：SubscriptionAuth.tsx 三处授权链接用裸 `window.open()`，Electron 渲染层的默认行为是**再开一个应用内 BrowserWindow**（无浏览器登录态、部分厂商授权页在 WebView 里触发风控、PKCE 回调流程卡住）→ 三处（PKCE 自动拉起 / 设备码打开验证页 / 重新打开浏览器按钮）全部改走 `api.openExternal()` → preload `bazz:open-url` → 主进程 `shell.openExternal`（v1.2.11 就有的链路，只放行 http(s)）。**验证**：`test_v1541_llm_auth.py` 扩到 **22/22**（新增护栏：订阅组件禁止裸弹窗调用 + 链路完整性校验）；`tsc --noEmit` 0 |

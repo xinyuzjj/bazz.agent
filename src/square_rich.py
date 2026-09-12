@@ -106,6 +106,12 @@ def _flat(k: dict) -> bool:
     return len(c) >= 2 and max(c) == min(c)
 
 
+def _k_usable(k: dict) -> bool:
+    """出图最低要求：≥5 根且非占位平线。"""
+    c = (k or {}).get("closes") or []
+    return len(c) >= 5 and not _flat(k)
+
+
 def _collect(sym: str, market: str) -> dict:
     from scanner import klines_ohlcv, klines_closes, fear_greed_index, futures_open_interest
     d = {"symbol": sym, "market": market}
@@ -119,6 +125,19 @@ def _collect(sym: str, market: str) -> dict:
         d["c24"] = klines_closes(sym, "1h", 25, "spot")
         d["market"] = "spot"
         d["fallback"] = "futures_flat→spot"
+    # v1.5.45（用户实测：90 日 K 线数据不足出稿失败）：1d 不可用（新上市不足 90d /
+    # 上游失败 / 平线占位）→ 4h×540（≈90 日）→ 1h×720（≈30 日），保证出稿；
+    # 降级后 k90_label 标注实际周期，图上的「90d 高/低」「90日区间」等文案跟着换。
+    d["k90_label"] = "90日"
+    if not _k_usable(d["k90"]):
+        for itv, n, label in (("4h", 540, "近90日·4h"), ("1h", 720, "近30日·1h")):
+            kk = klines_ohlcv(sym, itv, n, d["market"])
+            if _k_usable(kk):
+                d["k90"] = kk
+                d["k90_label"] = label
+                d.setdefault("fallback", "")
+                d["fallback"] = (d["fallback"] + "+" if d.get("fallback") else "") + f"k90={itv}×{n}"
+                break
     try:
         fng = fear_greed_index()
         d["fng"] = {"value": fng.get("value"), "classification": fng.get("classification")}
@@ -202,7 +221,9 @@ def draw_cover(stat: dict, path: str) -> str:
     o, h, l, c, v, t = (k.get("opens") or [], k.get("highs") or [], k.get("lows") or [],
                         k.get("closes") or [], k.get("vols") or [], k.get("times") or [])
     if len(c) < 5:
-        raise RuntimeError("90 日 K 线数据不足，无法出图")
+        raise RuntimeError("K 线数据不足（1d/4h/1h 均无可用数据），无法出图")
+    # v1.5.45：降级周期时图上「90d 高/低」「90日区间」等文案跟随实际周期
+    lbl = stat.get("k90_label") or "90日"
     img = Image.new("RGB", (W, H), BG)
     dr = ImageDraw.Draw(img)
 
@@ -233,10 +254,10 @@ def draw_cover(stat: dict, path: str) -> str:
         gp = hi_p - (hi_p - lo_p) * i / 4
         dr.text((x1 + 10, gy - 8), _fmt(gp), font=_font(13), fill=SUB)
 
-    # 90d 高/低虚线标注
+    # 区间高/低虚线标注（降级周期时标注实际覆盖范围）
     imax, imin = h.index(max(h)), l.index(min(l))
-    for idx, val, col, lab in ((imax, h[imax], UP, f"90d 高 {_fmt(h[imax])}"),
-                               (imin, l[imin], DOWN, f"90d 低 {_fmt(l[imin])}")):
+    for idx, val, col, lab in ((imax, h[imax], UP, f"{lbl} 高 {_fmt(h[imax])}"),
+                               (imin, l[imin], DOWN, f"{lbl} 低 {_fmt(l[imin])}")):
         cx = x0 + step * idx + step / 2
         dr.line([x0, py(val), x1, py(val)], fill=col, width=1)
         lw = dr.textlength(lab, font=_font(13))
@@ -280,8 +301,8 @@ def draw_cover(stat: dict, path: str) -> str:
     # —— 底部信息条 —— #
     chips = []
     pos = (price - lo) / (hi - lo) * 100 if hi > lo else 50
-    chips.append(("90日区间位置", f"{pos:.0f}%", ACCENT if pos > 80 else TXT))
-    chips.append(("90日区间", f"{_fmt(lo)} ~ {_fmt(hi)}", TXT))
+    chips.append((f"{lbl}区间位置", f"{pos:.0f}%", ACCENT if pos > 80 else TXT))
+    chips.append((f"{lbl}区间", f"{_fmt(lo)} ~ {_fmt(hi)}", TXT))
     fr = stat.get("funding_rate")
     if fr is not None:
         frc = float(fr) * 100
@@ -811,12 +832,13 @@ def _human_story(stat: dict, smc: dict) -> str:
         lo_t = _xaxis_label(k["times"][k["lows"].index(lo)])
         hi_t = _xaxis_label(k["times"][k["highs"].index(hi)])
     p = []
+    span = stat.get("k90_label") or "90 日"   # 降级周期时如实说「近90日·4h」「近30日·1h」
     if chg90 <= -15:
-        p.append(f"{_fmt_lo_hi(hi_t)}冲到 {_fmt(hi)} 之后就没像样地反攻过，90 日下来 {chg90:.0f}%，低点 {_fmt(lo)} 落在 {lo_t or '区间后段'}。")
+        p.append(f"{_fmt_lo_hi(hi_t)}冲到 {_fmt(hi)} 之后就没像样地反攻过，{span}下来 {chg90:.0f}%，低点 {_fmt(lo)} 落在 {lo_t or '区间后段'}。")
     elif chg90 >= 30:
-        p.append(f"这 90 日整体是往上走的，涨了 {chg90:.0f}%，{_fmt_lo_hi(hi_t)}触到 {_fmt(hi)}，低点 {_fmt(lo)} 是 {lo_t or '早段'}的事。")
+        p.append(f"这{span}整体是往上走的，涨了 {chg90:.0f}%，{_fmt_lo_hi(hi_t)}触到 {_fmt(hi)}，低点 {_fmt(lo)} 是 {lo_t or '早段'}的事。")
     else:
-        p.append(f"这 90 日基本就是 {_fmt(lo)} 到 {_fmt(hi)} 之间来回，目前 {chg90:+.0f}%，谈不上单边。")
+        p.append(f"这{span}基本就是 {_fmt(lo)} 到 {_fmt(hi)} 之间来回，目前 {chg90:+.0f}%，谈不上单边。")
     if smc:
         if smc.get("structure") == "bearish":
             p.append("拉 4 小时结构看，它一直处在「反弹一个比一个矮、下探一个比一个深」的节奏里，筹码在往下换手。")
@@ -1031,8 +1053,9 @@ def _quote(f: dict) -> str:
 
 def _footer(base: str) -> list:
     # v1.5.40：按用户要求去掉「封面图是 90 日 K线加成交量…」那行说明 —— 多余。
+    # v1.5.45：K 线周期可能降级（1d→4h→1h），页脚不再写死「90d 日线」。
     return ["",
-            "—— BAZZ.AGENT 自动生成｜数据源：币安公开行情（4h SMC 结构 + 90d 日线/费率/OI/恐惧贪婪/公开新闻）",
+            "—— BAZZ.AGENT 自动生成｜数据源：币安公开行情（4h SMC 结构 + K线/费率/OI/恐惧贪婪/公开新闻）",
             "项目开源：https://github.com/xinyuzjj/bazz.agent （觉得有用去点个 Star）"]
 
 
@@ -1233,7 +1256,7 @@ def compose(symbol: str, market: str = "futures", style: str = None) -> dict:
         return {"ok": False, "error": "缺少 SYMBOL"}
     stat = _collect(symbol, market)
     if not (stat.get("k90") or {}).get("closes"):
-        return {"ok": False, "error": f"{symbol} 行情数据不可用（90d K 线为空）"}
+        return {"ok": False, "error": f"{symbol} 行情数据不可用（1d/4h/1h K 线均无数据，该币可能刚上线或已下架）"}
 
     # 消息面：取不到就整段省略，绝不因为它让文章生成失败
     try:
