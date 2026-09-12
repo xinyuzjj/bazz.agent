@@ -49,10 +49,6 @@ _ctrl_port = 0
 # 触发一次探活失败，把刚写好的端口清零，导致等待循环一直打 :0/version、最终报「内核启动超时」，
 # 并把 mixed_port:0 写进 state.json。
 _recovered = False
-# v1.5.37：启动中标志 + 内核日志句柄。等待循环移到 _LOCK 之外后，
-# 「正在启动」这个状态必须能从锁外读到，否则界面只能干等。
-_starting = False
-_logf = None
 
 # 下载进度（前端轮询）
 _dl = {"active": False, "total": 0, "done": 0, "error": "", "ready": False, "version": ""}
@@ -237,17 +233,9 @@ def version():
 
 def status():
     running = is_running()      # 会顺带恢复端口，因此下面读 _mixed_port 是安全的
-    with _LOCK:
-        starting = _starting
-    return {"installed": is_installed(), "running": running, "starting": starting,
-            # 启动中去 spawn mihomo.exe -v 只会再拖 8 秒 —— 界面此刻要的是「在启动」
-            "version": "" if starting else version(),
-            "mixed_port": _mixed_port if running else 0,
-            "download": dict(_dl),
-            # v1.5.37：把 provider 里的真实节点数暴露出来。旧实现下 provider 文件可以是
-            # 一整份配置，内核加载后一个节点都拿不到，界面上却一切「正常」。
-            "providers": provider_summary()}
-
+    return {"installed": is_installed(), "running": running,
+            "version": version(), "mixed_port": _mixed_port if running else 0,
+            "download": dict(_dl)}
 
 
 # ---------------- 订阅 provider ----------------
@@ -256,99 +244,16 @@ def _provider_id(sub_url):
     return "sub_" + hashlib.md5(sub_url.encode("utf-8")).hexdigest()[:10]
 
 
-# v1.5.37：订阅站返回的常常是**一整份 clash 配置**（mixed-port / dns / proxy-groups / rules
-# 全都带），而 mihomo 的 `proxy-providers: {type: file}` 只认 `proxies:` 这一段。
-# 旧实现只要原文「包含 proxies:」就把整份塞过去 —— 实测现场
-# `<安装根>/.system/kernel/providers/sub_*.yaml` 就是一份完整配置，内核加载 provider 失败、
-# BAZZ 组只剩 DIRECT，于是「节点全在列表里、测速却全凉、流量也没有真的走代理」。
-_TOP_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):")
-
-
-def _extract_proxies_block(raw: str):
-    """从订阅原文里只抽出顶层 `proxies:` 段，返回该段正文（不含 `proxies:` 行）或 None。
-
-    兼容两种写法：块式（`proxies:` 换行后跟缩进的 `- {...}`）与流式（`proxies: [{...}]`）。
-    """
-    text = (raw or "").replace("\r\n", "\n").replace("\r", "\n")
-    lines = text.split("\n")
-    start = None
-    for i, l in enumerate(lines):
-        if re.match(r"^proxies:\s*(.*)$", l):
-            start = i
-            break
-    if start is None:
-        return None
-    inline = lines[start].split(":", 1)[1].strip()
-    if inline:
-        # 流式写法：proxies: [ {...}, {...} ]
-        return inline if inline.startswith("[") else None
-    body = []
-    for l in lines[start + 1:]:
-        if not l.strip():
-            body.append("")
-            continue
-        if _TOP_KEY_RE.match(l):        # 回到顶层键 → 段结束
-            break
-        if not l[:1].isspace():         # 非缩进且非顶层键 → 段结束
-            break
-        body.append(l)
-    while body and not body[-1].strip():
-        body.pop()
-    return "\n".join(body) if any(b.strip() for b in body) else None
-
-
-def _count_proxy_items(block: str) -> int:
-    """数 provider 段里到底有几个节点（流式按顶层 {} 配对计，块式按 `- ` 行计）。"""
-    if not block:
-        return 0
-    if block.lstrip().startswith("["):
-        depth = n = 0
-        for ch in block:
-            if ch == "{":
-                if depth == 0:
-                    n += 1
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-        return n
-    return sum(1 for l in block.split("\n") if re.match(r"^\s*-\s*\S", l))
-
-
 def save_provider(sub_url, raw):
-    """把订阅里的 proxies 段落盘给内核做 file provider。
-
-    v1.5.37：只写 `proxies:` 段 —— 整份配置会让 mihomo 的 file provider 解析失败。
-    返回 {ok, path?, count?, error?}，调用方可以把失败原因 surface 到界面上。
-    """
+    """把订阅原始内容落盘给内核做 file provider。仅 Clash YAML 格式可直接用。"""
     os.makedirs(PROVIDERS_DIR, exist_ok=True)
-    block = _extract_proxies_block(raw)
-    if not block:
-        return {"ok": False, "error": "订阅内容里没有可用的 proxies 段（内核 provider 需要 Clash YAML）。"}
-    count = _count_proxy_items(block)
-    if count <= 0:
-        return {"ok": False, "error": "订阅的 proxies 段里没有任何节点，已跳过（不覆盖已有的可用 provider）。"}
+    if "proxies:" not in raw:
+        return  # base64/URI 列表格式内核 file provider 不直接吃，跳过
     path = os.path.join(PROVIDERS_DIR, _provider_id(sub_url) + ".yaml")
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        f.write("proxies:\n" + block.rstrip() + "\n")
+        f.write(raw)
     os.replace(tmp, path)
-    return {"ok": True, "path": path, "count": count}
-
-
-def provider_summary():
-    """诊断用：每个 provider 文件里的节点数（0 表示内核加载这个 provider 只会拿到空气）。"""
-    out = []
-    for f in _provider_files():
-        try:
-            with open(os.path.join(PROVIDERS_DIR, f), "r", encoding="utf-8") as fh:
-                txt = fh.read()
-        except OSError:
-            out.append({"file": f, "count": -1})
-            continue
-        block = _extract_proxies_block(txt)
-        out.append({"file": f, "count": _count_proxy_items(block or "")})
-    return out
-
 
 
 def _provider_files():
@@ -406,7 +311,7 @@ def _write_config():
 
 
 def _kill_proc():
-    global _proc, _logf
+    global _proc
     if _proc is None:
         return
     try:
@@ -419,75 +324,42 @@ def _kill_proc():
             _proc.kill()
         except Exception:
             pass
-    finally:
-        # v1.5.37：日志句柄要收干净，否则反复启停会攒下一堆打开的 fd
-        if _logf is not None:
-            try:
-                _logf.close()
-            except Exception:
-                pass
-            _logf = None
     _proc = None
 
 
 def start():
-    """拉起内核。已在跑则直接返回。
-
-    v1.5.37（真实卡死事故）：旧实现在 `with _LOCK:` 内部做完 40×0.5s 的控制面等待，
-    也就是**持锁最长 20 秒**。而 `_LOCK` 同时被 `list_pool()`（/api/proxies）、
-    `start_download()`（/api/proxies/kernel/download）、`stop()` 依赖 ——
-    前端那几个 15s/1.5s 轮询会一起堵在这里，用户看到的就是「点一下整个应用卡死」。
-    现在锁内只做「写配置 + Popen + 落盘」，等待循环放到锁外，并用 `_starting` 让
-    `status()` 能对外报「启动中」，界面显示进度而不是假装无响应。
-    """
-    global _proc, _starting, _logf
+    """拉起内核。已在跑则直接返回。"""
+    global _proc
     with _LOCK:
         if is_running():
             return {"ok": True, "running": True, "port": _mixed_port}
         if not is_installed():
             return {"ok": False, "error": "内核未下载，请先点「下载内核」。"}
-        if _starting:
-            # 已有一次启动正在等就绪：不要重复 Popen，让调用方轮询 status()
-            return {"ok": True, "starting": True, "port": _mixed_port}
         os.makedirs(KERNEL_DIR, exist_ok=True)
         _write_config()
-        try:
-            _logf = open(LOG_PATH, "a", encoding="utf-8")
-        except OSError as e:
-            return {"ok": False, "error": f"内核日志不可写：{e}"}
+        logf = open(LOG_PATH, "a", encoding="utf-8")
         try:
             _proc = subprocess.Popen(
                 [MIHOMO_EXE, "-d", KERNEL_DIR, "-f", CONFIG_PATH],
-                cwd=KERNEL_DIR, stdout=_logf, stderr=_logf,
+                cwd=KERNEL_DIR, stdout=logf, stderr=logf,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except Exception as e:
             return {"ok": False, "error": f"内核启动失败：{e}"}
         _write_state()      # v1.5.32：落盘 pid + 端口，供后续进程（重启/第二实例）识别
-        _starting = True
-        port = _mixed_port
-
-    # ---- 等待就绪：必须在 _LOCK 之外 ----
-    try:
+        # 等控制面就绪（最多 20s）
         for _ in range(40):
             try:
                 r = requests.get(_ctrl() + "/version", timeout=1)
                 if r.status_code == 200:
-                    return {"ok": True, "running": True, "port": port}
+                    return {"ok": True, "running": True, "port": _mixed_port}
             except Exception:
                 pass
-            with _LOCK:
-                proc = _proc
-            if proc is not None and proc.poll() is not None:
-                with _LOCK:
-                    _proc = None
+            if _proc.poll() is not None:
+                _proc = None
                 _clear_state()
                 return {"ok": False, "error": "内核进程启动后退出，详见 kernel.log。"}
             time.sleep(0.5)
         return {"ok": False, "error": "内核启动超时（控制面无响应），详见 kernel.log。"}
-    finally:
-        with _LOCK:
-            _starting = False
-
 
 
 def _pid_image(pid):

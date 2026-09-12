@@ -7,15 +7,7 @@ import { confirmDialog } from "../components/ConfirmDialog";
 // hysteria2 等内核协议由可下载的 mihomo 内核转发，http/socks 节点直连。
 export function ProxyPoolView({ embedded = false }: { embedded?: boolean }) {
   const t = useT();
-  // v1.5.37：pool 初值改为 null，并新增 loadErr。
-  // 旧实现把初值写成 { active_id:"", entries:[], kernel:{installed:false} }，
-  // 而 load() 又是 `catch { /* ignore */ }` —— 于是「/api/proxies 请求失败」会被
-  // 原样渲染成「内核未下载 + 还没有代理节点 + 直连使用中」。现场就是：磁盘上明明
-  // 装着 mihomo.exe、proxies.json 里躺着 24 个节点，界面却坚称什么都没下载。
-  // 绝不能用默认值假装「一切正常但空」。
-  const [pool, setPool] = useState<any>(null);
-  const [loadErr, setLoadErr] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [pool, setPool] = useState<any>({ active_id: "", entries: [], kernel: { installed: false, running: false, version: "", download: {} } });
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [showImport, setShowImport] = useState(false);
@@ -25,16 +17,7 @@ export function ProxyPoolView({ embedded = false }: { embedded?: boolean }) {
   const dlTimer = useRef<any>(null);
 
   const load = useCallback(async () => {
-    try {
-      const p = await api.proxies();
-      setPool(p);
-      setLoadErr("");
-    } catch (e: any) {
-      // 不吞错：把失败如实留给界面，同时保留上一次的数据（不拿默认值覆盖）
-      setLoadErr(e?.message || String(e));
-    } finally {
-      setLoading(false);
-    }
+    try { setPool(await api.proxies()); } catch { /* ignore */ }
   }, []);
 
   useEffect(() => {
@@ -63,11 +46,8 @@ export function ProxyPoolView({ embedded = false }: { embedded?: boolean }) {
     setTimeout(() => setMsg(null), 4000);
   };
 
-  const kernel = pool?.kernel || {};
+  const kernel = pool.kernel || {};
   const dl = kernel.download || {};
-  // v1.5.37：provider 里 0 个节点 = 内核加载后一个节点都拿不到（旧的整份配置写入就会这样）。
-  const emptyProviders = (kernel.providers || []).filter((p: any) => (p?.count ?? 0) <= 0);
-  const lastEntry = (pool?.entries || []).find((e: any) => e.id === pool?.last_active_id);
 
   const doImport = async () => {
     setBusy("import");
@@ -75,13 +55,9 @@ export function ProxyPoolView({ embedded = false }: { embedded?: boolean }) {
       const body: any = mode === "url" ? { url: subUrl.trim() } : { text: pasteText };
       const r: any = await api.proxyImport(body);
       if (r?.ok) {
-        // v1.5.37：provider 没生成成功必须说出来 —— 否则「订阅导入成功」是个谎言：
-        // 池里能看到节点，内核里一个都用不了。
-        const pWarn = r.provider && r.provider.ok === false ? " " + t("proxy.importProviderWarn") : "";
-        flash(r.provider && r.provider.ok === false ? "err" : "ok",
-          (mode === "url"
-            ? t("proxy.importedSub", { n: r.added ?? 0, u: r.updated ?? 0 })
-            : t("proxy.importedText", { n: r.added ?? 0, u: r.updated ?? 0 })) + pWarn);
+        flash("ok", mode === "url"
+          ? t("proxy.importedSub", { n: r.added ?? 0, u: r.updated ?? 0 })
+          : t("proxy.importedText", { n: r.added ?? 0, u: r.updated ?? 0 }));
         setSubUrl(""); setPasteText(""); setShowImport(false);
         await load();
       } else flash("err", r?.error || t("proxy.importFail"));
@@ -146,50 +122,17 @@ export function ProxyPoolView({ embedded = false }: { embedded?: boolean }) {
   const btnGhost = `${btn} border-line text-ink-dim hover:text-ink hover:bg-elevated`;
   const btnGold = `${btn} border-gold/60 bg-gold/15 text-gold hover:bg-gold/25`;
 
-  // v1.5.37：拆成「延迟」与「状态」两个独立单元格。
-  // 旧实现把 statusCell(e) 连写了两遍，于是「延迟」列和「状态」列渲染出**完全一样**的内容
-  // （真节点上两列都是「● 12ms」），延迟列等于废掉。这里按列各司其职。
-  const latencyCell = (e: any) => {
-    if (e.status === "ok") return <span className="text-ink font-mono text-[12px]">{e.latency_ms ?? "-"}ms</span>;
-    return <span className="text-ink-dim font-mono text-[12px]">-</span>;
-  };
-
   const statusCell = (e: any) => {
-    if (e.status === "ok") return <span className="text-emerald-400 font-mono text-[12px]">● {t("proxy.alive")}</span>;
+    if (e.status === "ok") return <span className="text-emerald-400 font-mono text-[12px]">● {e.latency_ms ?? "-"}ms</span>;
     if (e.status === "dead") return <span className="text-red-400 font-mono text-[12px]" title={e.error}>● {t("proxy.dead")}</span>;
     return <span className="text-ink-dim font-mono text-[12px]">○ {t("proxy.untested")}</span>;
   };
 
-  // v1.5.37：浅色主题下 sky-300 / violet-300 在浅底上对比度极低（实测 direct 徽章 3.44:1，
-  // 低于 AA 4.5）。改用「主题同色系但可读」的一对：主色强调 + 中性。
   const protoBadge = (e: any) => (
-    <span className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-mono border ${
-      e.direct ? "border-line bg-elevated text-ink" : "border-gold/50 bg-gold/10 text-gold"}`}>
+    <span className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-mono ${e.direct ? "bg-sky-500/15 text-sky-300" : "bg-violet-500/15 text-violet-300"}`}>
       {e.proto}
     </span>
   );
-
-  // ---- 加载中 / 加载失败：不再用 useState 默认值冒充「什么都没有」----
-  if (loading && !pool) {
-    return (
-      <div className={embedded ? "" : "max-w-[1200px] mx-auto p-5"}>
-        <div className="rounded-xl border border-line bg-elevated/40 p-4 space-y-2">
-          {Array.from({ length: 3 }).map((_, i) => <div key={i} className="shimmer h-9" />)}
-        </div>
-      </div>
-    );
-  }
-  if (!pool) {
-    return (
-      <div className={embedded ? "" : "max-w-[1200px] mx-auto p-5"}>
-        <div className="rounded-xl border border-red/40 bg-red/[0.06] p-4">
-          <div className="font-mono text-[13px] text-ink mb-1">{t("proxy.loadFail")}</div>
-          <p className="text-[12px] text-ink-dim break-all mb-3">{loadErr || "—"}</p>
-          <button className={btnGold} onClick={() => { setLoading(true); load(); }}>{t("proxy.retry")}</button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className={embedded ? "" : "max-w-[1200px] mx-auto p-5"}>
@@ -200,30 +143,21 @@ export function ProxyPoolView({ embedded = false }: { embedded?: boolean }) {
           {/* 内核状态与控制 */}
           <span className="text-[12px] font-mono text-ink-dim">
             {t("proxy.kernel")}:
-            <span className={kernel.running ? "text-emerald-400" : kernel.starting ? "text-gold" : kernel.installed ? "text-gold" : "text-ink-dim"}>
+            <span className={kernel.running ? "text-emerald-400" : kernel.installed ? "text-gold" : "text-ink-dim"}>
               {kernel.running ? ` ${t("proxy.kRunning")}${kernel.version ? " " + kernel.version : ""} :${kernel.mixed_port}`
-                : kernel.starting ? ` ${t("proxy.kStarting")}`
                 : kernel.installed ? ` ${t("proxy.kStopped")}${kernel.version ? " " + kernel.version : ""}`
                 : ` ${t("proxy.kNone")}`}
             </span>
           </span>
-          {/* v1.5.37：启动不再自动接管流量 —— 把「上次的选择」还给用户，一键恢复 */}
-          {lastEntry && !pool.active_id && (
-            <button className={btnGhost} disabled={!!busy}
-              onClick={() => useNode(lastEntry.id)}
-              title={t("proxy.restoreTip", { name: lastEntry.name })}>
-              {t("proxy.restoreLast", { name: lastEntry.name.slice(0, 14) })}
-            </button>
-          )}
           {!kernel.installed && (
-            <button className={btnGold} disabled={!!busy || dl.active || kernel.starting}
+            <button className={btnGold} disabled={!!busy || dl.active}
               onClick={() => kernelBtn(() => api.kernelDownload(), "k-dl")}>
               {dl.active ? t("proxy.downloading") : t("proxy.downloadKernel")}
             </button>
           )}
           {kernel.installed && !kernel.running && (
-            <button className={btnGhost} disabled={!!busy || kernel.starting} onClick={() => kernelBtn(() => api.kernelStart(), "k-start", t("proxy.kStarted"))}>
-              {kernel.starting ? t("proxy.kStartingShort") : t("proxy.startKernel")}
+            <button className={btnGhost} disabled={!!busy} onClick={() => kernelBtn(() => api.kernelStart(), "k-start", t("proxy.kStarted"))}>
+              {t("proxy.startKernel")}
             </button>
           )}
           {kernel.running && (
@@ -259,21 +193,6 @@ export function ProxyPoolView({ embedded = false }: { embedded?: boolean }) {
       {msg && (
         <div className={`mb-3 rounded-lg border px-3 py-2 text-[12px] ${msg.kind === "ok" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-red-500/30 bg-red-500/10 text-red-300"}`}>
           {msg.text}
-        </div>
-      )}
-
-      {/* v1.5.37：轮询失败不再让面板「假装没事」—— 保留数据，但把失败摆出来 */}
-      {loadErr && (
-        <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-300">
-          {t("proxy.staleWarn")} <code className="break-all">{loadErr}</code>
-        </div>
-      )}
-
-      {/* v1.5.37：provider 里 0 个节点 = 内核加载后一个节点都拿不到。
-          旧实现把整份订阅配置当 provider 写下去就会这样，界面上却一切「正常」。 */}
-      {emptyProviders.length > 0 && (
-        <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-300">
-          {t("proxy.providerEmpty", { files: emptyProviders.map((p: any) => p.file).join(", ") })}
         </div>
       )}
 
@@ -323,7 +242,7 @@ export function ProxyPoolView({ embedded = false }: { embedded?: boolean }) {
                   <td className={td}><span className="text-ink-dim text-[12px]">{e.source}</span></td>
                   <td className={td}>{protoBadge(e)}</td>
                   <td className={td}><span className="font-mono text-[12px] text-ink-dim">{e.server || "-"}{e.port ? `:${e.port}` : ""}</span></td>
-                  <td className={td}>{latencyCell(e)}</td>
+                  <td className={td}>{statusCell(e)}</td>
                   <td className={td}>{statusCell(e)}</td>
                   <td className={`${td} text-right`}>
                     <div className="inline-flex gap-1.5">

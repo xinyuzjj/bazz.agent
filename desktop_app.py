@@ -1181,24 +1181,17 @@ def proxies_kernel_download():
 
 @app.post("/api/proxies/kernel/start")
 def proxies_kernel_start():
-    # v1.5.37：改走非阻塞路径。旧实现同步 `proxy_kernel.start()`（最长等控制面 20s），
-    # 那个请求会把界面和代理池轮询一起拖住 —— 用户点的就是这里。现在立刻返回，
-    # 就绪状态由 /api/proxies 的 kernel.starting 反映，env 在内核真正起来后由后台注入。
-    return proxy_pool.start_kernel_async()
+    r = proxy_kernel.start()
+    if r.get("ok"):
+        # v1.5.32：内核起来后必须立刻注入 env —— 此前只拉内核不注入，
+        # 用户点「启动内核」后 HTTP(S)_PROXY 仍为空，技能照样直连超时。
+        proxy_pool.apply_env()
+    return r
 
 
 @app.post("/api/proxies/kernel/stop")
 def proxies_kernel_stop():
     r = proxy_kernel.stop()
-    # v1.5.37：内核停了，内核型节点就不可能再工作 —— 必须把 active 一并回落直连。
-    # 否则界面继续显示「使用中」而实际没有任何代理（正是 v1.5.32 修过的老症状）。
-    try:
-        e = proxy_pool.active_entry()
-        if e and not e.get("direct", True):
-            proxy_pool.set_active("")
-            r["active_reset"] = True
-    except Exception:
-        pass
     proxy_pool.apply_env()      # v1.5.32：内核停掉后同步清理/回退代理 env
     return r
 

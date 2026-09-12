@@ -277,43 +277,15 @@ def _handler_block(src: str, path: str) -> str:
 def test_kernel_endpoints_apply_env():
     src = (ROOT / "desktop_app.py").read_text(encoding="utf-8-sig")
     st = _handler_block(src, "/api/proxies/kernel/start")
-    # v1.5.37：start 改走非阻塞的 start_kernel_async()（env 在内核真正就绪后由后台注入），
-    # 但它必须仍然保证「启动内核 → env 被注入」这条链路存在，否则等于没启用代理。
-    assert "start_kernel_async()" in st, "内核启动后没有注入代理 env —— 点「启动内核」等于没启用代理"
-    pool_src = (ROOT / "src/proxy_pool.py").read_text(encoding="utf-8-sig")
-    body = pool_src[pool_src.index("def start_kernel_async():"):]
-    body = body[:body.index("\ndef ", 10)] if "\ndef " in body[10:] else body
-    assert "_apply_env()" in body, "start_kernel_async 未在就绪后注入 env —— 内核起来了但代理没生效"
+    assert "apply_env()" in st, "内核启动后没有注入代理 env —— 点「启动内核」等于没启用代理"
     sp = _handler_block(src, "/api/proxies/kernel/stop")
     assert "apply_env()" in sp, "内核停止后没有同步 env —— 会留下指向死端口的代理"
 
 
-def test_bootstrap_starts_direct_and_keeps_last_choice():
-    """v1.5.37：bootstrap 不再自动恢复内核，改为「启动一律直连 + 记住上次选择」。
-
-    v1.5.32 原本要求 bootstrap 调 `_revive_kernel_async()`，用来修「重启后代理静默失效」。
-    但那条路把「上次选过的节点」当成用户此刻的意图，导致每次启动 APP 都静默拉起 mihomo、
-    把全部流量切进代理池 —— 用户报的正是「一进去就默认连上代理池，这不对」。
-    现在改为：active_id 启动即清空；选择存进 last_active_id；用户显式点「恢复」才生效。
-    """
+def test_bootstrap_revives_kernel():
     src = (ROOT / "src/proxy_pool.py").read_text(encoding="utf-8-sig")
-    body = src[src.index("def bootstrap():"):src.index("# v1.5.37：`_revive_kernel_async()` 已删除")]
-    # v1.5.37：bootstrap() 的文档字符串里专门解释了「为什么不再自动拉起内核」，
-    # 纯文本断言会把这段说明误判成调用 —— 改用 AST 只看真实调用。
-    calls = set()
-    for node in ast.parse(src).body:
-        if isinstance(node, ast.FunctionDef) and node.name == "bootstrap":
-            for sub in ast.walk(node):
-                if isinstance(sub, ast.Call):
-                    f = sub.func
-                    if isinstance(f, ast.Name):
-                        calls.add(f.id)
-                    elif isinstance(f, ast.Attribute):
-                        calls.add(f.attr)
-    assert "_revive_kernel_async" not in calls, f"bootstrap 仍在自动拉起内核 —— 开机就会悄悄接管流量：{sorted(calls)}"
-    assert '_state["active_id"] = ""' in body, "bootstrap 未把 active_id 清空，仍会带着上次的节点启动"
-    assert "last_active_id" in body, "bootstrap 未保留 last_active_id —— 用户的选择被丢了"
-    assert "def _revive_kernel_async" not in src, "_revive_kernel_async 应已删除，避免被误用"
+    body = src[src.index("def bootstrap():"):src.index("def _revive_kernel_async():")]
+    assert "_revive_kernel_async()" in body, "bootstrap 未尝试恢复内核 —— 重启 APP 后代理静默失效"
 
 
 def test_stop_clears_state_file():
