@@ -42,7 +42,11 @@ _DIRECT_PROTO = "direct"    # 直连（不走代理）
 # requests 可直接使用的代理协议；其余（hysteria2/vmess/...）需 mihomo 内核
 _DIRECT_PROTOS = {"http", "https", "socks4", "socks5", "socks"}
 _LOCK = threading.RLock()
-_state = {"active_id": "", "entries": []}
+# v1.5.37：新增 last_active_id —— 「用户上次显式选过的节点」。
+# active_id 只代表「本次会话是否启用」，启动时一律清空；用户的选择记在 last_active_id 里，
+# 由界面上的一键「恢复」按钮取回，而不是开机偷偷替他决定。
+_state = {"active_id": "", "last_active_id": "", "entries": []}
+
 
 # 节点来源标签
 SRC_MANUAL = "手动导入"
@@ -57,58 +61,51 @@ def _load():
             with open(POOL_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
             _state["active_id"] = data.get("active_id", "") or ""
+            _state["last_active_id"] = data.get("last_active_id", "") or ""
             _state["entries"] = data.get("entries", []) or []
         except (OSError, json.JSONDecodeError):
             _state["active_id"] = ""
+            _state["last_active_id"] = ""
             _state["entries"] = []
 
 
 def _save():
     tmp = POOL_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({"active_id": _state["active_id"], "entries": _state["entries"]},
+        json.dump({"active_id": _state["active_id"],
+                   "last_active_id": _state["last_active_id"],
+                   "entries": _state["entries"]},
                   f, ensure_ascii=False, indent=1)
     os.replace(tmp, POOL_PATH)
 
 
 def bootstrap():
-    """后端启动时调用：加载配置并把已启用代理注入环境变量。"""
+    """后端启动时调用：加载配置，并**确保本次会话从直连开始**。
+
+    v1.5.37（真实事故「一进 APP 就默认连上代理池」）：旧实现是 `_load()` 之后立刻
+    `_apply_env()` + `_revive_kernel_async()`。而 `_load()` 会把上次的 `active_id`
+    （现场就是一个 vless 内核型节点）恢复成「已启用」，于是每次启动都会在几秒后静默
+    拉起 mihomo、把整个 APP 的流量切进代理池 —— 用户从没同意过，而且界面上那句
+    「直连 · 使用中」还是假的（那时 /api/proxies 还没回来）。
+
+    现在：**启动一律直连**。上次的选择不丢，记在 `last_active_id`，由用户在代理池面板
+    上显式点「恢复」才生效。
+    """
     _load()
+    with _LOCK:
+        _state["last_active_id"] = _state["active_id"] or _state["last_active_id"]
+        _state["active_id"] = ""
+        _save()
     _apply_env()
-    _revive_kernel_async()
 
 
-def _revive_kernel_async():
-    """v1.5.32：active 是内核型节点且内核已安装 —— 后台确保内核在跑并选中该节点。
 
-    为什么必须做：内核型节点（vless / hysteria2 / vmess / trojan …）的代理入口是 mihomo
-    的本地混合端口，内核不在跑时 proxy_url() 返回 None，_apply_env() 会把 HTTP(S)_PROXY
-    **清空**。于是「重启 APP 后代理池仍显示节点已启用、延迟也测得出，但技能实际全部直连
-    超时（UND_ERR_CONNECT_TIMEOUT）」。
-    放后台线程是为了不让 mihomo 启动等待（最多 20s）阻塞后端启动。"""
-    try:
-        e = active_entry()
-        if not e or e.get("direct", True):
-            return
-        if not _kernel().is_installed():
-            return
-    except Exception:
-        return
-
-    def _work():
-        try:
-            k = _kernel()
-            k.ensure_running()          # 已在跑则立即返回（含被上一进程拉起的孤儿内核）
-            # v1.5.33：启动期间用户可能已在界面上换过节点 —— 重读一次，别把旧节点选回去
-            cur = active_entry() or e
-            if not cur.get("direct", True):
-                k.select(cur.get("kernel_name") or cur["name"])   # 内核重启后 selector 会回默认，需重选
-            _apply_env()
-        except Exception:
-            pass
-
-    threading.Thread(target=_work, daemon=True).start()
-
+# v1.5.37：`_revive_kernel_async()` 已删除。
+# 它当年（v1.5.32）是为了修「重启 APP 后代理静默失效」——那时把 `active_id` 当成
+# 用户意图恢复，于是每次启动都后台拉起内核。代价是 v1.5.37 用户报的
+# 「一进 APP 就默认连上代理池」。两者只能选一个：**启动不碰网络**。
+# 而 v1.5.32 的原始症状不会回来 —— 内核型节点现在只有走 `set_active()` 才会变成 active，
+# 那条路径里已经 `ensure_running()` + `select()` 过了，不存在「显示已启用但内核没跑」。
 
 # ---------------- 解析 ----------------
 
@@ -367,17 +364,20 @@ def import_subscription(url):
     r = requests.get(url, timeout=15, headers={"User-Agent": "clash.meta"})
     r.raise_for_status()
     raw = r.text
-    # 原始订阅落盘（内核 proxy-provider 用），失败不影响池导入
+    # 原始订阅落盘（内核 proxy-provider 用）。v1.5.37：save_provider 现在只写 proxies 段，
+    # 并把结果**返回**而不是静默吞掉 —— provider 是空的（内核一个节点都拿不到）必须让用户看见。
+    provider = {"ok": False, "error": "未尝试"}
     try:
         import proxy_kernel
-        proxy_kernel.save_provider(url, raw)
-    except Exception:
-        pass
+        provider = proxy_kernel.save_provider(url, raw)
+    except Exception as e:
+        provider = {"ok": False, "error": str(e)[:200]}
     entries = _parse_subscription(raw, group=group, source=f"{host} 订阅", sub_url=url)
     with _LOCK:
         added, updated = _merge(entries)
         _save()
-    return {"added": added, "updated": updated, "parsed": len(entries), "group": host}
+    return {"added": added, "updated": updated, "parsed": len(entries),
+            "group": host, "provider": provider}
 
 
 def refresh_subscriptions():
@@ -550,7 +550,7 @@ def _ensure_no_proxy():
 
 
 def _apply_env():
-    """把 active 代理写入进程环境变量（requests 与子进程继承生效）；直连则清除。"""
+    """把 active 代理写入进程环境变量（requests 与子进程继承生效）；直连则清除干净。"""
     e = active_entry()
     purl = proxy_url(e)
     if e and purl:
@@ -560,11 +560,16 @@ def _apply_env():
         for k in ("ALL_PROXY", "all_proxy"):
             os.environ[k] = purl
         _ensure_no_proxy()
+        _ensure_node_preload()
     else:
         for k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
                   "http_proxy", "https_proxy", "all_proxy"):
             os.environ.pop(k, None)
-    _ensure_node_preload()
+        # v1.5.37：直连必须连预加载一起摘。只清 env 是不够的 ——
+        # 下面 _ensure_node_preload() 会往 NODE_OPTIONS 里塞 --require=proxy-preload.cjs，
+        # 而它此前**只加不摘**。已经起来的 Node 子进程手里那个 EnvHttpProxyAgent
+        # 会继续把 fetch 送进本地代理端口；内核一停，这些进程就彻底连不上任何东西。
+        _drop_node_preload()
 
 
 def _ensure_node_preload():
@@ -583,6 +588,51 @@ def _ensure_node_preload():
     if "proxy-preload.cjs" in cur:
         return  # 已挂过
     os.environ["NODE_OPTIONS"] = (cur + " " + flag) if cur else flag
+
+
+# 匹配 `--require="…proxy-preload.cjs"` / `--require='…'` / 裸路径写法。
+# 路径里可能带空格（安装根如 `F:\某 目录\BAZZ.AGENT`），所以不能按空白切分。
+_PRELOAD_TOKEN_RE = re.compile(
+    r'\s*--require=(?:"[^"]*proxy-preload\.cjs"|\'[^\']*proxy-preload\.cjs\'|\S*proxy-preload\.cjs)')
+
+
+def _drop_node_preload():
+    """v1.5.37：`_ensure_node_preload()` 的反操作 —— 从 NODE_OPTIONS 里摘掉预加载。
+
+    切回直连时若只清 HTTP(S)_PROXY 而留着预加载，长期存活的 Node 子进程仍会走旧代理；
+    反过来，直连时留着它本身没有意义（脚本只在有代理 env 时才接管）。"""
+    cur = os.environ.get("NODE_OPTIONS") or ""
+    if "proxy-preload.cjs" not in cur:
+        return
+    left = _PRELOAD_TOKEN_RE.sub("", cur).strip()
+    if left:
+        os.environ["NODE_OPTIONS"] = left
+    else:
+        os.environ.pop("NODE_OPTIONS", None)
+
+
+def teardown_proxy():
+    """v1.5.37：真正的「取消连接」—— 把代理链路整体拆掉，而不是只切一下 selector。
+
+    现场（用户报「取消连接后整个应用都没有网了」）：旧实现直连分支只调
+    `k.select("DIRECT")`，**内核照跑**，NODE_OPTIONS 里的预加载也照挂着。于是
+    「取消连接」并没有真的回到直连：本机仍有一个 mihomo 在 7899 上监听着，
+    任何在代理启用期间启动的 Node 子进程仍把 fetch 交给它；而它自己的出口如果因为
+    selector 切换出现竞态（或端口随后被 stop 掉），这些进程就谁也连不上。
+    这里按「停内核 → 摘预加载 → 清 env」的顺序彻底还原，并返回清理结果供界面显示。
+    """
+    detail = {}
+    try:
+        detail["kernel"] = _kernel().stop()
+    except Exception as e:
+        detail["kernel"] = {"ok": False, "error": str(e)[:200]}
+    _drop_node_preload()
+    for k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+              "http_proxy", "https_proxy", "all_proxy"):
+        os.environ.pop(k, None)
+    detail["env"] = env_snapshot()
+    return detail
+
 
 
 def active_entry():
@@ -608,6 +658,24 @@ def apply_env():
     HTTP(S)_PROXY 仍是空的，技能照样直连超时。"""
     _apply_env()
     return active_url()
+
+
+def start_kernel_async():
+    """v1.5.37：非阻塞启动内核 + 就绪后注入 env。
+
+    旧路径是 `proxy_kernel.start()` 同步等最多 20 秒（且当时还在持锁），HTTP 请求、
+    代理池轮询、界面全部陪着一起等 —— 用户点一下就是「卡死」。
+    现在线程里启动，接口立刻返回；界面靠 `status().starting` 显示「启动中…」。"""
+    def _work():
+        try:
+            r = _kernel().start()
+            if r.get("ok") and not r.get("starting"):
+                _apply_env()          # 内核真起来了才注入 env
+        except Exception:
+            pass
+    threading.Thread(target=_work, daemon=True).start()
+    return {"ok": True, "starting": True}
+
 
 
 _ENV_KEYS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "NODE_OPTIONS")
@@ -720,16 +788,14 @@ def set_active(entry_id):
             if target is None:
                 raise RuntimeError("代理节点不存在。")
         _state["active_id"] = entry_id or ""
+        if entry_id:
+            _state["last_active_id"] = entry_id      # v1.5.37：记住用户的选择，供下次一键恢复
         _save()
 
     if target is None:
-        # 直连：内核若在跑，selector 切回 DIRECT
-        try:
-            k = _kernel()
-            if k.is_running():
-                k.select("DIRECT")
-        except Exception:
-            pass
+        # v1.5.37：直连 = 彻底拆除代理链路（停内核 + 摘预加载 + 清 env）。
+        # 旧实现只切 selector，内核照跑、预加载照挂 —— 这就是「取消连接后整个应用没网」。
+        teardown_proxy()
     elif not target.get("direct", True):
         k = _kernel()
         if not k.is_installed():
@@ -738,6 +804,7 @@ def set_active(entry_id):
         k.select(target.get("kernel_name") or target["name"])
     _apply_env()
     return _state["active_id"]
+
 
 
 # ---------------- CRUD ----------------
@@ -755,6 +822,9 @@ def list_pool():
     for e in entries:
         e["usable"] = bool(e.get("direct", True)) or kernel_status["installed"]
     return {"active_id": _state["active_id"],
+            # v1.5.37：「上次显式选过的节点」——启动不再自动启用，但选择不丢，
+            # 界面据此显示「恢复上次」入口，而不是开机替用户做决定。
+            "last_active_id": _state.get("last_active_id", "") or "",
             "active_url": active_url(),
             "has_socks": _HAS_SOCKS,
             "kernel": kernel_status,
