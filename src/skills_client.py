@@ -406,6 +406,29 @@ def looks_network_error(text: str) -> bool:
     return bool(_NET_ERR_RE.search(text or ""))
 
 
+# v1.5.30：本机后端不可达的识别。
+# 技能连不上 127.0.0.1:8080/8081 时，输出同样含 "fetch failed"，会被 _NET_ERR_RE 命中，
+# 从而触发「切代理重试」——但这是本机连通性问题，换多快的节点都救不回来，
+# 还会把用户误导成「代理没配好」（实测：代理池正常时依然全挂）。
+# 所以必须先判定本地故障并给出准确指引，再考虑代理兜底。
+_LOCAL_BACKEND_ERR_RE = re.compile(
+    r"本地后端不可达|本地后端|127\.0\.0\.1:(?:8080|8081)", re.I)
+
+
+def looks_local_backend_error(text: str) -> bool:
+    """技能连不上本机后端（与代理/外网无关，切节点救不回来）。"""
+    return bool(_LOCAL_BACKEND_ERR_RE.search(text or ""))
+
+
+def local_backend_hint() -> str:
+    """本机后端请求失败时的准确排查指引（防止用户被误导去折腾代理池）。"""
+    return ("\n[diagnose] 这是**本机后端**的问题，与代理/外网无关（换节点无解）。按错误文本分诊："
+            "① 含 `HTTP 401` → 鉴权令牌没下发到子进程（检查 BAZZ_AUTH_TOKEN 是否被环境清洗规则误删）；"
+            "② 含 `fetch failed` → 后端没在 8080/8081 监听（确认 APP 后端在运行，行情页能刷出数据即正常）；"
+            "③ 端口冲突时后端可能落在 8081，可用 BAZZ_PORT 指定；"
+            "④ 已开代理时 NO_PROXY 必须包含 127.0.0.1,localhost。")
+
+
 def _ensure_proxy_or_empty() -> str:
     """网络失败兜底：激活一个实测可用的代理节点，返回其 URL；池子空/全挂返回 ""。"""
     try:
@@ -464,7 +487,11 @@ def run_skill(skill_name: str, args: str = "") -> dict:
                               capture_output=True, text=True, timeout=120,
                               encoding="utf-8", errors="replace")  # node 输出 UTF-8，按 GBK 读会乱码
         # v1.5.19：网络失败自动兜底 —— 切到实测可用的代理节点后重试一次
-        if proc.returncode != 0 and looks_network_error((proc.stdout or "") + (proc.stderr or "")):
+        # v1.5.30：本机后端不可达先拦截，不要拿代理去重试（无解且误导）
+        _out = (proc.stdout or "") + (proc.stderr or "")
+        if proc.returncode != 0 and looks_local_backend_error(_out):
+            proc.stdout = (proc.stdout or "") + local_backend_hint()
+        elif proc.returncode != 0 and looks_network_error(_out):
             purl = _ensure_proxy_or_empty()
             if purl:
                 proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120,

@@ -170,9 +170,13 @@ def test_run_one_never_raises():
 # ---------------- F06：沙箱环境清洗 + 符号链接越界 ----------------
 
 def test_sandbox_env_strips_credentials():
+    """v1.5.30 修正：原断言要求「任何含凭据关键词的变量都不得出现」，
+    把 BAZZ_AUTH_TOKEN（应用自己的本机回环令牌）也一起剥掉了 —— 技能因此访问不了
+    本机后端，全线 401。现改为：真凭据必须剥离，应用自有令牌必须放行。"""
     deny = assignment("src/exec_sandbox.py", "_ENV_DENY_SUBSTR")
+    allow = assignment("src/exec_sandbox.py", "_ENV_ALLOW_EXACT")
     sandbox_env = function("src/exec_sandbox.py", "_sandbox_env",
-                           {"os": os, "_ENV_DENY_SUBSTR": deny})
+                           {"os": os, "_ENV_DENY_SUBSTR": deny, "_ENV_ALLOW_EXACT": allow})
     old = {k: os.environ.get(k) for k in
            ("BAZZ_AUTH_TOKEN", "MY_API_KEY", "FOO_SECRET", "DB_PASSWORD", "PATH", "NODE_OPTIONS")}
     try:
@@ -181,9 +185,13 @@ def test_sandbox_env_strips_credentials():
         os.environ["FOO_SECRET"] = "sec"
         os.environ["DB_PASSWORD"] = "pw"
         env = sandbox_env()
-        assert not any(any(s in k.upper() for s in deny) for k in env), \
-            "子进程环境仍携带凭据类变量"
+        leaked = [k for k in env
+                  if any(s in k.upper() for s in deny) and k not in allow]
+        assert not leaked, f"子进程环境仍携带第三方凭据类变量: {leaked}"
         assert "PATH" in env and env["PATH"], "PATH 被误删"
+        # 应用自有回环令牌必须保留，否则技能无法访问本机后端（v1.5.29 回归）
+        assert env.get("BAZZ_AUTH_TOKEN") == "tok", \
+            "BAZZ_AUTH_TOKEN 被剥离 —— 技能将无法访问本机后端（全部 401）"
     finally:
         for k, v in old.items():
             if v is None:

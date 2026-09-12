@@ -1,184 +1,47 @@
-# BAZZ.AGENT v1.5.19
+# BAZZ.AGENT v1.5.30
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
 
-## 🆕 v1.5.19 更新要点（技能网络兜底 · 广场发文路由 · 技能绑定补全）
+## 🆕 v1.5.30 更新要点（技能全线 401 根因修复：本机回环令牌被沙箱误删）
 
-### 1. 技能网络失败自动切代理重试
-- 技能执行失败且命中网络错误特征（fetch failed / 超时 / ECONNRESET 等）时，自动实测代理池：先测当前节点 → 按延迟逐个激活实测（内核型自动拉起 mihomo 并切 selector）→ 找到能连通币安的节点后**带代理重试一次**
-- Agent 主路径（exec_sandbox）与手动运行路径（skills_client）双覆盖；输出标注 `[auto-proxy]` 结果
-- square-post 报错带出底层原因码（如 ETIMEDOUT）与「设置 → 代理池」自助指引；失败分诊区分「已重试仍失败（节点全挂）」与「池子无可用节点」
+### 现象
+v1.5.29 起，开启代理后 `coin-report` / `market-data` / `risk-guard` / `track-monitor` / `portfolio-review`
+全部失败，报 `{"error":"本地后端不可达(8080/8081): fetch failed"}`，并附
+`[auto-proxy] 首次网络失败，已自动启用代理 … 重试（仍失败）`。
+用户据此判断为代理故障，反复更换节点/订阅均无效——**症状指向代理，根因却在鉴权**。
 
-### 2. 广场发文路由修复
-- 此前所有「发广场」都路由到 square-post 裸发文本，Agent 会自己手写简版文绕过富媒体管线（丢 SMC 推理链 / 仓位算法 / GitHub 链接 / 封面）
-- 现在改为两级路由：**生成文章 / 行情文 / 深度分析发文 → 默认 square-rich-post**（自动取数 + Pillow 封面 + 固定结构组稿 + $cashtag/#hashtag）；只有用户给了现成正文 / 短帖 / 视频才走 square-post；改稿重发用 `--reuse <目录>`
-- rich 发布同样记入广场台账
+### 根因（两层叠加，缺一不可）
+1. **令牌被沙箱误删（v1.5.29 F06 引入的回归）**
+   `exec_sandbox._ENV_DENY_SUBSTR` 按**子串**匹配清洗子进程环境，`BAZZ_AUTH_TOKEN` 因含
+   `TOKEN` / `AUTH` 被判定为凭据而剥离。但它不是第三方凭据 —— 它是**应用自己的本机回环令牌**
+   （Electron 每次启动 `crypto.randomBytes(24)` 随机生成，仅用于访问 127.0.0.1 上的自身后端）。
+   技能 CLI 必须携带它才能通过 `/api/*` 鉴权，剥离后一律拿到 **401**。
+   v1.5.28 及更早版本子进程继承完整 `os.environ`，因此无此问题。
+2. **真实错误被 CLI 掩盖**
+   技能 CLI 的端口回退用单个 `lastErr`，循环结束时只剩最后一个端口的错误。
+   8081 通常未监听 → 真正的原因（`:8080` 返回 **HTTP 401**）被连接错误覆盖，
+   最终抛出「本地后端不可达: fetch failed」，把鉴权问题伪装成连通性问题，极难排查。
 
-### 3. 9 个已装技能补入提示词路由
-- news-sentiment（新闻情绪）/ portfolio-review（资产复盘）/ track-monitor（妖币复查）/ query-token-audit（代币审计）/ query-address-info（地址持仓）/ binance-tokenized-securities-info（代币化美股）/ binance-trading-signal（合约聪明钱）/ binance-sports-ai-analyzer（赛事预测）此前从未绑定，Agent 遇到相关需求不会调用——已按各技能真实 CLI 用法逐一接入，并留空参返回用法指引的兜底
-- 工具注册表与 run_command 白名单全量核对：无死引用、无阻断
+### 修复
+1. `src/exec_sandbox.py`：新增 `_ENV_ALLOW_EXACT` 精确放行 `BAZZ_AUTH_TOKEN`（应用自有回环令牌）；
+   第三方凭据（API Key / Secret / 密码等）照常剥离，安全边界不变
+2. 5 个技能 CLI 的 `jget()`：逐端口错误**全部保留**并逐个列出，401 不再被掩盖
+3. `src/proxy_pool.py`：`NO_PROXY` 由 `setdefault` 改为**强制并集**（用户机器上已有该变量时
+   `setdefault` 不生效，本机地址会被代理劫持）
+4. `scripts/proxy-preload.cjs`：`EnvHttpProxyAgent` 显式传 `noProxy`，本机地址永不进代理（双保险）
+5. `src/skills_client.py` + `src/agent_core.py`：本机后端故障**前置判定**，命中即按
+   `HTTP 401` / `fetch failed` 分诊给出准确指引，不再拿代理空跑重试、不再误导用户去代理池
 
-# BAZZ.AGENT v1.5.20
-
-**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
-
-## 🆕 v1.5.20 更新要点（安装包「无法自动关闭应用」修复）
-
-### 安装前强杀文件锁进程
-- **现象**：安装/更新时弹「Setup was unable to automatically close all applications」卡在 Closing applications——mihomo 内核 / runtime node / 后端都是**无窗口进程**，Inno 的 Restart Manager 关不掉（发文测试会把它们拉起来，持着安装根里的文件锁）
-- **手动安装**：installer.iss 新增 PrepareToInstall 预处理——taskkill 强杀 BAZZ.AGENT.exe / ScoutBackend.exe / mihomo.exe，node/python 按**路径锚定安装根**强杀（不误杀用户自己的同名进程），杀完才进安装阶段
-- **应用内自动更新**：更新脚本杀残留进程名单补上 mihomo 与 runtime node/python，setup 命令追加 `/FORCECLOSEAPPLICATIONS` 双保险
-
-# BAZZ.AGENT v1.5.21
-
-**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
-
-## 🆕 v1.5.21 更新要点（广场发文链路 · 沙箱命令解析修复）
-
-### 1. 广场发文「上传超时失败」根治（RUNE 发文实测）
-- **根因**：Node undici 默认连接超时 10s，代理节点/币安 S3 域名握手稍慢就抛 `UND_ERR_CONNECT_TIMEOUT`，发文必失败
-- proxy-preload 全局挂载改为 `connect 30s / headers 60s / body 120s`，慢代理也能跑完图片上传（scripts/ 与 runtime/ 同步）
-
-### 2. 沙箱命令解析两处修复
-- **cat/ls/echo 被误杀**：白名单解析只认可执行名，wrapper 命令全被拒「不在白名单」，报错清单却仍列出它们——已补 wrapper 放行
-- **反斜杠被吞**：Windows 下 shlex posix 转义吃掉路径反斜杠（`--reuse F:\1\...` → `F:1...`）导致复用目录校验失败——改 posix=quoted 保留原样并剥包裹引号
-
-### 3. 技能防呆 + 复用容错
-- market-data klines 无数据改为**直接报错**（此前返回 n:0 的 OK，模型把垃圾参数当成功继续跑；合约下架币提示切 spot）
-- square-rich-post `--reuse` 自动锚定 workspace/square_rich 兜底，bad 路径给出尝试列表
-- 实测确认：7899 代理链路当时是通的（代码里代理检测用 api.binance.com/ping，但方形图上传走 bapi/presignedUrl——S3 域名超时才导致失败，现已覆盖）
-
-# BAZZ.AGENT v1.5.22
-
-**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
-
-## 🆕 v1.5.22 更新要点（广场发文默认「短贴多图」，正文直接可见图）
-
-### 发文形态调整（实测反馈驱动）
-- **实锤**：广场 OpenAPI 的长文（contentType=2）正文是 `bodyTextOnly` 纯文本，**永远插不了图**，只有单封面；带图只能走短贴（contentType=1，最多 4 图）
-- square-rich-post **默认改为短贴多图**：封面图 + 24h 分时图 + 标题全文一贴发出，正文里直接看到图（已实测发布成功，两图齐全）
-- 要传统长文形态加 `--article`；`--reuse` 复用不受影响
-- Agent 提示词与 SKILL.md 同步更新分流规则；短贴超时 240s / 输出缓冲 16MB
-
-### v1.5.21 实测补充
-- 你的代理节点经 7899 对 bapi / api / S3 三域全通，发文链路真机验证通过（帖子 ID 365432062242575 / 365434349443879）
-- 注意：mihomo 内核崩溃后 APP 会自动拉起，**重启空窗几秒内发文会 ECONNREFUSED**——属瞬时故障，重试即可（v1.5.19 起已自动重试一次）
-
-# BAZZ.AGENT v1.5.23
-
-**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
-
-## 🆕 v1.5.23 更新要点（发文抗抖加固：检测测全链路 · 网络错误自动重试）
-
-### 1. 代理节点检测从「单点 ping」升级为「发文全链路」
-- **实测踩坑**：v1.5.21 发文 4 连败——节点 ping api.binance.com 通，但 www.binance.com / S3 图片域超时，检测照样放行、发文必败
-- `_url_alive` 现在要求**三端点全过**：api ping（200）+ www.binance.com + public.bnbstatic.com（任何 HTTP 响应算连通）；任一不过即判该节点不可用，ensure_working_proxy 会换下一个
-
-### 2. square-post 网络错误内部自动重试
-- mihomo 内核被 APP 自动拉起的**重启空窗**（数秒）会让发文瞬间 ECONNREFUSED——此前一次即死
-- `api()` 与 S3 `uploadToS3()` 现在对网络类错误（ETIMEDOUT/ECONNRESET/ECONNREFUSED/UND_ERR 等）**自动重试 3 次**（3s/6s 退避），业务错误（401/参数）仍立即抛
-- 叠加 APP 侧的换节点重试，单次发文最多 6 次尝试、跨 2 个节点
-
-# BAZZ.AGENT v1.5.24
-
-**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
-
-## 🆕 v1.5.24 更新要点（文件管理器图片可直接预览）
-
-### 图片预览支持
-- 此前文件列表里点图片（png/jpg 等）一律显示「二进制文件，不可文本预览」——查看器只有文本一个分支
-- 新增后端原文端点 `/api/workspace/raw`（扩展名白名单 png/jpg/jpeg/gif/webp/bmp/svg/ico，路径防越界，20MB 上限，走 /api/* 统一鉴权）
-- 前端点图片 → 带 token 拉取 blob → 弹窗内直接渲染 `<img>`（深色底居中、最高 58vh），关闭时释放 objectURL
-- state.db 等非图片二进制行为不变（仍提示不可文本预览 + 删除按钮）
-
-# BAZZ.AGENT v1.5.25
-
-**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
-
-## 🆕 v1.5.25 更新要点（文件查看器：最小化 / 关闭窗口控制）
-
-### 查看器窗口控制
-- 文件查看弹窗标题栏新增 **最小化（−）** 按钮：收起为右下角浮条（文件名 + 恢复 + 关闭），看盘/操作时文件保持打开不丢
-- 点浮条文件名或 ↑ 恢复按钮回到完整窗口；X 或 Esc 彻底关闭（图片 objectURL 同步释放）
-- 图标库新增 Minus；tsc + vite build 验证通过
-
-# BAZZ.AGENT v1.5.26
-
-**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
-
-## 🆕 v1.5.26 更新要点（点关闭 → 可选最小化到系统托盘）
-
-### 关闭行为升级
-- 点 X（或标题栏关闭）不再直接退出：弹窗询问 **「最小化到托盘 / 退出应用」**，可勾选「记住我的选择，不再询问」
-- **最小化到托盘**：窗口隐藏，应用与后台任务（定时监控、行情拉取、更新检查）继续运行；首次缩托盘有气泡提示
-- 托盘图标：**左键**回到主窗口，**右键**菜单（打开 / 退出）
-- 选择「退出」或托盘菜单「退出」才真正退出（后端随之一并结束）
-- 偏好存 userData/window-prefs.json；无托盘图标资源的裸 dev 环境回退为直接退出
-
-# BAZZ.AGENT v1.5.27
-
-**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
-
-## 🆕 v1.5.27 更新要点（全局美化弹窗：告别系统原生白框）
-
-### 1. 全新应用内弹窗组件（ConfirmDialog）
-- 深色玻璃卡片（glass-bright）+ 遮罩背景模糊 + 淡入缩放动画，与主界面设计系统完全统一
-- 普通确认用金色主按钮；删除类危险操作自动切换红色警示主题
-- 支持 Esc 取消 / Enter 确认 / 点遮罩关闭；「记住我的选择」金色自绘勾选框
-- 文案跟随应用语言（中/英 i18n 新增 dialog.* 键）
-
-### 2. 全部原生 confirm 替换（11 处）
-- 删除会话 / 群聊房间 / Agent / 工作区文件 / 踢出群成员（ChatView ×5）
-- 代理池节点删除（ProxyPoolView）、Cron 任务删除 / MCP 服务删除（AdminPanels ×2）
-- 记忆条目删除 / 一键清空（MemoryOverlay ×2）——原 window.confirm 系统白框全部下线
-
-### 3. 关窗询问弹窗同步美化
-- 点 X 的「最小化到托盘 / 退出应用」询问由 Electron 原生 dialog 改为应用内弹窗（IPC 双向：主进程 ask-close → 渲染层弹窗 → answer-close）
-- 竖排选项卡 + → 箭头指示，退出应用红色警示；Esc/点遮罩 = 取消，留在当前窗口
-- 兜底：页面未就绪收不到 IPC 时 1.5s 后自动隐藏到托盘，关闭操作不卡死
-
-# BAZZ.AGENT v1.5.28
-
-**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
-
-## 🆕 v1.5.28 更新要点（审查缺陷修复：交易链路 6 项 P1/P2）
-
-> 来源：第三方源码工程审查报告（提交 944ca16）。本次修复其中 6 项确定性缺陷，
-> 每项均附离线回归测试（tests/test_v1528_fixes.py，15/15 通过）。
-
-### F02 · 钱包已成交/待确认被误报「下单失败」（P1）
-- `executor.place_report()` 此前只认 CEX 通道的 `status=="ok"`，钱包通道返回的
-  `TRADE_FINISHED`/`TRADE_PENDING` 全部落入 error 分支 → 界面误报失败、跟踪登记跳过、诱导重复下单
-- 现统一归一：`TRADE_FINISHED→FILLED`、`TRADE_PENDING→PENDING`（待查证，不自动重试），保留原始状态与命令回执供审计
-
-### F10 · MCP 调用成功被显示为失败（P1）
-- `agent_core._run_mcp_call()` 用 `res.get("ok")` 判断，而 `mcp_client.call_tool()` 成功返回 `{"status":"ok"}`
-- 现两种契约兼容：`status=="ok" or bool(ok)`
-
-### F04 · 订单成交后止损止盈提醒静默（P1）
-- `order_tracker` 的 `_CLOSED` 把 FILLED 算终态 → 成交后 `_check_sl_tp()` 直接返回，
-  「未成交时有提醒，真正成交后反而静默」
-- 拆分两组终态：查单轮询仍含 FILLED（成交后不再查单），提醒监控改用 `_CLOSED_FOR_ALERTS`
-  （不含 FILLED）→ **持仓存续期间止损/止盈持续监控**
-
-### F01 · 更新完整性校验 100% 失效（P1）
-- `updater._fetch_checksums/_fetch_manifest` 把资产名转小写后与全大写常量比较，永不相等 →
-  永远拿不到校验和 → 安装时「缺失则跳过」形同虚设
-- 修复①：统一小写比较；修复②：**fail-closed**——官方整包拿不到校验和（网络异常/缺 SHA256SUMS）
-  一律拒绝安装，不再静默跳过（本地增量包仍走逐文件清单校验）
-
-### F08 · 强制兜底工具名变布尔值（P1）
-- `forced = forced_cand and (...)` 在允许条件下得到 `True`，分派器做字符串操作抛 TypeError
-- 改为条件表达式显式保留工具名，不合法时置空
-
-### F13 · 妖币雷达日报必然 TypeError（P2）
-- `scheduler._run_meme_scan()` 误传 `limit=8`（真实签名 `force/top_n/min_qv`），且把返回的
-  `dict{coins:[...]}` 当 list 迭代 → 日报永远失败
-- 现按真实契约调用并显式读取 `coins`
-
-### 回归验证
-- 新增 `tests/test_v1528_fixes.py`：15 个离线用例全部通过（AST/函数提取 + 桩隔离，不联网不下单）
-- 既有测试套件（test_v150_market / test_v151_radar_track）49 项全部通过
+### 验证
+- 新增 `tests/test_v1530_local_backend.py`：**20/20 通过**（离线 AST/桩，不联网）
+- `tests/test_v1529_hardening.py`：**23/23 通过**（其中 F06 断言已修正 —— 原断言要求
+  `BAZZ_AUTH_TOKEN` 必须被剥离，正是它把回归固化成了「预期行为」）
+- 其余套件全部通过：test_v1528_fixes 15/15 · test_v150_market ✓ · test_v151_radar_track ✓
+- **真机对照实测**（对运行中的后端直接跑 CLI）：
+  - 改前：`本地后端不可达(8080/8081): fetch failed`
+  - 改后：`本地后端不可达(8080/8081) — :8080 HTTP 401: {"error":"unauthorized"} | :8081 fetch failed`
+- 代理旁路 A/B（死代理探针，NO_PROXY 缺失/空串/不含本机三种场景）：改前一律 502，改后一律 200
+- `py_compile` 4 个 py 文件通过；`node --check` 5 个 CLI 通过；改动文件全部保持 LF
 
 # BAZZ.AGENT v1.5.29
 
@@ -258,7 +121,225 @@
 - 既有套件全部通过：test_v1528_fixes 15/15、test_v150_market ✓、test_v151_radar_track ✓
 - 前端 `tsc --noEmit` + `vite build` 通过；全部改动文件 py_compile 通过
 
+# BAZZ.AGENT v1.5.28
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.28 更新要点（审查缺陷修复：交易链路 6 项 P1/P2）
+
+> 来源：第三方源码工程审查报告（提交 944ca16）。本次修复其中 6 项确定性缺陷，
+> 每项均附离线回归测试（tests/test_v1528_fixes.py，15/15 通过）。
+
+### F02 · 钱包已成交/待确认被误报「下单失败」（P1）
+- `executor.place_report()` 此前只认 CEX 通道的 `status=="ok"`，钱包通道返回的
+  `TRADE_FINISHED`/`TRADE_PENDING` 全部落入 error 分支 → 界面误报失败、跟踪登记跳过、诱导重复下单
+- 现统一归一：`TRADE_FINISHED→FILLED`、`TRADE_PENDING→PENDING`（待查证，不自动重试），保留原始状态与命令回执供审计
+
+### F10 · MCP 调用成功被显示为失败（P1）
+- `agent_core._run_mcp_call()` 用 `res.get("ok")` 判断，而 `mcp_client.call_tool()` 成功返回 `{"status":"ok"}`
+- 现两种契约兼容：`status=="ok" or bool(ok)`
+
+### F04 · 订单成交后止损止盈提醒静默（P1）
+- `order_tracker` 的 `_CLOSED` 把 FILLED 算终态 → 成交后 `_check_sl_tp()` 直接返回，
+  「未成交时有提醒，真正成交后反而静默」
+- 拆分两组终态：查单轮询仍含 FILLED（成交后不再查单），提醒监控改用 `_CLOSED_FOR_ALERTS`
+  （不含 FILLED）→ **持仓存续期间止损/止盈持续监控**
+
+### F01 · 更新完整性校验 100% 失效（P1）
+- `updater._fetch_checksums/_fetch_manifest` 把资产名转小写后与全大写常量比较，永不相等 →
+  永远拿不到校验和 → 安装时「缺失则跳过」形同虚设
+- 修复①：统一小写比较；修复②：**fail-closed**——官方整包拿不到校验和（网络异常/缺 SHA256SUMS）
+  一律拒绝安装，不再静默跳过（本地增量包仍走逐文件清单校验）
+
+### F08 · 强制兜底工具名变布尔值（P1）
+- `forced = forced_cand and (...)` 在允许条件下得到 `True`，分派器做字符串操作抛 TypeError
+- 改为条件表达式显式保留工具名，不合法时置空
+
+### F13 · 妖币雷达日报必然 TypeError（P2）
+- `scheduler._run_meme_scan()` 误传 `limit=8`（真实签名 `force/top_n/min_qv`），且把返回的
+  `dict{coins:[...]}` 当 list 迭代 → 日报永远失败
+- 现按真实契约调用并显式读取 `coins`
+
+### 回归验证
+- 新增 `tests/test_v1528_fixes.py`：15 个离线用例全部通过（AST/函数提取 + 桩隔离，不联网不下单）
+- 既有测试套件（test_v150_market / test_v151_radar_track）49 项全部通过
+
+# BAZZ.AGENT v1.5.27
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.27 更新要点（全局美化弹窗：告别系统原生白框）
+
+### 1. 全新应用内弹窗组件（ConfirmDialog）
+- 深色玻璃卡片（glass-bright）+ 遮罩背景模糊 + 淡入缩放动画，与主界面设计系统完全统一
+- 普通确认用金色主按钮；删除类危险操作自动切换红色警示主题
+- 支持 Esc 取消 / Enter 确认 / 点遮罩关闭；「记住我的选择」金色自绘勾选框
+- 文案跟随应用语言（中/英 i18n 新增 dialog.* 键）
+
+### 2. 全部原生 confirm 替换（11 处）
+- 删除会话 / 群聊房间 / Agent / 工作区文件 / 踢出群成员（ChatView ×5）
+- 代理池节点删除（ProxyPoolView）、Cron 任务删除 / MCP 服务删除（AdminPanels ×2）
+- 记忆条目删除 / 一键清空（MemoryOverlay ×2）——原 window.confirm 系统白框全部下线
+
+### 3. 关窗询问弹窗同步美化
+- 点 X 的「最小化到托盘 / 退出应用」询问由 Electron 原生 dialog 改为应用内弹窗（IPC 双向：主进程 ask-close → 渲染层弹窗 → answer-close）
+- 竖排选项卡 + → 箭头指示，退出应用红色警示；Esc/点遮罩 = 取消，留在当前窗口
+- 兜底：页面未就绪收不到 IPC 时 1.5s 后自动隐藏到托盘，关闭操作不卡死
+
+# BAZZ.AGENT v1.5.26
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.26 更新要点（点关闭 → 可选最小化到系统托盘）
+
+### 关闭行为升级
+- 点 X（或标题栏关闭）不再直接退出：弹窗询问 **「最小化到托盘 / 退出应用」**，可勾选「记住我的选择，不再询问」
+- **最小化到托盘**：窗口隐藏，应用与后台任务（定时监控、行情拉取、更新检查）继续运行；首次缩托盘有气泡提示
+- 托盘图标：**左键**回到主窗口，**右键**菜单（打开 / 退出）
+- 选择「退出」或托盘菜单「退出」才真正退出（后端随之一并结束）
+- 偏好存 userData/window-prefs.json；无托盘图标资源的裸 dev 环境回退为直接退出
+
+# BAZZ.AGENT v1.5.25
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.25 更新要点（文件查看器：最小化 / 关闭窗口控制）
+
+### 查看器窗口控制
+- 文件查看弹窗标题栏新增 **最小化（−）** 按钮：收起为右下角浮条（文件名 + 恢复 + 关闭），看盘/操作时文件保持打开不丢
+- 点浮条文件名或 ↑ 恢复按钮回到完整窗口；X 或 Esc 彻底关闭（图片 objectURL 同步释放）
+- 图标库新增 Minus；tsc + vite build 验证通过
+
+# BAZZ.AGENT v1.5.24
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.24 更新要点（文件管理器图片可直接预览）
+
+### 图片预览支持
+- 此前文件列表里点图片（png/jpg 等）一律显示「二进制文件，不可文本预览」——查看器只有文本一个分支
+- 新增后端原文端点 `/api/workspace/raw`（扩展名白名单 png/jpg/jpeg/gif/webp/bmp/svg/ico，路径防越界，20MB 上限，走 /api/* 统一鉴权）
+- 前端点图片 → 带 token 拉取 blob → 弹窗内直接渲染 `<img>`（深色底居中、最高 58vh），关闭时释放 objectURL
+- state.db 等非图片二进制行为不变（仍提示不可文本预览 + 删除按钮）
+
+# BAZZ.AGENT v1.5.23
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.23 更新要点（发文抗抖加固：检测测全链路 · 网络错误自动重试）
+
+### 1. 代理节点检测从「单点 ping」升级为「发文全链路」
+- **实测踩坑**：v1.5.21 发文 4 连败——节点 ping api.binance.com 通，但 www.binance.com / S3 图片域超时，检测照样放行、发文必败
+- `_url_alive` 现在要求**三端点全过**：api ping（200）+ www.binance.com + public.bnbstatic.com（任何 HTTP 响应算连通）；任一不过即判该节点不可用，ensure_working_proxy 会换下一个
+
+### 2. square-post 网络错误内部自动重试
+- mihomo 内核被 APP 自动拉起的**重启空窗**（数秒）会让发文瞬间 ECONNREFUSED——此前一次即死
+- `api()` 与 S3 `uploadToS3()` 现在对网络类错误（ETIMEDOUT/ECONNRESET/ECONNREFUSED/UND_ERR 等）**自动重试 3 次**（3s/6s 退避），业务错误（401/参数）仍立即抛
+- 叠加 APP 侧的换节点重试，单次发文最多 6 次尝试、跨 2 个节点
+
+# BAZZ.AGENT v1.5.22
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.22 更新要点（广场发文默认「短贴多图」，正文直接可见图）
+
+### 发文形态调整（实测反馈驱动）
+- **实锤**：广场 OpenAPI 的长文（contentType=2）正文是 `bodyTextOnly` 纯文本，**永远插不了图**，只有单封面；带图只能走短贴（contentType=1，最多 4 图）
+- square-rich-post **默认改为短贴多图**：封面图 + 24h 分时图 + 标题全文一贴发出，正文里直接看到图（已实测发布成功，两图齐全）
+- 要传统长文形态加 `--article`；`--reuse` 复用不受影响
+- Agent 提示词与 SKILL.md 同步更新分流规则；短贴超时 240s / 输出缓冲 16MB
+
+### v1.5.21 实测补充
+- 你的代理节点经 7899 对 bapi / api / S3 三域全通，发文链路真机验证通过（帖子 ID 365432062242575 / 365434349443879）
+- 注意：mihomo 内核崩溃后 APP 会自动拉起，**重启空窗几秒内发文会 ECONNREFUSED**——属瞬时故障，重试即可（v1.5.19 起已自动重试一次）
+
+# BAZZ.AGENT v1.5.21
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.21 更新要点（广场发文链路 · 沙箱命令解析修复）
+
+### 1. 广场发文「上传超时失败」根治（RUNE 发文实测）
+- **根因**：Node undici 默认连接超时 10s，代理节点/币安 S3 域名握手稍慢就抛 `UND_ERR_CONNECT_TIMEOUT`，发文必失败
+- proxy-preload 全局挂载改为 `connect 30s / headers 60s / body 120s`，慢代理也能跑完图片上传（scripts/ 与 runtime/ 同步）
+
+### 2. 沙箱命令解析两处修复
+- **cat/ls/echo 被误杀**：白名单解析只认可执行名，wrapper 命令全被拒「不在白名单」，报错清单却仍列出它们——已补 wrapper 放行
+- **反斜杠被吞**：Windows 下 shlex posix 转义吃掉路径反斜杠（`--reuse F:\1\...` → `F:1...`）导致复用目录校验失败——改 posix=quoted 保留原样并剥包裹引号
+
+### 3. 技能防呆 + 复用容错
+- market-data klines 无数据改为**直接报错**（此前返回 n:0 的 OK，模型把垃圾参数当成功继续跑；合约下架币提示切 spot）
+- square-rich-post `--reuse` 自动锚定 workspace/square_rich 兜底，bad 路径给出尝试列表
+- 实测确认：7899 代理链路当时是通的（代码里代理检测用 api.binance.com/ping，但方形图上传走 bapi/presignedUrl——S3 域名超时才导致失败，现已覆盖）
+
+# BAZZ.AGENT v1.5.20
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.20 更新要点（安装包「无法自动关闭应用」修复）
+
+### 安装前强杀文件锁进程
+- **现象**：安装/更新时弹「Setup was unable to automatically close all applications」卡在 Closing applications——mihomo 内核 / runtime node / 后端都是**无窗口进程**，Inno 的 Restart Manager 关不掉（发文测试会把它们拉起来，持着安装根里的文件锁）
+- **手动安装**：installer.iss 新增 PrepareToInstall 预处理——taskkill 强杀 BAZZ.AGENT.exe / ScoutBackend.exe / mihomo.exe，node/python 按**路径锚定安装根**强杀（不误杀用户自己的同名进程），杀完才进安装阶段
+- **应用内自动更新**：更新脚本杀残留进程名单补上 mihomo 与 runtime node/python，setup 命令追加 `/FORCECLOSEAPPLICATIONS` 双保险
+
+# BAZZ.AGENT v1.5.19
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.19 更新要点（技能网络兜底 · 广场发文路由 · 技能绑定补全）
+
+### 1. 技能网络失败自动切代理重试
+- 技能执行失败且命中网络错误特征（fetch failed / 超时 / ECONNRESET 等）时，自动实测代理池：先测当前节点 → 按延迟逐个激活实测（内核型自动拉起 mihomo 并切 selector）→ 找到能连通币安的节点后**带代理重试一次**
+- Agent 主路径（exec_sandbox）与手动运行路径（skills_client）双覆盖；输出标注 `[auto-proxy]` 结果
+- square-post 报错带出底层原因码（如 ETIMEDOUT）与「设置 → 代理池」自助指引；失败分诊区分「已重试仍失败（节点全挂）」与「池子无可用节点」
+
+### 2. 广场发文路由修复
+- 此前所有「发广场」都路由到 square-post 裸发文本，Agent 会自己手写简版文绕过富媒体管线（丢 SMC 推理链 / 仓位算法 / GitHub 链接 / 封面）
+- 现在改为两级路由：**生成文章 / 行情文 / 深度分析发文 → 默认 square-rich-post**（自动取数 + Pillow 封面 + 固定结构组稿 + $cashtag/#hashtag）；只有用户给了现成正文 / 短帖 / 视频才走 square-post；改稿重发用 `--reuse <目录>`
+- rich 发布同样记入广场台账
+
+### 3. 9 个已装技能补入提示词路由
+- news-sentiment（新闻情绪）/ portfolio-review（资产复盘）/ track-monitor（妖币复查）/ query-token-audit（代币审计）/ query-address-info（地址持仓）/ binance-tokenized-securities-info（代币化美股）/ binance-trading-signal（合约聪明钱）/ binance-sports-ai-analyzer（赛事预测）此前从未绑定，Agent 遇到相关需求不会调用——已按各技能真实 CLI 用法逐一接入，并留空参返回用法指引的兜底
+- 工具注册表与 run_command 白名单全量核对：无死引用、无阻断
+
 ## 📜 历史版本
+
+# BAZZ.AGENT v1.5.18
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.18 更新要点（安装进度窗口）
+
+> 补录：本段依据 tag `v1.5.18` 的提交信息回溯整理，非发布当时撰写。
+
+### 安装进度窗口
+- APP 退出后由更新脚本拉起**置顶 WinForms 跑马灯对话框**（步骤文案 + 动画），静默安装期间用户不再面对「什么都没发生」的空白等待
+
+# BAZZ.AGENT v1.5.17
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.17 更新要点（恢复版本守卫 · 防降级）
+
+> 补录：本段依据 tag `v1.5.17` 的提交信息回溯整理，非发布当时撰写。
+
+### 恢复版本守卫
+- 拒绝安装比本地版本更旧的更新包（防降级回滚）
+- 清理陈旧缓存残留
+
+# BAZZ.AGENT v1.5.16
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.16 更新要点（更新器 spawn 修复 · 富媒体发文升级）
+
+> 补录：本段依据 tag `v1.5.16` 的提交信息回溯整理，非发布当时撰写。
+
+### 1. 更新器 spawn 从不执行修复
+- 去掉 `DETACHED_PROCESS`——它会让 powershell 静默退出，导致更新脚本根本没跑起来
+### 2. square-rich-post 升级
+- 发文口径升级为 4h SMC 结构
 
 # BAZZ.AGENT v1.5.15
 
@@ -300,7 +381,6 @@
 
 ---
 
-
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
 
 ## 🆕 v1.5.13 更新要点（中文币名识别 · 防猜测规则）
@@ -313,7 +393,6 @@
 ## 历史
 
 ---
-
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
 
@@ -340,6 +419,45 @@
 ## 历史
 
 ---
+
+# BAZZ.AGENT v1.5.14
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.14 更新要点（更新器修复 · 启动自恢复 · 思考泄漏 · CJK 币名）
+
+> 补录：本段依据 tag `v1.5.14` 的提交信息回溯整理，非发布当时撰写。
+
+### 修复
+- 更新器 spawn 修复 + 启动自恢复（更新中断后可自愈）
+- thinking 泄漏修复（模型思考内容不再漏进正文）
+- CJK 币名后缀解析修复
+
+# BAZZ.AGENT v1.5.13
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.13 更新要点（CJK 币名识别 · 防猜测规则）
+
+> 补录：本段依据 tag `v1.5.13` 的提交信息回溯整理，非发布当时撰写。
+
+### 中文币名与防幻觉
+- CJK 语境下的币名识别（`\b` 对中文无效，改手工边界）
+- 防猜测规则：禁止模型编造不存在的交易对
+
+# BAZZ.AGENT v1.5.12
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.12 更新要点（下单链路 · 审批卡 · 思考泄漏 · 追踪日期）
+
+> 补录：本段依据 tag `v1.5.12` 的提交信息回溯整理，非发布当时撰写。
+
+### 修复
+- 下单链路修复
+- 审批卡补 margin / leverage 展示
+- thinking 泄漏修复
+- 妖币追踪「日期」列修复
 
 # BAZZ.AGENT v1.5.11
 
@@ -493,6 +611,31 @@
 
 ---
 
+# BAZZ.AGENT v1.5.5
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.5 更新要点（Agent 技能四件套 + 行情页大更新）
+
+### 1. Agent 技能四件套（研究侧能力补全）
+- **market-data**：本地行情数据网关（K 线 / 资金费率 / 持仓量 OI / 大户多空比 / 爆仓流 / 恐惧贪婪 / bundle 一键分析包）——走本机后端（5 分钟缓存 + 代理池出口），根治 Agent 直连币安 15s 超时与输出截断问题，分析代币不再「取不到历史数据」
+- **coin-report**：一键生成标准研报落盘 `workspace/妖币/<币种>_研报_*.md`，自动填好 90 日结构（区间位置 / 收盘分位）、衍生品、市场环境、追踪战绩，「结论与计划」留白由 Agent 基于事实填写
+- **track-monitor**：妖币追踪定时复查，自发现以来涨跌超阈值（默认 ±15%）自动标记暴涨 / 暴跌预警；配合定时任务实现全自动盯盘（应用关着也跑）
+- **risk-guard**：下单前护栏——固定风险仓位计算（资金 / 风险% / 入场 / 止损 → 数量 / 名义值 / 保证金 / 强平距离警告）+ CEX 当前敞口检查
+
+### 2. 行情页六项升级（v1.5.4 同包内容）
+- **币种详情浮层**：点击任意行情行（现货 / 合约 / 股票化 / 雷达 / 追踪 / 异动 / 爆仓）弹出，实时价 + 24H/7D 走势切换 + 费率 / OI / 大户多空比 + 下单与分析入口
+- **迷你走势图**：Hero 大盘卡内置 SVG 渐变面积线（涨绿跌红，全组件共享缓存）
+- **恐惧贪婪指数卡**：数值五档着色 + 8 日历史柱状图
+- **爆仓流大单高亮**：≥$100K 强平单金框标记 + 图例，支持按币种筛选
+- **合约表 OI 列**：USD 名义持仓，可见行批量拉取（后端 5 分钟缓存，前端 60s 刷新）
+- **妖币追踪胜率可视化**：结局占比堆叠条 + moon / dump / expired 统计卡
+
+### 3. 后端配套
+- 新增 `/api/market/klines`（K 线收盘价）、`/api/market/oi`（合约持仓量批量）、`/api/market/fng`（恐惧贪婪指数）三条路由
+
+---
+
 # BAZZ.AGENT v1.5.4
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
@@ -518,31 +661,6 @@
 - 追踪面板新增胜率统计卡 + moon / dump / expired 结局占比堆叠条
 
 ### 7. 后端配套
-- 新增 `/api/market/klines`（K 线收盘价）、`/api/market/oi`（合约持仓量批量）、`/api/market/fng`（恐惧贪婪指数）三条路由
-
----
-
-# BAZZ.AGENT v1.5.5
-
-**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
-
-## 🆕 v1.5.5 更新要点（Agent 技能四件套 + 行情页大更新）
-
-### 1. Agent 技能四件套（研究侧能力补全）
-- **market-data**：本地行情数据网关（K 线 / 资金费率 / 持仓量 OI / 大户多空比 / 爆仓流 / 恐惧贪婪 / bundle 一键分析包）——走本机后端（5 分钟缓存 + 代理池出口），根治 Agent 直连币安 15s 超时与输出截断问题，分析代币不再「取不到历史数据」
-- **coin-report**：一键生成标准研报落盘 `workspace/妖币/<币种>_研报_*.md`，自动填好 90 日结构（区间位置 / 收盘分位）、衍生品、市场环境、追踪战绩，「结论与计划」留白由 Agent 基于事实填写
-- **track-monitor**：妖币追踪定时复查，自发现以来涨跌超阈值（默认 ±15%）自动标记暴涨 / 暴跌预警；配合定时任务实现全自动盯盘（应用关着也跑）
-- **risk-guard**：下单前护栏——固定风险仓位计算（资金 / 风险% / 入场 / 止损 → 数量 / 名义值 / 保证金 / 强平距离警告）+ CEX 当前敞口检查
-
-### 2. 行情页六项升级（v1.5.4 同包内容）
-- **币种详情浮层**：点击任意行情行（现货 / 合约 / 股票化 / 雷达 / 追踪 / 异动 / 爆仓）弹出，实时价 + 24H/7D 走势切换 + 费率 / OI / 大户多空比 + 下单与分析入口
-- **迷你走势图**：Hero 大盘卡内置 SVG 渐变面积线（涨绿跌红，全组件共享缓存）
-- **恐惧贪婪指数卡**：数值五档着色 + 8 日历史柱状图
-- **爆仓流大单高亮**：≥$100K 强平单金框标记 + 图例，支持按币种筛选
-- **合约表 OI 列**：USD 名义持仓，可见行批量拉取（后端 5 分钟缓存，前端 60s 刷新）
-- **妖币追踪胜率可视化**：结局占比堆叠条 + moon / dump / expired 统计卡
-
-### 3. 后端配套
 - 新增 `/api/market/klines`（K 线收盘价）、`/api/market/oi`（合约持仓量批量）、`/api/market/fng`（恐惧贪婪指数）三条路由
 
 ---

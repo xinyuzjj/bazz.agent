@@ -2174,6 +2174,14 @@ def _square_post_fail_hint(out: str) -> str:
     if re.search(r"command not found|no such file|enoent|cannot find module", ol):
         return ("**Node 环境或脚本路径问题。** 请确认 Node ≥18、`node scripts/cli.mjs` 在 square-post 目录下可执行；"
                 "或直接走 run_skill 工具重试。")
+    # v1.5.30：必须先于 network 分支判定 —— 「本地后端不可达」的输出里也含 fetch failed，
+    # 旧逻辑会把它当成代理问题，提示用户去代理池测速/换节点（实测把人带偏，怎么换都没用）。
+    if re.search(r"本地后端不可达|本地后端|127\.0\.0\.1:(?:8080|8081)", o):
+        return ("**技能连不上本机后端**（127.0.0.1:8080/8081）——这**与外网/代理无关**，"
+                "换代理节点救不回来，不要再去折腾代理池。按错误文本分诊："
+                "① 含 `HTTP 401` → 鉴权令牌没下发到子进程；"
+                "② 含 `fetch failed` → 后端没在监听（确认 APP 后端在运行，行情页能刷出数据即正常）；"
+                "③ 端口冲突时后端可能落在 8081，可用 `BAZZ_PORT` 指定。")
     if re.search(r"network|timeout|econnreset|fetch failed|网络|超时", ol):
         if "[auto-proxy]" in o:
             return ("**直连与代理重试均失败。** 系统已自动切换代理节点重试仍连不上币安——代理节点可能全部失效，"
@@ -2240,7 +2248,13 @@ def _tool_run_skill(args: dict, confirmed: bool = False) -> Dict[str, Any]:
     reply = f"{'✅' if ok else '⚠️'} 技能 **{name}** 退出码 {r['exit_code']}（{r['elapsed']}s）\n\n```\n{r['output'][:1200]}\n```"
     if not ok:
         hint = ""
-        if _is_wallet_skill(name):
+        # v1.5.30：本机后端不可达要优先、且对**所有**技能生效。
+        # 旧实现只给钱包/广场技能出提示，而 coin-report / market-data 这类取数技能
+        # 恰恰最常撞上这个故障（它们靠 127.0.0.1:8080 取数），用户只能看到裸报错
+        # 加一句「已自动启用代理重试（仍失败）」，于是被误导去折腾代理池。
+        if skills_client.looks_local_backend_error(out):
+            hint = skills_client.local_backend_hint()
+        elif _is_wallet_skill(name):
             hint = _wallet_fail_hint(out)
         elif _is_square_post_skill(name):
             hint = _square_post_fail_hint(out)

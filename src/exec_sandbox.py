@@ -132,13 +132,28 @@ def _realpath_escapes(p: str, roots: list) -> bool:
 _ENV_DENY_SUBSTR = ("TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL",
                     "API_KEY", "APIKEY", "AUTH")
 
+# v1.5.30：必须放行的「应用自有」环境变量（按精确名，不做子串匹配）。
+#
+# BAZZ_AUTH_TOKEN 是本机回环令牌 —— Electron 每次启动随机生成，只用于访问
+# 127.0.0.1 上的自身后端（desktop_app 的 /api/* 鉴权中间件）。它不是第三方凭据，
+# 泄露不到任何外部账号。但它名字里带 "TOKEN"/"AUTH"，被上面的子串规则误伤。
+#
+# 后果（v1.5.29 F06 引入的回归）：技能子进程拿不到令牌 → 访问本机后端一律 401 →
+# CLI 的端口回退又把 401 掩盖成「本地后端不可达: fetch failed」→
+# 表现为「行情页正常，但 coin-report / market-data 等取数技能全挂」。
+_ENV_ALLOW_EXACT = ("BAZZ_AUTH_TOKEN",)
+
 
 def _sandbox_env() -> dict:
     """白名单命令子进程的环境：不继承完整 os.environ。
     保留代理池（HTTP(S)_PROXY）与 NODE_OPTIONS（Node 子进程经 proxy-preload 走代理必需）、
-    BAZZ_WORKSPACE 等运行必需项；剥离一切凭据类变量与 PYTHONSTARTUP。"""
+    BAZZ_WORKSPACE、BAZZ_AUTH_TOKEN（访问本机后端必需）等运行必需项；
+    剥离一切**第三方**凭据类变量与 PYTHONSTARTUP。"""
     env = {}
     for k, v in os.environ.items():
+        if k in _ENV_ALLOW_EXACT:
+            env[k] = v
+            continue
         ku = k.upper()
         if any(s in ku for s in _ENV_DENY_SUBSTR):
             continue
@@ -952,8 +967,14 @@ def run_skill_cmd(skill_name: str, args: str = "", timeout: int = 180, max_out: 
     except Exception as e:
         raise SandboxError(f"skill 命令构造失败: {e}")
     r = run_command(cmd, timeout=timeout, max_out=max_out)
+    out = r.get("output", "") or ""
+    # v1.5.30：本机后端不可达先拦截 —— 这是本机连通性问题，切代理无解，
+    # 而且旧行为会让用户误以为「代理没配好」而白折腾代理池（实测反馈）。
+    if r.get("exit_code") and skills_client.looks_local_backend_error(out):
+        r["output"] = (out + skills_client.local_backend_hint())[-max_out:]
+        return r
     # v1.5.19：网络失败自动兜底 —— 激活一个实测可用的代理节点后重试一次
-    if r.get("exit_code") and skills_client.looks_network_error(r.get("output", "")):
+    if r.get("exit_code") and skills_client.looks_network_error(out):
         purl = skills_client._ensure_proxy_or_empty()
         if purl:
             r2 = run_command(cmd, timeout=timeout, max_out=max_out)

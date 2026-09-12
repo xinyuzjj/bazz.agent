@@ -15,9 +15,20 @@ try {
   if (hasProxy) {
     const undici = require("undici");
     if (undici && typeof undici.setGlobalDispatcher === "function" && undici.EnvHttpProxyAgent) {
+      // v1.5.30：本机地址必须绕过代理。技能（coin-report / market-data 等）靠 fetch
+      // http://127.0.0.1:8080/8081 取本机后端数据，一旦被送进代理就一律报「本地后端不可达」，
+      // 换多快的节点都救不回来（死代理探针实测确认：无 NO_PROXY → 502，有 → 200）。
+      // NO_PROXY 在用户机器上可能缺失、也可能是空串，所以在这里强制做并集，
+      // 不依赖上游 Python 侧是否设置正确。
+      const LOCAL = ["127.0.0.1", "localhost", "::1"];
+      const cur = process.env.NO_PROXY || process.env.no_proxy || "";
+      const parts = cur.split(",").map((s) => s.trim()).filter(Boolean);
+      const low = new Set(parts.map((s) => s.toLowerCase()));
+      for (const h of LOCAL) { if (!low.has(h)) parts.push(h); }
       // v1.5.21：undici 默认 connect 超时 10s，慢节点/S3 域名握手直接 UND_ERR_CONNECT_TIMEOUT
       // （RUNE 发文实测踩坑）；放宽连接/头/体超时，让慢代理也能跑完上传
       undici.setGlobalDispatcher(new undici.EnvHttpProxyAgent({
+        noProxy: parts.join(","),
         connect: { timeout: 30_000 },
         headersTimeout: 60_000,
         bodyTimeout: 120_000,

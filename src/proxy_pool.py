@@ -489,6 +489,33 @@ def test_all(ids=None):
 
 # ---------------- 启用 / 环境注入 ----------------
 
+# v1.5.30：必须绕过代理的本机地址。
+# 技能（coin-report / market-data 等）的唯一取数入口就是本机后端 127.0.0.1:8080/8081，
+# 一旦这些地址被送进代理，技能会全部报「本地后端不可达」，而且换多快的节点都救不回来。
+_LOCAL_BYPASS = ("127.0.0.1", "localhost", "::1")
+
+
+def _ensure_no_proxy():
+    """把本机地址强制并入 NO_PROXY（大小写两个键都写）。
+
+    背景：proxy-preload.cjs 装的是 undici 的 EnvHttpProxyAgent，它只认 NO_PROXY 环境变量。
+    实测（死代理探针）：无 NO_PROXY 时对 127.0.0.1 的 fetch 会被送进代理并失败；
+    设了 NO_PROXY=127.0.0.1,localhost 才正常绕过。
+    旧实现用 os.environ.setdefault —— 用户机器上常已有 NO_PROXY（代理客户端/系统注入，
+    且可能是空字符串），setdefault 不会覆盖，于是本机后端照样被代理劫持。
+    因此这里必须做「并集」，而不是「缺省填充」。
+    """
+    cur = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
+    parts = [p.strip() for p in cur.split(",") if p.strip()]
+    lowered = {p.lower() for p in parts}
+    for host in _LOCAL_BYPASS:
+        if host.lower() not in lowered:
+            parts.append(host)
+    val = ",".join(parts)
+    os.environ["NO_PROXY"] = val
+    os.environ["no_proxy"] = val
+
+
 def _apply_env():
     """把 active 代理写入进程环境变量（requests 与子进程继承生效）；直连则清除。"""
     e = active_entry()
@@ -499,7 +526,7 @@ def _apply_env():
             os.environ[k] = purl
         for k in ("ALL_PROXY", "all_proxy"):
             os.environ[k] = purl
-        os.environ.setdefault("NO_PROXY", "127.0.0.1,localhost")
+        _ensure_no_proxy()
     else:
         for k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
                   "http_proxy", "https_proxy", "all_proxy"):
