@@ -40,7 +40,10 @@ SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayName={#MyAppName}
 UsePreviousAppDir=yes
-CloseApplications=yes
+; v1.5.35：CloseApplications 改 no —— 关闭一律交给下方 [Code] PrepareToInstall 的 taskkill。
+; 原 yes 会让 Inno 的 Restart Manager 先发 WM_CLOSE：应用会弹「最小化到托盘 / 退出」询问，
+; 且 ScoutBackend / mihomo / runtime node 都是无窗口进程根本关不掉 → 必然弹「Select action」卡住安装。
+CloseApplications=no
 RestartApplications=no
 
 [Tasks]

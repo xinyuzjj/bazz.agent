@@ -858,6 +858,12 @@ export const zh: Dict = {
   "square.noPostId": "发布成功，但未返回帖子 ID（可去广场创作者后台确认）。",
   "square.ago": "@{n}@{u} 前",
   "square.readLedgerFail": "读取台账失败",
+  // v1.5.35：失败文章删除（仅本地台账，不会调用币安 API）
+  "square.delPost": "删除",
+  "square.delPostTip": "确定删除这篇失败的文章？",
+  "square.clearFailed": "清空所有失败",
+  "square.clearFailedTip": "确定清空全部 @{n} 篇失败文章？",
+  "square.delFail": "删除失败",
   "square.keyEmpty": "OpenAPI Key 不能为空。",
   "square.saveFail": "保存失败",
   "square.keyBackedUp": "旧 Key 已备份到 @{path}",
@@ -2167,6 +2173,12 @@ export const en: Dict = {
   "square.keyBackedUpRecover": "Old key backed up to @{path} (can restore manually)",
   "square.clearedLocal": "Local key cleared.",
   "square.openOriginal": "Open original post on Binance Square",
+  // v1.5.35：失败文章删除（仅本地台账，不会调用币安 API）
+  "square.delPost": "Delete",
+  "square.delPostTip": "Delete this failed post?",
+  "square.clearFailed": "Clear all failed",
+  "square.clearFailedTip": "Clear all @{n} failed posts?",
+  "square.delFail": "Delete failed",
 
   // ===== Batch2: WalletBits =====
   "wallet.bits.agentSignedIn": "Agent wallet signed in; can invoke baw wallet/trade/DeFi/x402 commands.",

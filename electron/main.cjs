@@ -151,6 +151,13 @@ ipcMain.on("bazz:answer-close", (_e, payload) => {
   else { isQuitting = true; app.quit(); }
 });
 
+// v1.5.35：程序性退出（应用内「安装更新」）—— 直接放行，绝不弹「托盘 / 退出」询问。
+// 此前 useUpdater 复用了 bazz:win-close，于是更新时弹出「关闭还是最小化」；
+// 更糟的是用户若选「最小化到托盘」，Electron 进程不退，而更新脚本会等待主进程退出
+// 最长 180s，超时即 ERR wait-electron-timeout —— 更新直接失败。
+// 「关闭还是最小化」只服务于「用户主动点 X」，更新这类退出必须直通。
+ipcMain.on("bazz:quit-for-update", () => { isQuitting = true; app.quit(); });
+
 // v1.2.11：统一通过主进程用系统默认浏览器打开外链（设置里点「打开下载页」等）
 //   只放行 http(s)，避免渲染层误传 file:// / javascript: 等触发任意协议
 ipcMain.on("bazz:open-url", (_e, url) => {

@@ -18,7 +18,7 @@ import time
 import asyncio
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket
+from fastapi import Body, FastAPI, WebSocket
 from fastapi.requests import Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -2091,6 +2091,23 @@ def square_posts_endpoint():
     except Exception as e:
         return {"ok": False, "error": str(e), "posts": [], "stats": {},
                 "key": {"present": False, "masked": ""}}
+
+
+@app.post("/api/square/posts/delete")
+def square_posts_delete_endpoint(payload: dict = Body(default_factory=dict)):
+    """v1.5.35：删除广场台账条目。仅删除本地数据，不会调用币安 API。
+    body: { ids: [string, ...] }
+    返回: { ok, deleted, missing }。
+    """
+    import square_store
+    try:
+        ids = payload.get("ids")
+        if not isinstance(ids, list):
+            return {"ok": False, "error": "ids 必须是数组", "deleted": 0, "missing": []}
+        r = square_store.delete_records(ids)
+        return {"ok": True, "deleted": r["deleted"], "missing": r["missing"]}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "deleted": 0, "missing": []}
 
 
 @app.get("/api/square/key")

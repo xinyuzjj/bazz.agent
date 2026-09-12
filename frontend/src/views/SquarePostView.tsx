@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { I } from "../components/icons";
+import { confirmDialog } from "../components/ConfirmDialog";
 import { useT } from "../i18n/i18n";
 
 /* 币安广场 —— Agent 发文台账
@@ -115,6 +116,33 @@ export function SquarePostView() {
   const posts = data?.posts ?? [];
   const t = useT();
 
+  // v1.5.35：删除单条失败文章 / 清空所有失败 —— 仅本地台账，不会调用币安 API
+  const delPost = useCallback(async (id: string) => {
+    if (!id) return;
+    if (!await confirmDialog(t("square.delPostTip"), { title: t("square.delPost"), danger: true })) return;
+    try {
+      const r: any = await api.squarePostsDelete([id]);
+      if (r?.ok === false) { setErr(r?.error || t("square.delFail")); return; }
+      load(true);
+    } catch (e: any) {
+      setErr(e?.message || String(e));
+    }
+  }, [t, load]);
+
+  const clearAllFailed = useCallback(async () => {
+    const ids = (data?.posts ?? []).filter(p => p.status === "failed" && p.id).map(p => p.id);
+    if (ids.length === 0) return;
+    if (!await confirmDialog(t("square.clearFailedTip", { n: ids.length }),
+      { title: t("square.clearFailed"), danger: true })) return;
+    try {
+      const r: any = await api.squarePostsDelete(ids);
+      if (r?.ok === false) { setErr(r?.error || t("square.delFail")); return; }
+      load(true);
+    } catch (e: any) {
+      setErr(e?.message || String(e));
+    }
+  }, [t, data, load]);
+
   return (
     <div className="p-5 space-y-4">
       {/* Header */}
@@ -227,7 +255,15 @@ export function SquarePostView() {
             {label}
           </button>
         ))}
-        <span className="prefix ml-auto">{t("square.localNote")}</span>
+        {filter === "failed" && stats.failed > 0 ? (
+          <button onClick={clearAllFailed}
+            className="ml-auto btn-ghost text-[11px] py-1 text-red/80 hover:text-red"
+            title={t("square.clearFailedTip", { n: stats.failed })}>
+            <I.Trash size={11} /> {t("square.clearFailed")}
+          </button>
+        ) : (
+          <span className="prefix ml-auto">{t("square.localNote")}</span>
+        )}
       </div>
 
       {/* Feed */}
@@ -253,7 +289,7 @@ export function SquarePostView() {
         </div>
       ) : (
         <div className="space-y-2.5">
-          {shown.map((p, i) => <PostCard key={p.id || `${p.ts}-${i}`} p={p} />)}
+          {shown.map((p, i) => <PostCard key={p.id || `${p.ts}-${i}`} p={p} onDelete={delPost} />)}
         </div>
       )}
     </div>
@@ -271,7 +307,7 @@ function Stat({ label, value, sub, gold, green, red }: { label: string; value: s
   );
 }
 
-function PostCard({ p }: { p: Post }) {
+function PostCard({ p, onDelete }: { p: Post; onDelete?: (id: string) => void }) {
   const t = useT();
   const meta = KIND_META[p.kind] || { label: p.kind || "帖", glyph: "•", tip: "" };
   const ok = p.status === "posted";
@@ -298,6 +334,12 @@ function PostCard({ p }: { p: Post }) {
              className="btn-ghost text-[11px] py-1 !text-gold" title={t("square.openOriginal")}>
             <I.Link size={11} /> {t("square.originalPost")}
           </a>
+        )}
+        {!ok && onDelete && p.id && (
+          <button onClick={() => onDelete(p.id)}
+            className="btn-ghost text-[11px] py-1 text-red/80 hover:text-red" title={t("square.delPost")}>
+            <I.Trash size={11} /> {t("square.delPost")}
+          </button>
         )}
       </div>
 

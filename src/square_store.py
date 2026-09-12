@@ -265,6 +265,26 @@ def append_record(kind: str, text: str, title: str, tags: list, post_id: str,
     return rec
 
 
+def delete_records(ids: list[str]) -> dict:
+    """按 id 删除台账条目（v1.5.35）。仅当条目存在才会被删，缺失的 id 计入 missing。
+
+    返回：{ deleted: int, missing: list[str] }
+    注：失败/成功的删除都允许 —— 接口层不限制，调用方决定语义。
+    """
+    ids = [i for i in (ids or []) if isinstance(i, str) and i]
+    if not ids:
+        return {"deleted": 0, "missing": []}
+    arr = _read()
+    target = set(ids)
+    keep = [r for r in arr if r.get("id") not in target]
+    deleted = len(arr) - len(keep)
+    if deleted:
+        _write(keep)
+    present = {r.get("id") for r in arr}
+    missing = [i for i in ids if i not in present]
+    return {"deleted": deleted, "missing": missing}
+
+
 def record_from_run(skill_name: str, arg_s: str, output: str, exit_code: int,
                     via: str = "agent") -> dict | None:
     """skill 执行结果 → 台账。仅 square-post / square-rich-post 生效；任何异常都静默。"""

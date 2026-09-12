@@ -23,4 +23,8 @@ contextBridge.exposeInMainWorld("bazzWindow", {
     return () => ipcRenderer.removeListener("bazz:ask-close", handler);
   },
   answerClose: (payload) => ipcRenderer.send("bazz:answer-close", payload),
+  // v1.5.35：程序性退出（应用内「安装更新」）走这条专用通道 —— 主进程直接放行退出，
+  // 不弹「最小化到托盘 / 退出」询问。该询问只服务于「用户主动点 X」；
+  // 更新这类退出必须直通，否则用户若选「托盘」进程不退，更新脚本等到超时直接失败。
+  quitForUpdate: () => ipcRenderer.send("bazz:quit-for-update"),
 });

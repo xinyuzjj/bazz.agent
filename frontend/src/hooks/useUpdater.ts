@@ -137,9 +137,15 @@ export default function useUpdater(t: (key: string, params?: Record<string, stri
       }
       const r: any = await api.updateApply(cur.zip, pid);
       if (!r?.ok) { setSt(mkErr(r?.error || t("update.failed"), cur.html_url)); return; }
-      // 响应已返回 → 稍候让后端把结果写盘，再关窗：Electron 退出后由脱离的 PS 脚本接管替换
+      // 响应已返回 → 稍候让后端把结果写盘，再退出：Electron 退出后由脱离的 PS 脚本接管替换
+      // v1.5.35：改走 quitForUpdate 专用通道 —— 直接退出，不弹「关闭还是最小化」。
+      // 此前复用 bazzWindow.close()，会走「用户点 X」的询问弹窗；用户若选「最小化到托盘」，
+      // Electron 进程不退，更新脚本等待主进程退出 180s 后以 ERR wait-electron-timeout 失败。
       setTimeout(() => {
-        try { (window as any).bazzWindow?.close?.(); } catch { /* 非桌面态忽略 */ }
+        try {
+          const w: any = (window as any).bazzWindow;
+          if (w?.quitForUpdate) w.quitForUpdate(); else w?.close?.();
+        } catch { /* 非桌面态忽略 */ }
       }, CLOSE_DELAY_MS);
     } catch (e: any) {
       setSt(mkErr(String(e?.message ?? e), (stRef.current as any).html_url || FALLBACK_URL));

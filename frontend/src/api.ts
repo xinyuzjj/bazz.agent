@@ -188,6 +188,8 @@ export const api = {
   skillsUpdate: (scope?: "baw" | "skills" | "all") => jpost("/skills/update", { scope: scope ?? "all" }),
   // 币安广场发文台账（Agent 已发帖子记录，只读展示）
   squarePosts: () => jget("/square/posts"),
+  // v1.5.35：删除台账条目（仅失败状态，调用方决定语义）
+  squarePostsDelete: (ids: string[]) => jpost("/square/posts/delete", { ids }),
   squareKey: () => jget("/square/key"),
   squareConnect: (api_key: string) => jpost("/square/connect", { api_key }),
   squareDisconnect: () => jpost("/square/disconnect", {}),

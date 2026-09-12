@@ -1,6 +1,92 @@
-# BAZZ.AGENT v1.5.34
+# BAZZ.AGENT v1.5.35
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.35 更新要点（更新时不再弹「关闭还是最小化」；广场失败文章可删除）
+
+本版两件事，都是「用起来别扭」那一类：一件是**更新流程会卡在一个不该出现的询问弹窗上**，
+另一件是**广场台账里的失败记录只进不出，越堆越多**。
+
+---
+
+### 一、点「安装更新」后，直接退出，不再弹「关闭还是最小化到托盘」
+
+#### 现象
+在应用内点「安装更新」，本该静默关掉、交给安装脚本接管替换，实际却弹出
+「关闭还是最小化到系统托盘」的询问框。更糟的是：**一旦选了「最小化到托盘」，更新就废了**。
+
+#### 根因：退出通道串了岗
+「关闭还是最小化」这个询问是为**用户主动点窗口 X** 设计的（Electron 的
+`mainWin.on("close")` → `bazz:ask-close` → 渲染层美化弹窗 → `bazz:answer-close` 回传）。
+
+而 `useUpdater` 在更新流程里直接复用了 **`bazzWindow.close()`** —— 和「用户点 X」走的是
+同一条链路，于是把那个询问框也一并触发了。
+
+麻烦还在后面：更新脚本（脱离子进程的 PowerShell）会**等待 Electron 主进程退出，最多 180 秒**
+（45 次 × 4 秒）。选「最小化到托盘」意味着进程**根本不退** —— 干等 180 秒后以
+`ERR wait-electron-timeout` 告终，**更新直接失败**。
+
+也就是说：这个弹窗不只是碍眼，它是**更新失败的一条真实路径**。
+
+#### 修复：给「程序性退出」单独开一条通道
+| 位置 | 改动 |
+| --- | --- |
+| `electron/preload.cjs` | 新增 `quitForUpdate: () => ipcRenderer.send("bazz:quit-for-update")` |
+| `electron/main.cjs` | 新增直通处理器 `ipcMain.on("bazz:quit-for-update", () => { isQuitting = true; app.quit(); })` —— **不进询问链路** |
+| `frontend/src/hooks/useUpdater.ts` | 改用 `quitForUpdate()`；保留 `close()` 兜底（老版本 Electron 主进程还没有这条通道时不会崩） |
+| `installer.iss` | `CloseApplications=yes` → **`no`** |
+
+安装包那处是顺带修的：`CloseApplications=yes` 会让 Inno 的 Restart Manager 先发 `WM_CLOSE`，
+同样可能引出那个询问框；而 `ScoutBackend` / mihomo / runtime node 都是**无窗口进程**，
+Restart Manager 根本关不掉它们，结果就是安装程序弹「Select action」卡住。
+现在关闭一律交给 `[Code] PrepareToInstall` 里的 `taskkill /F`，行为确定。
+
+**结论**：「关闭还是最小化」**只服务于用户主动点 X**；更新这类程序性退出一律直通。
+
+---
+
+### 二、广场：失败的文章可以删了（单条删除 + 一键清空）
+
+#### 现象
+广场面板的发文台账只进不出。发文失败的记录（含报错原文）一直堆在列表里，
+既没法单条清理，也没法批量清掉，翻列表时全是历史垃圾。
+
+#### 修复
+1. **后端** `src/square_store.py` 新增 `delete_records(ids)`：按 id 批量删除，`deleted` 计实际删除数、
+   `missing` 计不存在的 id；**只有真删掉了东西才落盘**
+2. **端点** `POST /api/square/posts/delete`（`desktop_app.py`）：`body: { ids: [...] }`，
+   返回 `{ ok, deleted, missing }`。**仅操作本地台账，不会调用币安 API**（这点特意写进 docstring）
+3. **前端** `SquarePostView.tsx`：
+   - 失败卡片（`status !== "posted"`）右上角出现「删除」按钮（垃圾桶图标）
+   - 切到「失败」筛选且有失败项时，过滤栏右侧出现「清空所有失败」
+   - **两者都走 `confirmDialog` 二次确认**，清空时提示条数 `清空全部 @N 篇失败文章？`
+   - 删除成功后 `load(true)` 静默刷新
+4. 新增 5 个 i18n key × 2 语言（`square.delPost` / `delPostTip` / `clearFailed` / `clearFailedTip` / `delFail`）
+
+> 顺带一提，写这个端点时踩了个 FastAPI 的坑：习惯性按 Flask 写了 `request.get_json()`，
+> 但 **FastAPI 没有全局 `request` 对象**，端点直接 500 `name 'request' is not defined`。
+> 正确写法是签名里显式声明 `payload: dict = Body(default_factory=dict)`（并 import `Body`）。
+
+### 验证
+- 新增 `tests/test_v1535_square_delete.py` —— **12/12**
+   - 单元 5 条：`delete_records` 基本删除 / missing 计数 / 空值与非法输入过滤 / 落盘
+  - AST 6 条：`PostCard` 接收 `onDelete`、失败卡片渲染删除按钮、`delPost` / `clearAllFailed`
+    处理函数完整（确认弹窗 + 调 API + 判 `ok=false` + 刷新）、过滤栏按钮、i18n 双语齐全
+  - 端到端 1 条：用 **FastAPI `TestClient`** 直接打端点，覆盖单删 / 批删 / missing /
+    错误体 / 空数组 / 落盘 / **401 未带令牌**
+- **已确认能抓住旧行为**：临时回退 5 个文件 → **0/12**，恢复后 **12/12**
+- 全套回归（**9 个套件**）：test_v150 ✓ · test_v151 ✓ · test_v1528 15/15 · test_v1529 23/23
+  · test_v1530 20/20 · test_v1531 14/14 · test_v1532 14/14 · test_v1534 7/7 · test_v1535 **12/12**
+- 前端 `tsc --noEmit` 退出码 0，`npm run build` 成功
+
+> 两条踩坑记录，留给下次：
+> ① 起后端做端到端时，**`subprocess.Popen` 在同一脚本内始终连不上**（手动后台起 + curl 却 200），
+> 改用 `TestClient` 直接 import 更省事也更快。
+> ② 鉴权中间件是在 `if AUTH_TOKEN:` 装饰器块里**模块 import 时**注册的，
+> 测试里 `import` 之后再去改 `desktop_app.AUTH_TOKEN` 无效 —— 必须在 `import` **之前**
+> 设 `os.environ["BAZZ_AUTH_TOKEN"]`。
+> ③ 用「下一个顶层语句」当函数体结束标记很脆 —— 两个 `useCallback` 挪位置后断言就假失败。
+> 已改为**大括号配对**切函数体（并跳过字符串字面量）。
 
 ## 🆕 v1.5.34 更新要点（文件查看器图片预览：后端能力早已就绪，界面这端从未接线）
 
