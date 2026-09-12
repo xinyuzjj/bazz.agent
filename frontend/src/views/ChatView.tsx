@@ -399,26 +399,19 @@ export function ChatView({
   };
   useEffect(() => { loadSkillsAvail(); }, []);
 
-  // 加载当前 LLM 模型清单：合并「当前 provider 主模型 + 备用 + aux 槽位」并去重作为下拉选项
+  // 会话模型下拉：只显示「大模型 LLM 配置里选择了的」——主模型 + 备用 fallback + aux 槽位，
+  // 不再拉取厂商全量目录（几百个模型没法选，v1.5.42 用户反馈）
   const loadAvailableModels = async () => {
     try {
       const cfg: any = await api.getSettings();
       const llm = cfg?.llm || {};
-      const provider = llm.provider || "";
       const snap = (conversations ?? []).find((c: any) => c.id === convId)?.provider_snapshot || {};
       const def = (snap.model || llm.model || "") as string;
-      const list = await api.llmModels(provider || "", llm.base_url || "", llm.api_key || "");
-      const arr: string[] = Array.isArray(list?.models) ? list.models : [];
-      // 合并：默认模型 + 备用 + aux slots（如果与默认不同）
       const candidates: string[] = [];
       const add = (m: any) => { const s = String(m || "").trim(); if (s && !candidates.includes(s)) candidates.push(s); };
       add(def); add(llm.model); (llm.backup_models || []).forEach(add);
       const aux = llm.aux || {}; Object.values(aux).forEach(add);
-      // 目录里有的优先，再补不重合的
-      const merged: string[] = [];
-      arr.forEach((m) => add(m));
-      candidates.forEach((m) => { if (!merged.includes(m)) merged.push(m); });
-      setAvailableModels(merged.length ? merged : (arr.length ? arr : [def || "gpt-5.4-mini"]));
+      setAvailableModels(candidates.length ? candidates : [def || "gpt-5.4-mini"]);
       setDefaultModel(def);
       // 若该会话快照里有模型，优先作为默认；否则用全局默认
       setSessionModel(snap.model || llm.model || def);

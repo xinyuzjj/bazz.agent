@@ -113,6 +113,10 @@ export function SettingsView({ settings, onSaved, onNav }: { settings: any; onSa
   };
 
   const prov = LLM_PROVIDERS.find((p) => p.id === llm.provider);
+  // 主模型/备用模型共用选项：拉取到的目录 + 厂商预设 + 当前值，去重去空
+  const modelOptions: string[] = Array.from(new Set(
+    [ ...(modelList ?? []), ...(prov?.presets ?? []), ...(llm.model ? [llm.model] : []) ].filter(Boolean),
+  ));
 
   return (
     <div className="p-5 space-y-4">
@@ -183,8 +187,12 @@ export function SettingsView({ settings, onSaved, onNav }: { settings: any; onSa
             <input type="password" value={llm.api_key ?? ""} onChange={(e) => setLlm({ ...llm, api_key: e.target.value })}
               placeholder={llm.configured ? t("settings.keySavedPh") : "sk-..."} className="field" /></div>
           <div><label className="prefix block mb-1">{t("settings.mainModel")}</label>
-            <input list="llm-model-list" value={llm.model ?? ""} onChange={(e) => setLlm({ ...llm, model: e.target.value })} placeholder={t("settings.modelPh")} className="field" />
-            <datalist id="llm-model-list">{modelList.map((m) => <option key={m} value={m} />)}</datalist>
+            {/* v1.5.43：主模型改下拉选择（原列表联想在几百个模型下基本选不了）；当前值不在清单里时保留为独立选项防丢 */}
+            <select value={llm.model ?? ""} onChange={(e) => setLlm({ ...llm, model: e.target.value })} className="field">
+              {llm.model && !modelOptions.includes(llm.model) && <option value={llm.model}>{llm.model}</option>}
+              {modelOptions.map((m) => <option key={m} value={m} title={m}>{m}</option>)}
+              {!modelOptions.length && <option value="">{t("settings.modelPh")}</option>}
+            </select>
           </div>
         </div>
         {["copilot", "codex", "anthropic-oauth", "nous"].includes(llm.provider) && (
@@ -199,21 +207,23 @@ export function SettingsView({ settings, onSaved, onNav }: { settings: any; onSa
             <label className="prefix">{t("settings.backupFallback")}</label>
             <button onClick={pullModels} className="text-[11px] font-mono text-gold hover:underline flex items-center gap-1"><I.Refresh size={10} /> {t("settings.pullModels")}</button>
           </div>
-          <div className="flex flex-wrap gap-1.5">
-            {(modelList.length ? modelList : (prov?.presets ?? [])).map((m) => {
-              const on = (llm.backup_models ?? []).includes(m);
-              const isMain = m === llm.model;
-              return (
-                <button key={m} onClick={() => setLlm({
-                  ...llm,
-                  backup_models: on ? (llm.backup_models ?? []).filter((x: string) => x !== m) : [...(llm.backup_models ?? []), m],
-                })}
-                  className={`rounded-md border px-2.5 py-1 font-mono text-[11px] transition-colors ${isMain ? "border-gold text-gold" : on ? "bg-gold/10 border-gold/50 text-gold" : "border-line text-ink-dim hover:text-ink"}`}>
-                  {m}{isMain ? " ★" : ""}
-                </button>
-              );
-            })}
-            {modelList.length === 0 && <span className="font-mono text-[10.5px] text-ink-mute">{t("settings.backupHint")}</span>}
+          {/* v1.5.43：备用模型改「下拉添加 + 已选 chip」——拉取回几百个模型铺成一堵墙没法点 */}
+          <div className="flex flex-wrap gap-1.5 items-center">
+            {(llm.backup_models ?? []).map((m: string) => (
+              <button key={m} onClick={() => setLlm({ ...llm, backup_models: (llm.backup_models ?? []).filter((x: string) => x !== m) })}
+                title={t("settings.backupRemoveTip")}
+                className={`rounded-md border px-2.5 py-1 font-mono text-[11px] transition-colors ${m === llm.model ? "border-gold text-gold" : "bg-gold/10 border-gold/50 text-gold hover:border-red hover:text-red"}`}>
+                {m}{m === llm.model ? " ★" : " ✕"}
+              </button>
+            ))}
+            <select value="" onChange={(e) => {
+              const m = e.target.value;
+              if (m && !(llm.backup_models ?? []).includes(m)) setLlm({ ...llm, backup_models: [...(llm.backup_models ?? []), m] });
+            }} className="rounded-md border border-line bg-elevated/60 px-2 py-1 font-mono text-[11px] text-ink-dim outline-none hover:border-gold/40 focus:border-gold max-w-[260px]">
+              <option value="">{t("settings.backupAddPh")}</option>
+              {modelOptions.filter((m) => m !== llm.model && !(llm.backup_models ?? []).includes(m))
+                .map((m) => <option key={m} value={m} title={m}>{m}</option>)}
+            </select>
           </div>
         </div>
         {/* aux 任务细分模型槽 + key_env 注入 */}
@@ -222,14 +232,20 @@ export function SettingsView({ settings, onSaved, onNav }: { settings: any; onSa
             <input value={llm.key_env ?? ""} onChange={(e) => setLlm({ ...llm, key_env: e.target.value })}
               placeholder={t("settings.keyEnvPh")} className="field" /></div>
           <div><label className="prefix block mb-1">{t("settings.auxReasoning")}</label>
-            <input list="llm-model-list" value={llm.aux?.reasoning ?? ""} onChange={(e) => setLlm({ ...llm, aux: { reasoning: e.target.value, vision: llm.aux?.vision ?? "", summarize: llm.aux?.summarize ?? "" } })}
-              placeholder={t("settings.auxFollowPh")} className="field" /></div>
+            <select value={llm.aux?.reasoning ?? ""} onChange={(e) => setLlm({ ...llm, aux: { reasoning: e.target.value, vision: llm.aux?.vision ?? "", summarize: llm.aux?.summarize ?? "" } })} className="field">
+              <option value="">{t("settings.auxFollowPh")}</option>
+              {modelOptions.map((m) => <option key={m} value={m} title={m}>{m}</option>)}
+            </select></div>
           <div><label className="prefix block mb-1">{t("settings.auxVision")}</label>
-            <input list="llm-model-list" value={llm.aux?.vision ?? ""} onChange={(e) => setLlm({ ...llm, aux: { reasoning: llm.aux?.reasoning ?? "", vision: e.target.value, summarize: llm.aux?.summarize ?? "" } })}
-              placeholder={t("settings.auxVisionPh")} className="field" /></div>
+            <select value={llm.aux?.vision ?? ""} onChange={(e) => setLlm({ ...llm, aux: { reasoning: llm.aux?.reasoning ?? "", vision: e.target.value, summarize: llm.aux?.summarize ?? "" } })} className="field">
+              <option value="">{t("settings.auxVisionPh")}</option>
+              {modelOptions.map((m) => <option key={m} value={m} title={m}>{m}</option>)}
+            </select></div>
           <div><label className="prefix block mb-1">{t("settings.auxSummarize")}</label>
-            <input list="llm-model-list" value={llm.aux?.summarize ?? ""} onChange={(e) => setLlm({ ...llm, aux: { reasoning: llm.aux?.reasoning ?? "", vision: llm.aux?.vision ?? "", summarize: e.target.value } })}
-              placeholder={t("settings.auxSummarizePh")} className="field" /></div>
+            <select value={llm.aux?.summarize ?? ""} onChange={(e) => setLlm({ ...llm, aux: { reasoning: llm.aux?.reasoning ?? "", vision: llm.aux?.vision ?? "", summarize: e.target.value } })} className="field">
+              <option value="">{t("settings.auxSummarizePh")}</option>
+              {modelOptions.map((m) => <option key={m} value={m} title={m}>{m}</option>)}
+            </select></div>
         </div>
         <div className="mt-4 flex items-center gap-2">
           <button onClick={test} disabled={testBusy} className="btn-ghost"><I.Zap size={12} /> {testBusy ? t("settings.testing") : t("settings.testConn")}</button>
