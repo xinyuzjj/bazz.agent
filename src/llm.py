@@ -80,8 +80,30 @@ PROVIDERS = {
         "openai/gpt-5.6-sol", "anthropic/claude-sonnet-5", "google/gemini-3.1-pro", "x-ai/grok-4.6"]},
     "ollama":   {"base_url": "http://localhost:11434/v1", "models": [
         "qwen3", "llama3.3", "deepseek-r1", "gemma3"]},
+    # —— 订阅直连（OAuth 登录即用，无需 API Key；凭据托管在 src/llm_auth.py）——
+    # copilot：GitHub Copilot 订阅（设备码登录，OpenAI 兼容端点）
+    "copilot":  {"base_url": "https://api.githubcopilot.com", "models": [
+        "gpt-5.5", "gpt-5.4", "gpt-5.3-codex", "o3", "claude-sonnet-5"]},
+    # codex：ChatGPT 订阅（PKCE 登录，Responses API，llm_auth 内做协议适配）
+    "codex":    {"base_url": "https://chatgpt.com/backend-api/codex", "models": [
+        "gpt-5.5", "gpt-5.5-pro", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"]},
+    # anthropic-oauth：Claude Pro/Max 订阅（PKCE 登录，原生 Messages API 适配）
+    "anthropic-oauth": {"base_url": "https://api.anthropic.com/v1", "models": [
+        "claude-sonnet-5", "claude-opus-5", "claude-haiku-4.5"]},
+    # nous：Nous Portal 订阅（设备码登录；模型目录 300+，此处只列常用，可「拉取模型」刷新）
+    "nous":     {"base_url": "https://inference-api.nousresearch.com/v1", "models": [
+        "anthropic/claude-opus-4.7", "anthropic/claude-sonnet-4.6", "openai/gpt-5.5",
+        "google/gemini-3-pro-preview", "deepseek/deepseek-v4-pro", "nousresearch/hermes-4-70b"]},
     "custom":   {"base_url": "", "models": []},
 }
+
+# 订阅直连 provider（OAuth 登录，无 API Key；请求路由在 llm_auth.post_chat）
+SUB_PROVIDERS = ("copilot", "codex", "anthropic-oauth", "nous")
+
+
+def _sub_provider(cfg: dict) -> str:
+    p = str((cfg or {}).get("provider") or "").lower()
+    return p if p in SUB_PROVIDERS else ""
 
 
 _LEGACY_MODEL_MAP = {
@@ -193,7 +215,16 @@ def _materialize(cfg: dict = None) -> dict:
 
 def is_configured(cfg: dict = None) -> bool:
     cfg = cfg or get_llm_config()
-    return bool(resolve_key(cfg))
+    if resolve_key(cfg):
+        return True
+    sub = _sub_provider(cfg)
+    if sub:
+        try:
+            import llm_auth
+            return bool(llm_auth.get_access_token(sub))
+        except Exception:
+            return False
+    return False
 
 
 def snapshot(cfg: dict = None) -> dict:
@@ -392,7 +423,12 @@ def _deep_thinking_budget_tokens(default_max: int) -> int:
 
 
 def _post(payload: dict, cfg: dict, timeout: int):
-    """发一次请求并返回 json；HTTP 4xx/5xx/非 JSON/网络错全部抛出（带真实响应摘要）。"""
+    """发一次请求并返回 json；HTTP 4xx/5xx/非 JSON/网络错全部抛出（带真实响应摘要）。
+    订阅直连 provider（copilot/codex/anthropic-oauth/nous）转调 llm_auth.post_chat。"""
+    sub = _sub_provider(cfg)
+    if sub:
+        import llm_auth
+        return llm_auth.post_chat(sub, payload, timeout)
     key = resolve_key(cfg)
     if not key:
         raise RuntimeError("no key")
@@ -804,9 +840,16 @@ TOOLS: List[Dict[str, Any]] = [
 
 
 def list_models(base_url: str = "", api_key: str = "", provider: str = "") -> List[str]:
-    """拉取模型目录；失败回退到 provider 预设。api_key 缺省时按当前配置解析 key_env。"""
+    """拉取模型目录；失败回退到 provider 预设。api_key 缺省时按当前配置解析 key_env。
+    订阅直连 provider 用 llm_auth 登录态 token。"""
     if not api_key:
         api_key = resolve_key(get_llm_config())
+    if not api_key and (provider or "").lower() in SUB_PROVIDERS:
+        try:
+            import llm_auth
+            api_key = llm_auth.get_access_token((provider or "").lower())
+        except Exception:
+            api_key = ""
     url = (base_url or PROVIDERS.get(provider, {}).get("base_url", "")).rstrip("/") + "/models"
     if not url or url.endswith("/models") is False and not url:
         return PROVIDERS.get(provider, {}).get("models", [])
@@ -834,6 +877,24 @@ def test_connection(base_url: str = "", api_key: str = "", model: str = "", prov
     eff_provider = (provider or cfg.get("provider", "") or "").lower()
     default_model = "deepseek-v4-flash" if eff_provider == "deepseek" else "gpt-5.4-mini"
     model = model or cfg.get("model", "") or default_model
+    # 订阅直连 provider：不测 /models，直接用登录态发一次极小补全
+    if eff_provider in SUB_PROVIDERS:
+        try:
+            import llm_auth
+            if not llm_auth.get_access_token(eff_provider):
+                return {"ok": False, "model_tried": model,
+                        "error": "订阅未登录：请先在「订阅登录」卡片完成 OAuth 授权"}
+            d = llm_auth.post_chat(eff_provider,
+                                   {"model": model, "messages": [{"role": "user", "content": "ping"}],
+                                    "max_tokens": 16}, 45)
+            msg = d.get("choices", [{}])[0].get("message") if isinstance(d, dict) and d.get("choices") else None
+            if isinstance(msg, dict) and (msg.get("content") or msg.get("tool_calls")):
+                return {"ok": True, "model_tried": model, "model_hint": model, "subscription": True}
+            return {"ok": False, "model_tried": model,
+                    "detail": f"订阅端点回包异常（choices 为空）· {json.dumps(d, ensure_ascii=False)[:160]}"}
+        except Exception as e:
+            return {"ok": False, "model_tried": model,
+                    "detail": f"订阅调用失败：{_summarize_error(e)}"}
     # 官方 DeepSeek 端点：把 UI/配置里残留的退役别名迁移到现名再测
     if _is_official_deepseek({"provider": provider or cfg.get("provider", ""), "base_url": base_url}):
         model = _map_legacy_model(model, {"provider": "deepseek", "base_url": base_url})
@@ -971,6 +1032,21 @@ def chat(system: str, user: str, temperature: float = 0.6, max_tokens: int = 900
 def stream_chat(system: str, user: str, temperature: float = 0.6, llm_cfg: dict = None):
     """yield 文本增量；不可用先 yield None 一次。"""
     cfg = _materialize(llm_cfg)
+    # 订阅直连 provider：走 post_chat 非流式一次拿全文（codex SSE 在 llm_auth 内聚合）
+    sub = _sub_provider(cfg)
+    if sub:
+        try:
+            import llm_auth
+            d = llm_auth.post_chat(sub, {"model": cfg.get("model"),
+                                         "messages": [{"role": "system", "content": system},
+                                                      {"role": "user", "content": user}],
+                                         "temperature": temperature, "max_tokens": 2000}, 90)
+            msg = _unwrap_choice(d, cfg.get("model") or "")
+            text = (msg.get("content") or "").strip()
+            yield text if text else None
+        except Exception:
+            yield None
+        return
     key = cfg.get("api_key")
     if not key:
         yield None

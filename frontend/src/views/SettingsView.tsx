@@ -4,6 +4,7 @@ import { I } from "../components/icons";
 import { CronPanel, McpPanel, ChannelPanel } from "./AdminPanels";
 import { useI18n } from "../i18n/i18n";
 import UpdatePanel from "../components/UpdatePanel";
+import { SubscriptionPanel } from "../components/SubscriptionAuth";
 import { ProxyPoolView } from "./ProxyPoolView";
 import { pushToast } from "../components/Toasts";
 
@@ -29,6 +30,11 @@ const LLM_PROVIDERS = [
   // OpenRouter：聚合网关，模型名「厂商/模型」，完整目录请用「拉取模型」。
   { id: "openrouter", label: "OpenRouter", labelEn: "OpenRouter", base: "https://openrouter.ai/api/v1", presets: ["openai/gpt-5.6-sol", "anthropic/claude-sonnet-5", "google/gemini-3.1-pro", "x-ai/grok-4.6"] },
   { id: "ollama", label: "Ollama (Local)", labelEn: "Ollama (Local)", base: "http://127.0.0.1:11434/v1", presets: ["qwen3", "llama3.3", "deepseek-r1", "gemma3"] },
+  // 订阅直连（OAuth 登录，无需 API Key；登录入口在上方「订阅登录」卡片）。
+  { id: "copilot", label: "GitHub Copilot (订阅)", labelEn: "GitHub Copilot (Subscription)", base: "https://api.githubcopilot.com", presets: ["gpt-5.5", "gpt-5.4", "gpt-5.3-codex", "o3", "claude-sonnet-5"] },
+  { id: "codex", label: "ChatGPT / Codex (订阅)", labelEn: "ChatGPT / Codex (Subscription)", base: "https://chatgpt.com/backend-api/codex", presets: ["gpt-5.5", "gpt-5.5-pro", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"] },
+  { id: "anthropic-oauth", label: "Claude 订阅 (Pro/Max)", labelEn: "Claude Subscription (Pro/Max)", base: "https://api.anthropic.com/v1", presets: ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4.5"] },
+  { id: "nous", label: "Nous Portal (订阅)", labelEn: "Nous Portal (Subscription)", base: "https://inference-api.nousresearch.com/v1", presets: ["anthropic/claude-opus-4.7", "anthropic/claude-sonnet-4.6", "openai/gpt-5.5", "google/gemini-3-pro-preview", "deepseek/deepseek-v4-pro", "nousresearch/hermes-4-70b"] },
   { id: "custom", label: "自定义 / OpenAI 兼容", labelEn: "Custom / OpenAI-compatible", base: "", presets: [] },
 ];
 
@@ -129,6 +135,12 @@ export function SettingsView({ settings, onSaved, onNav }: { settings: any; onSa
       {/* 软件更新 —— 置顶展示：打开设置第一眼可见（v1.2.10 起从页底迁到此处） */}
       <UpdatePanel />
 
+      {/* 订阅登录（v1.5.41）：copilot / codex / anthropic-oauth / nous —— OAuth 直连免 API Key */}
+      <SubscriptionPanel onUse={(id) => {
+        const p = LLM_PROVIDERS.find((x) => x.id === id);
+        setLlm((prev: any) => ({ ...prev, provider: id, base_url: p?.base ?? prev.base_url, model: p?.presets?.[0] ?? prev.model }));
+      }} />
+
       {/* 大模型配置（真实 · 多模型 + fallback 链） */}
       <div className="glass p-4">
         <div className="flex items-center gap-2 mb-3">
@@ -172,8 +184,16 @@ export function SettingsView({ settings, onSaved, onNav }: { settings: any; onSa
               placeholder={llm.configured ? t("settings.keySavedPh") : "sk-..."} className="field" /></div>
           <div><label className="prefix block mb-1">{t("settings.mainModel")}</label>
             <input list="llm-model-list" value={llm.model ?? ""} onChange={(e) => setLlm({ ...llm, model: e.target.value })} placeholder={t("settings.modelPh")} className="field" />
-            <datalist id="llm-model-list">{modelList.map((m) => <option key={m} value={m} />)}</datalist></div>
+            <datalist id="llm-model-list">{modelList.map((m) => <option key={m} value={m} />)}</datalist>
+          </div>
         </div>
+        {["copilot", "codex", "anthropic-oauth", "nous"].includes(llm.provider) && (
+          <div className="mt-2 rounded-md border border-gold/40 bg-gold/[0.06] px-3 py-2 font-mono text-[11px] text-gold">
+            {isEn
+              ? "Subscription provider selected — no API key needed. Click the plug icon on the card above to log in; API key field is ignored."
+              : "已选择订阅直连提供方：无需 API Key（留空即可）。请点上方「订阅登录」卡片右侧的 🔌 图标完成 OAuth 授权，未授权时连接测试会提示先登录。"}
+          </div>
+        )}
         <div className="mt-3">
           <div className="flex items-center justify-between mb-1.5">
             <label className="prefix">{t("settings.backupFallback")}</label>

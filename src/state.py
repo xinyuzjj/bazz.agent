@@ -526,6 +526,7 @@ def rollback_last_turn(cid, new_user_text=None, upto_user_index=None):
 #   src/web3_wallet.py、src/mcp_client.py）
 SENSITIVE_SETTING_KEYS = {
     "llm",                  # LLM 配置 JSON（含 api_key）—— src/llm.py
+    "llm_oauth",            # LLM 订阅 OAuth 凭据（refresh/access token、sk- key）—— src/llm_auth.py
     "BINANCE_API_KEY",      # 币安 CEX API Key / Secret —— src/cex_wallet.py
     "BINANCE_API_SECRET",
     "W3_API_KEY",           # Web3 钱包服务 API Key / Secret —— src/web3_wallet.py

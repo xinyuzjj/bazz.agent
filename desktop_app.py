@@ -35,6 +35,7 @@ from fastapi.staticfiles import StaticFiles
 import state
 import agent_core
 import llm
+import llm_auth
 import scheduler
 from mcp_client import (list_servers, add_server, remove_server, set_enabled as mcp_set_enabled,
                         call_tool, mcp_status, mcp_list_tools, list_tools_for, get_server,
@@ -1220,6 +1221,41 @@ def llm_models(provider: str = "", base_url: str = "", api_key: str = ""):
         provider=provider or cfg.get("provider", ""),
     )
     return {"models": models}
+
+
+# ---------------- LLM 订阅 OAuth 登录（v1.5.41：copilot/codex/anthropic-oauth/nous） ----------------
+
+@app.get("/api/llm/auth/status")
+def llm_auth_status():
+    return {"ok": True, "providers": llm_auth.status()}
+
+
+@app.post("/api/llm/auth/start")
+async def llm_auth_start(req: Request):
+    b = await req.json()
+    return llm_auth.start((b.get("provider") or "").strip())
+
+
+@app.post("/api/llm/auth/poll")
+async def llm_auth_poll(req: Request):
+    b = await req.json()
+    try:
+        wait = max(1.0, min(float(b.get("wait") or 8), 20.0))
+    except Exception:
+        wait = 8.0
+    return llm_auth.poll((b.get("provider") or "").strip(), b.get("session") or "", wait)
+
+
+@app.post("/api/llm/auth/logout")
+async def llm_auth_logout(req: Request):
+    b = await req.json()
+    return llm_auth.logout((b.get("provider") or "").strip())
+
+
+@app.post("/api/llm/auth/apikey")
+async def llm_auth_apikey(req: Request):
+    b = await req.json()
+    return llm_auth.set_api_key((b.get("provider") or "").strip(), b.get("key") or "")
 
 
 # ---------------- 长期记忆 ----------------

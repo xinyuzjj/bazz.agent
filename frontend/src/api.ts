@@ -98,6 +98,12 @@ export const api = {
   llmTest: (b: any) => jpost("/llm/test", b),
   llmModels: (provider: string, base_url: string, api_key: string) =>
     jget("/llm/models?provider=" + encodeURIComponent(provider) + "&base_url=" + encodeURIComponent(base_url) + "&api_key=" + encodeURIComponent(api_key)),
+  // v1.5.41 订阅 OAuth 登录（copilot/codex/anthropic-oauth/nous）
+  llmAuthStatus: () => jget("/llm/auth/status"),
+  llmAuthStart: (provider: string) => jpost("/llm/auth/start", { provider }),
+  llmAuthPoll: (provider: string, session: string) => jpost("/llm/auth/poll", { provider, session }),
+  llmAuthLogout: (provider: string) => jpost("/llm/auth/logout", { provider }),
+  llmAuthApiKey: (provider: string, key: string) => jpost("/llm/auth/apikey", { provider, key }),
   memory: () => jget("/memory"),
   memoryStats: () => jget("/memory/stats"),
   addMemory: (key: string, value: string) => jpost("/memory", { key, value }),

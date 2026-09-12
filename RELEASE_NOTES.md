@@ -1,6 +1,61 @@
-# BAZZ.AGENT v1.5.40
+# BAZZ.AGENT v1.5.41
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.41 更新要点（LLM 订阅 OAuth 登录：四家订阅直连，不用 API Key）
+
+这一版新增「订阅登录」：GitHub Copilot、ChatGPT/Codex、Anthropic Claude、Nous Portal
+四家订阅账号 OAuth 授权后直接当模型用——**不买 API Key、不配 base_url，登录即用**。
+凭据走 DPAPI 本地加密存储，永不上传出本机。
+
+---
+
+### 一、四家订阅，两种授权方式
+
+| Provider | 授权方式 | 用法 |
+|---|---|---|
+| GitHub Copilot | 设备码（browser-in / device-flow） | 复制 8 位码 → 浏览器输入 → 授权即连 |
+| ChatGPT / Codex | PKCE 本地回环（127.0.0.1:1455） | 点连接拉起浏览器，授权后自动回连 |
+| Anthropic Claude (Pro/Max) | OAuth 本地回环 | 同上，全自动 |
+| Nous Portal | 设备码 + sk- API Key 兜底 | 设备码为主，拿不到授权页可手动填 Key |
+
+设置页新增「订阅登录」卡片：每家一张卡，显示连接状态、账号、到期时间；
+支持断开重连。点「使用」直接把主模型切到该订阅（自动填 provider / base_url / 默认模型）。
+
+### 二、协议适配：不是所有订阅都说 OpenAI 方言
+
+- **Copilot / Nous**：OpenAI 兼容端点直连，Copilot 带编辑器版本头。
+- **Codex**：把 `/chat/completions` 请求转成 Responses API（SSE 流式解析，
+  含 `message` 类型 item 的正文提取），模型名与 `stream` 语义同步换算。
+- **Anthropic OAuth**：转成 Messages API（system 拆头、多模态 content 分块、
+  max_tokens 补默认），响应统一回 OpenAI 形状。
+
+`llm.py` 的 `_post / test_connection / stream_chat` 全部挂上订阅路由：
+订阅未登录或 token 失效时抛带指引的错误文案，fallback 链照常接住。
+
+### 三、令牌托管与刷新
+
+- OAuth token 存 `llm_oauth` 敏感 key，`state.py` 现有 DPAPI 加密钩子自动生效；
+- access token 到期前自动用 refresh token 续期，**rotating refresh token**
+  （Codex 单次有效）刷新成功后立即回存新值，避免下次刷新被拒。
+
+### 四、安全边界
+
+- 新增 `/api/llm/auth/*` 路由全部走既有本机鉴权中间件；
+- PKCE 回调只绑 `127.0.0.1`，state 参数防 CSRF；
+- 所有凭据类变量依旧不出沙箱环境（沿用 `_ENV_DENY_SUBSTR`）。
+
+### 五、验证
+
+- 新增 `tests/test_v1541_llm_auth.py` **21/21**：敏感 key 注册 / provider 预设对齐 /
+  Codex PKCE URL 与 state / Anthropic 头与消息转换 / SSE 解析 /
+  rotating refresh token 回存 / 过期自动续期 / 登出清理 / _post 路由 / stream 路由。
+- 既有套件（v1.5.28~v1.5.40）全绿；`tsc --noEmit` 退出码 0；`vite build` 成功；
+  全部改动文件 `py_compile` 通过。
+
+---
+
+# BAZZ.AGENT v1.5.40
 
 ## 🆕 v1.5.40 更新要点（广场文章：四种风格轮换 + 代币消息面 + 仓位算法口径修正）
 
