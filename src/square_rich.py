@@ -603,71 +603,175 @@ def _bias(stat: dict) -> tuple:
     return bias, why, smc
 
 
-def _plan(stat: dict, bias: str, smc: dict = None) -> list:
-    """仓位/点位方案（举例口径：100U 本金、单笔风险 5U）。点位基于 4h SMC：OB/OTE/摆动点。"""
+def _size_line(price: float, stop: float, direction: str) -> str:
+    """仓位算法（举例口径：100U 本金、单笔风险 5U）。"""
+    dist = abs(price - stop) / price * 100
+    if dist < 0.5:
+        dist = 0.5
+    notional = 5 / (dist / 100)          # 单笔想亏 5U → 名义 = 5 / 止损%
+    margin10 = notional / 10
+    tip = ""
+    if margin10 > 30:
+        lv = max(2, int(10 * 30 / margin10))
+        tip = f"（10x 保证金要占 {margin10:.0f}U，太重，建议降到 {lv}x 左右）"
+        margin10 = notional / lv
+    side = "做多" if direction == "long" else "做空"
+    return (f"· 仓位算法：止损位 {_fmt(stop)}（距离 {dist:.1f}%）。100U 本金、单笔亏 5U → "
+            f"{side}名义 ≈ {notional:.0f}U，10x 占保证金 ≈ {margin10:.0f}U{tip}")
+
+
+def _plan_levels(stat: dict, bias: str, smc: dict = None) -> dict:
+    """算出「入场 / 止损 / 止盈」三级点位，**供 _plan() 与反向剧本共用**。
+
+    为什么必须共用（2026-09-12 修）：反向剧本原来自己另取 90 日低点当多头的作废线，
+    与这里真正给出的止损差了 40% 量级 —— 那篇 ETH 文章入场 2,507.60、止损 2,495.06，
+    作废线却是 1,503.32。同一段计划自相矛盾，读者照它扛单要亏 40%。
+    作废线必须锚在同一笔单的止损上，所以先把点位算出来、两边都引用它。
+
+    返回 {} 表示数据不足；bias == "neutral" 时 entry/stop/tp1 为 None。
+    """
     smc = smc or {}
     k = stat.get("k4h") or stat.get("k90") or {}
     c = k.get("closes") or []
-    if len(c) < 20 or not k.get("lows"):
-        return ["· 数据不足，给不出靠谱点位，宁可错过不做没把握的。"]
+    if len(c) < 20 or not k.get("lows") or not k.get("highs"):
+        return {}
     price = c[-1]
     r10_lo = min(k["lows"][-10:])
     r10_hi = max(k["highs"][-10:])
     ob = smc.get("ob") or {}
-    out = []
-
-    def _size_line(stop, direction):
-        dist = abs(price - stop) / price * 100
-        if dist < 0.5:
-            dist = 0.5
-        notional = 5 / (dist / 100)          # 单笔想亏 5U → 名义 = 5 / 止损%
-        margin10 = notional / 10
-        tip = ""
-        if margin10 > 30:
-            lv = max(2, int(10 * 30 / margin10))
-            tip = f"（10x 保证金要占 {margin10:.0f}U，太重，建议降到 {lv}x 左右）"
-            margin10 = notional / lv
-        side = "做多" if direction == "long" else "做空"
-        return (f"· 仓位算法：止损位 {_fmt(stop)}（距离 {dist:.1f}%）。100U 本金、单笔亏 5U → "
-                f"{side}名义 ≈ {notional:.0f}U，10x 占保证金 ≈ {margin10:.0f}U{tip}")
+    ob_lo, ob_hi = ob.get("low"), ob.get("high")
+    ote_lo, ote_hi = smc.get("ote_lo"), smc.get("ote_hi")
+    lv = {"price": price, "k": k, "r10_lo": r10_lo, "r10_hi": r10_hi,
+          "entry": None, "stop": None, "tp1": None, "tp_txt": ""}
 
     if bias == "long":
-        ob_lo, ob_hi = ob.get("low"), ob.get("high")
-        ote_lo, ote_hi = smc.get("ote_lo"), smc.get("ote_hi")
         if ob_lo and ob_hi and ob_lo < price:
-            entry = f"· 入场：优先挂 {_fmt(ob_lo)} ~ {_fmt(ob_hi)} 的多头 OB 区回踩接（限价），现价 {_fmt(price)} 直接追的盈亏比一般"
-            stop = ob_lo * 0.995
+            lv["entry"] = (f"· 入场：优先挂 {_fmt(ob_lo)} ~ {_fmt(ob_hi)} 的多头 OB 区回踩接（限价），"
+                           f"现价 {_fmt(price)} 直接追的盈亏比一般")
+            lv["stop"] = ob_lo * 0.995
         elif smc.get("ote_dir") == "up" and ote_lo is not None and ote_lo < price:
-            entry = f"· 入场：等回踩 OTE 窗口 {_fmt(ote_lo)} ~ {_fmt(ote_hi)}（斐波那契 0.618-0.705）分批接"
-            stop = ote_lo * 0.99
+            lv["entry"] = f"· 入场：等回踩 OTE 窗口 {_fmt(ote_lo)} ~ {_fmt(ote_hi)}（斐波那契 0.618-0.705）分批接"
+            lv["stop"] = ote_lo * 0.99
         else:
-            entry = f"· 入场：现价 {_fmt(price)} 附近轻仓试，或等 4h 回踩 {_fmt(r10_lo*0.995)}（近 10 根低点下方）确认支撑"
-            stop = r10_lo * 0.99
-        tp1 = smc["sh_v"][-1] if smc.get("sh_v") else max(k["highs"][-30:])
-        out += [entry,
-                f"· 止盈：第一目标 {_fmt(tp1)}（4h 前高/摆动高点）先减半，破位续持有看日线级别空间",
-                ]
-        out.append(_size_line(stop, "long"))
+            lv["entry"] = (f"· 入场：现价 {_fmt(price)} 附近轻仓试，"
+                           f"或等 4h 回踩 {_fmt(r10_lo*0.995)}（近 10 根低点下方）确认支撑")
+            lv["stop"] = r10_lo * 0.99
+        lv["tp1"] = smc["sh_v"][-1] if smc.get("sh_v") else max(k["highs"][-30:])
+        lv["tp_txt"] = "4h 前高/摆动高点"
     elif bias == "short":
-        ob_lo, ob_hi = ob.get("low"), ob.get("high")
         if ob_hi and ob_hi > price:
-            entry = f"· 入场：优先挂 {_fmt(ob_lo)} ~ {_fmt(ob_hi)} 的空头 OB 区反弹接（限价），不追空"
-            stop = ob_hi * 1.005
+            lv["entry"] = f"· 入场：优先挂 {_fmt(ob_lo)} ~ {_fmt(ob_hi)} 的空头 OB 区反弹接（限价），不追空"
+            lv["stop"] = ob_hi * 1.005
         else:
-            entry = f"· 入场：反弹到 {_fmt(r10_hi*1.005)}（近 10 根高点上方）再空，不追空"
-            stop = r10_hi * 1.01
-        tp1 = smc["sl_v"][-1] if smc.get("sl_v") else min(k["lows"][-30:])
-        out += [entry,
-                f"· 止盈：第一目标 {_fmt(tp1)}（4h 前低/摆动低点）先减半，破位续持有",
-                ]
-        out.append(_size_line(stop, "short"))
-    else:
-        out += [
-            "· 观望为主：多空信号打架时，不进场就是最好的仓位。",
-            f"· 若非要动：向上突破 {_fmt(r10_hi*1.01)} 小仓跟多 / 跌破 {_fmt(r10_lo*0.99)} 小仓跟空，"
-            "严格止损，仓位按「单笔亏 5U ÷ 止损距离%」反推名义。",
-        ]
-    return out
+            lv["entry"] = f"· 入场：反弹到 {_fmt(r10_hi*1.005)}（近 10 根高点上方）再空，不追空"
+            lv["stop"] = r10_hi * 1.01
+        lv["tp1"] = smc["sl_v"][-1] if smc.get("sl_v") else min(k["lows"][-30:])
+        lv["tp_txt"] = "4h 前低/摆动低点"
+    return lv
+
+
+def _plan(stat: dict, bias: str, smc: dict = None) -> list:
+    """仓位/点位方案（举例口径：100U 本金、单笔风险 5U）。点位基于 4h SMC：OB/OTE/摆动点。"""
+    lv = _plan_levels(stat, bias, smc)
+    if not lv:
+        return ["· 数据不足，给不出靠谱点位，宁可错过不做没把握的。"]
+    if bias == "long":
+        return [lv["entry"],
+                f"· 止盈：第一目标 {_fmt(lv['tp1'])}（{lv['tp_txt']}）先减半，破位续持有看日线级别空间",
+                _size_line(lv["price"], lv["stop"], "long")]
+    if bias == "short":
+        return [lv["entry"],
+                f"· 止盈：第一目标 {_fmt(lv['tp1'])}（{lv['tp_txt']}）先减半，破位续持有",
+                _size_line(lv["price"], lv["stop"], "short")]
+    return ["· 观望为主：多空信号打架时，不进场就是最好的仓位。",
+            f"· 若非要动：向上突破 {_fmt(lv['r10_hi']*1.01)} 小仓跟多 / 跌破 {_fmt(lv['r10_lo']*0.99)} 小仓跟空，"
+            "严格止损，仓位按「单笔亏 5U ÷ 止损距离%」反推名义。"]
+
+
+# 作废线允许离现价多远。超过就该换一种说法，而不是硬写一个读者按它扛单会亏 40% 的价位。
+_INVALID_MAX_DROP = 0.15     # 4h 结构位：现价下方 15% 以内
+_MACRO_MAX_DROP = 0.20       # 日线级别大位：现价下方 20% 以内才值得附带一提
+
+
+def _nearest_struct_below(price, stop, k, smc):
+    """止损下方最近的那个结构位（越贴近止损越有参考价值）。取不到返回 (None, "")。"""
+    cands = []
+    ote_lo = (smc or {}).get("ote_lo")
+    if ote_lo:
+        cands.append((ote_lo, "OTE 下沿"))
+    for v in ((smc or {}).get("sl_v") or [])[-3:]:
+        if v:
+            cands.append((v, "4h 摆动低点"))
+    lows = (k or {}).get("lows") or []
+    if lows:
+        cands.append((min(lows[-20:]), "近 20 根 4h 低点"))
+    # 必须在止损下方、且离现价不能太远，否则不是「这笔单」的结构位
+    ok = [(v, lb) for v, lb in cands
+          if v and v < stop and v > price * (1 - _INVALID_MAX_DROP)]
+    if not ok:
+        return None, ""
+    return max(ok, key=lambda t: t[0])
+
+
+def _macro_level(price, stat):
+    """90 日低点这类「日线级别大位」—— 离现价太远就不提，免得跟这笔单的止损混淆。"""
+    lows = ((stat or {}).get("k90") or {}).get("lows") or []
+    if not lows or not price:
+        return None
+    lo = min(lows)
+    if 0 < (price - lo) / price <= _MACRO_MAX_DROP:
+        return lo
+    return None
+
+
+def _invalid_line(stat: dict, bias: str, smc: dict = None) -> str:
+    """反向剧本（作废条件）。核心约束：**作废线必须锚在这笔单自己的止损上**。
+
+    修复记录（2026-09-12，用户实测）：旧实现 `if bias != "short"` 时直接取 90 日低点当
+    多头的作废线，那篇 ETH 文章里入场 2,507.60、止损 2,495.06，作废线却写成
+    「跌破 1,503.32（90 日低点下方）」—— 比止损还低 40%。三个后果：
+      ① 同一段计划自相矛盾：止损 2,495 早就先打到了，1,503 那句永远不会触发；
+      ② 把「这笔单作废」和「大趋势作废」混为一谈，读者照它扛单要亏 40%；
+      ③ 旁边的「仓位算法」已经给了 2,495.06，两句数字打架，读者不知道信哪个。
+
+    现在改为：
+      - 作废线 = `_plan_levels()` 算出的同一个 stop（同一笔单的口径）；
+      - 再补一个「离止损最近的更深结构位」（4h 摆动低点 / OTE 下沿 / 近 20 根低点，
+        且必须在现价下方 _INVALID_MAX_DROP 以内）作为「结构坏掉」的确认；
+      - 90 日低点只在离现价 ≤ _MACRO_MAX_DROP 时才附带提及，并明确标注它跟止损不是一回事。
+    另外修掉一个连带 bug：旧代码 `bias != "short"` 把 neutral 也当成多头，观望场景下
+    照样输出「上面这些多头逻辑全部作废」，可那段计划里根本没有多头单。
+    """
+    lv = _plan_levels(stat, bias, smc)
+    if not lv:
+        return "· 反向剧本：数据不足，先不参与，等结构清楚了再定。"
+
+    if bias == "short":
+        stop = lv.get("stop")
+        if stop:
+            return (f"· 反向剧本：4h 收盘站回 {_fmt(stop)} 上方（本单止损位）就先认错出场；"
+                    "若进一步放量收复 MA20 并站稳，空头逻辑才算真的作废。")
+        return "· 反向剧本：哪天放量收复 MA20 并站稳，空头逻辑作废，及时认错不丢人。"
+
+    if bias == "neutral":
+        # 没有仓位就没有「这笔单作废」，只给两种「方向自己走出来」的触发条件
+        return (f"· 反向剧本：现在没仓位，等方向自己走出来 —— 站稳 {_fmt(lv['r10_hi']*1.01)} 转偏多、"
+                f"跌破 {_fmt(lv['r10_lo']*0.99)} 转偏空，两边都不给就继续空仓等。")
+
+    price = lv["price"]
+    stop = lv.get("stop")
+    if not stop:
+        return "· 反向剧本：4h 收盘重新跌回当前区间下沿并收不回来，多头逻辑就先放一放，别硬扛。"
+
+    txt = f"· 反向剧本：4h 收盘跌回 {_fmt(stop)} 下方（本单止损位）就别恋战，按计划砍仓"
+    struct, label = _nearest_struct_below(price, stop, lv["k"], smc)
+    if struct:
+        txt += f"；若连 {_fmt(struct)}（{label}）都收不回来，多头结构才算真的走坏"
+    txt += "。"
+    macro = _macro_level(price, stat)
+    if macro:
+        txt += f" 日线级别的大位在 {_fmt(macro)} 附近，那是大趋势的事，跟这笔单的止损不是一回事。"
+    return txt
 
 
 def _fmt_lo_hi(t_label: str) -> str:
@@ -819,7 +923,6 @@ def _article(stat: dict) -> tuple:
     elif smc.get("ote") == "inside" and bias == "long":
         title = f"{base}：4 小时回踩进 OTE 窗口，我盯上了"
 
-    lo, hi = (min(k["lows"]), max(k["highs"])) if k.get("lows") else (None, None)
     lines = [
         f"${base} 现价 {_fmt(price)} USDT" + (f"，24h {chg24:+.2f}%。" if chg24 is not None else "。"),
         "",
@@ -835,10 +938,10 @@ def _article(stat: dict) -> tuple:
     lines.append("")
     lines.append("真要动手的话，我是这么安排的（举例 100U 本金，仅演示算法）：")
     lines += _plan(stat, bias, smc)
-    if bias != "short":
-        lines.append(f"· 反向剧本：4h 收盘跌破 {_fmt(lo*0.995) if lo else '关键支撑'}（90 日低点下方）且收不回来，上面这些多头逻辑全部作废，砍仓别犹豫。")
-    else:
-        lines.append("· 反向剧本：哪天放量收复 MA20 并站稳，空头逻辑作废，及时认错不丢人。")
+    # v1.5.39：反向剧本交给 _invalid_line()，它复用 _plan_levels() 的同一个止损 ——
+    # 不再出现「止损 2,495 / 作废线 1,503」这种自相矛盾，也修掉了
+    # neutral（观望）被 `bias != "short"` 误判成多头剧本的问题。
+    lines.append(_invalid_line(stat, bias, smc))
     lines.append("")
     lines += ["仓位比观点重要，活着比赚钱重要。以上全是个人思路，不构成投资建议，DYOR。",
               "",
