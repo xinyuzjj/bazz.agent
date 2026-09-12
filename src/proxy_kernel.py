@@ -28,6 +28,8 @@ PROVIDERS_DIR = os.path.join(KERNEL_DIR, "providers")
 MIHOMO_EXE = os.path.join(KERNEL_DIR, "mihomo.exe")
 CONFIG_PATH = os.path.join(KERNEL_DIR, "config.yaml")
 LOG_PATH = os.path.join(KERNEL_DIR, "kernel.log")
+# v1.5.32：内核状态落盘（pid + 实际端口）。见 _recover() 说明。
+STATE_PATH = os.path.join(KERNEL_DIR, "state.json")
 
 # v1.3.8：安装包内置内核的位置（build-desktop.js 由 CI 下载后打进 <安装根>/.system/kernel/）
 BUNDLED_KERNEL_EXE = os.path.join(workspace.app_root(), ".system", "kernel", "mihomo.exe")
@@ -36,6 +38,9 @@ GROUP_NAME = "BAZZ"
 TEST_URL = "https://api.binance.com/api/v3/ping"
 
 _LOCK = threading.RLock()
+# 注意：以下三项都是**进程内**状态。mihomo 是独立进程，可能由上一个后端实例
+# （或同机的第二个实例）拉起，因此任何依赖它们的判断都必须先走 _recover() 兜底，
+# 否则「内核客观在跑」也会被判成没跑（v1.5.32 修复的正是这个 bug）。
 _proc = None
 _mixed_port = 0
 _ctrl_port = 0
@@ -99,6 +104,8 @@ def _free_port(prefer):
 
 
 def mixed_port():
+    if not _mixed_port:
+        _recover()          # v1.5.32：端口可能由上一个进程分配，先尝试恢复
     return _mixed_port
 
 
@@ -106,21 +113,96 @@ def _ctrl():
     return f"http://127.0.0.1:{_ctrl_port}"
 
 
-def is_running():
-    global _proc
-    if _proc is None:
-        return False
-    if _proc.poll() is not None:
-        _proc = None
+def _probe_ctrl(port):
+    """控制面探活：/version 返回 200 才算内核真的在跑。"""
+    if not port:
         return False
     try:
-        r = requests.get(_ctrl() + "/version", timeout=2)
-        return r.status_code == 200
+        return requests.get(f"http://127.0.0.1:{port}/version", timeout=2).status_code == 200
     except Exception:
         return False
 
 
+def _ports_from_config():
+    """从落盘的 config.yaml 兜底解析端口（state.json 缺失/损坏时用）。"""
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            txt = f.read()
+    except OSError:
+        return 0, 0
+    mp = re.search(r"^mixed-port:\s*(\d+)", txt, re.M)
+    ec = re.search(r"^external-controller:\s*[\d.]*:(\d+)", txt, re.M)
+    return (int(mp.group(1)) if mp else 0), (int(ec.group(1)) if ec else 0)
+
+
+def _write_state():
+    """把 pid + 实际端口落盘，供**其它进程**识别这个内核。"""
+    try:
+        os.makedirs(KERNEL_DIR, exist_ok=True)
+        tmp = STATE_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"pid": _proc.pid if _proc is not None else 0,
+                       "mixed_port": _mixed_port, "ctrl_port": _ctrl_port}, f)
+        os.replace(tmp, STATE_PATH)
+    except OSError:
+        pass
+
+
+def _read_state():
+    try:
+        with open(STATE_PATH, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        return int(d.get("pid") or 0), int(d.get("mixed_port") or 0), int(d.get("ctrl_port") or 0)
+    except (OSError, ValueError, TypeError):
+        return 0, 0, 0
+
+
+def _clear_state():
+    try:
+        os.remove(STATE_PATH)
+    except OSError:
+        pass
+
+
+def _recover():
+    """v1.5.32：本进程没亲手拉起内核时，从落盘状态恢复端口并探活。
+
+    背景（真实事故）：代理池里启用的是 vless 等**内核型**节点，端口由 mihomo 的
+    _write_config() 动态分配并只存在进程内存里。后端一旦重启（或同机存在第二个实例、
+    内核被上一实例拉成孤儿进程），新进程 _proc 恒为 None → is_running() 返回 False、
+    mixed_port() 返回 0 → proxy_pool._apply_env() 走 else 分支把 HTTP(S)_PROXY
+    **清空** → 所有技能子进程直连外网 → Node/undici 报 UND_ERR_CONNECT_TIMEOUT。
+    用户侧表现：「代理池里节点明明是启用的、延迟也测得出，但广场发文/取数一律超时」。
+
+    这里按 state.json → config.yaml 的顺序恢复端口，再用控制面探活确认内核真在跑。
+    """
+    global _mixed_port, _ctrl_port
+    if not _ctrl_port:
+        _, mp, cp = _read_state()
+        if not cp:
+            mp, cp = _ports_from_config()
+        _mixed_port, _ctrl_port = mp, cp
+    if _probe_ctrl(_ctrl_port):
+        return True
+    # 探不通：清掉缓存，下次重新解析（内核可能换过端口）
+    _mixed_port = 0
+    _ctrl_port = 0
+    return False
+
+
+def is_running():
+    global _proc
+    if _proc is not None:
+        if _proc.poll() is not None:
+            _proc = None        # 本进程拉起的内核已退出 → 落到 _recover() 看别处有没有
+        else:
+            return _probe_ctrl(_ctrl_port)
+    return _recover()
+
+
 def version():
+    if not _ctrl_port:
+        _recover()          # v1.5.32：端口可能由上一个进程分配
     try:
         r = requests.get(_ctrl() + "/version", timeout=2)
         if r.status_code == 200:
@@ -131,6 +213,7 @@ def version():
     if is_installed():
         try:
             out = subprocess.run([MIHOMO_EXE, "-v"], capture_output=True, text=True,
+                                 encoding="utf-8", errors="replace",
                                  timeout=8, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             m = re.search(r"mihomo\s+([0-9.]+)", (out.stdout or "") + (out.stderr or ""))
             return m.group(1) if m else "已安装"
@@ -140,8 +223,9 @@ def version():
 
 
 def status():
-    return {"installed": is_installed(), "running": is_running(),
-            "version": version(), "mixed_port": _mixed_port if is_running() else 0,
+    running = is_running()      # 会顺带恢复端口，因此下面读 _mixed_port 是安全的
+    return {"installed": is_installed(), "running": running,
+            "version": version(), "mixed_port": _mixed_port if running else 0,
             "download": dict(_dl)}
 
 
@@ -251,6 +335,7 @@ def start():
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except Exception as e:
             return {"ok": False, "error": f"内核启动失败：{e}"}
+        _write_state()      # v1.5.32：落盘 pid + 端口，供后续进程（重启/第二实例）识别
         # 等控制面就绪（最多 20s）
         for _ in range(40):
             try:
@@ -260,14 +345,48 @@ def start():
             except Exception:
                 pass
             if _proc.poll() is not None:
+                _proc = None
+                _clear_state()
                 return {"ok": False, "error": "内核进程启动后退出，详见 kernel.log。"}
             time.sleep(0.5)
         return {"ok": False, "error": "内核启动超时（控制面无响应），详见 kernel.log。"}
 
 
+def _pid_image(pid):
+    """取某 PID 的镜像名（小写）；取不到返回空串。"""
+    try:
+        out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH", "/FO", "CSV"],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             timeout=8, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        lines = [ln for ln in (out.stdout or "").splitlines() if ln.strip()]
+        if not lines:
+            return ""
+        return lines[0].split(",")[0].strip().strip('"').lower()
+    except Exception:
+        return ""
+
+
+def _kill_recovered():
+    """v1.5.32：内核由**上一个进程**拉起时本进程 _proc 为空，从 state.json 取 pid 收掉。
+
+    先核对镜像名确为 mihomo.exe —— PID 会被系统复用，不核对可能误杀无关进程。"""
+    if _proc is not None:
+        return
+    pid, _, _ = _read_state()
+    if pid <= 0 or _pid_image(pid) != "mihomo.exe":
+        return
+    try:
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True,
+                       timeout=10, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:
+        pass
+
+
 def stop():
     with _LOCK:
         _kill_proc()
+        _kill_recovered()
+        _clear_state()
     return {"ok": True}
 
 
@@ -454,4 +573,11 @@ def download_status():
         return dict(_dl)
 
 
-atexit.register(_kill_proc)
+def _shutdown():
+    """退出时收掉内核并清掉落盘状态（v1.5.32）。"""
+    with _LOCK:
+        _kill_proc()
+        _clear_state()
+
+
+atexit.register(_shutdown)

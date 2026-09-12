@@ -49,7 +49,8 @@ def _run_bridge(req: dict) -> dict:
     """执行 bridge.mjs，返回统一 dict。绝不把 secret 透出。"""
     try:
         p = subprocess.run(["node", _BRIDGE, json.dumps(req)],
-                           capture_output=True, text=True, timeout=40)
+                           capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=40)
     except subprocess.TimeoutExpired:
         return {"ok": False, "code": "timeout", "message": "Web3 Wallet API 请求超时（40s）。"}
     except FileNotFoundError:

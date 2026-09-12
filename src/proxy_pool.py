@@ -75,6 +75,36 @@ def bootstrap():
     """后端启动时调用：加载配置并把已启用代理注入环境变量。"""
     _load()
     _apply_env()
+    _revive_kernel_async()
+
+
+def _revive_kernel_async():
+    """v1.5.32：active 是内核型节点且内核已安装 —— 后台确保内核在跑并选中该节点。
+
+    为什么必须做：内核型节点（vless / hysteria2 / vmess / trojan …）的代理入口是 mihomo
+    的本地混合端口，内核不在跑时 proxy_url() 返回 None，_apply_env() 会把 HTTP(S)_PROXY
+    **清空**。于是「重启 APP 后代理池仍显示节点已启用、延迟也测得出，但技能实际全部直连
+    超时（UND_ERR_CONNECT_TIMEOUT）」。
+    放后台线程是为了不让 mihomo 启动等待（最多 20s）阻塞后端启动。"""
+    try:
+        e = active_entry()
+        if not e or e.get("direct", True):
+            return
+        if not _kernel().is_installed():
+            return
+    except Exception:
+        return
+
+    def _work():
+        try:
+            k = _kernel()
+            k.ensure_running()          # 已在跑则立即返回（含被上一进程拉起的孤儿内核）
+            k.select(e.get("kernel_name") or e["name"])   # 内核重启后 selector 会回到默认，需重选
+            _apply_env()
+        except Exception:
+            pass
+
+    threading.Thread(target=_work, daemon=True).start()
 
 
 # ---------------- 解析 ----------------
@@ -568,6 +598,26 @@ def active_url():
     return proxy_url(active_entry())
 
 
+def apply_env():
+    """v1.5.32：公开入口 —— 内核启停后由 desktop_app 调用，重新同步进程代理环境变量。
+
+    此前 /api/proxies/kernel/start 只拉起内核却不注入 env，用户点「启动内核」后
+    HTTP(S)_PROXY 仍是空的，技能照样直连超时。"""
+    _apply_env()
+    return active_url()
+
+
+_ENV_KEYS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "NODE_OPTIONS")
+
+
+def env_snapshot():
+    """v1.5.32：诊断用 —— 返回当前**实际生效**的代理相关环境变量。
+
+    排障时最关键的一句话是「代理到底注入进程了没有」，此前只能靠翻日志猜。
+    NO_PROXY 必须包含 127.0.0.1，否则本机后端自身会被代理劫持。"""
+    return {k: (os.environ.get(k) or "") for k in _ENV_KEYS}
+
+
 _NET_TEST_TIMEOUT = 6.0
 
 # v1.5.23：发文全链路端点——此前只 ping api.binance.com，节点 ping 通但
@@ -615,7 +665,24 @@ def ensure_working_proxy(max_candidates: int = 6):
     # 1) 当前 active 先实测（最常见的快路径）
     cur = active_url()
     if cur and _url_alive(cur):
+        _apply_env()        # v1.5.32：确认可用后务必把 env 同步上（此前直接 return，env 可能仍是空的）
         return cur
+    # 1.5) v1.5.32：active 是内核型节点且内核已装 —— 先把内核拉起/选中该节点再试一次。
+    #      此前这里直接跳到「别的候选」，等于用户自己选的节点永远不会被救活；
+    #      而候选测试又会顺手启动内核却不切回用户节点，最终 env 被清空、技能全线直连。
+    act = active_entry()
+    if act and not act.get("direct", True):
+        try:
+            k = _kernel()
+            if k.is_installed():
+                k.ensure_running()
+                k.select(act.get("kernel_name") or act["name"])
+                _apply_env()
+                cur = active_url()
+                if cur and _url_alive(cur):
+                    return cur
+        except Exception:
+            pass
     # 2) 候选排序：延迟已知且小的优先，未测过的次之，dead 靠后；跳过原 active
     def _key(e):
         lat = e.get("latency_ms")
@@ -688,6 +755,7 @@ def list_pool():
             "active_url": active_url(),
             "has_socks": _HAS_SOCKS,
             "kernel": kernel_status,
+            "env": env_snapshot(),
             "entries": entries}
 
 

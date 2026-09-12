@@ -1,3 +1,84 @@
+# BAZZ.AGENT v1.5.32
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.32 更新要点（内核型代理静默失效 · 广场发文超时根因修复 + 子进程 GBK 解码崩溃）
+
+### 现象
+广场发文（`square-rich-post` / `square-post`）失败，报
+`API /content/add 网络抖动（UND_ERR_CONNECT_TIMEOUT）`，约 10.6s 后超时。
+**直连失败，代理池里「已启用」的节点同样失败** —— 而节点明明测得出延迟（407ms）。
+
+### 根因：内核型代理的端口只存在「进程内存」里
+代理池里启用的是 **内核型**节点（`vless` / `hysteria2` / `vmess` / `trojan` …），
+它的代理入口是 mihomo 在本地起的混合端口，而这个端口只被记在三个**模块级变量**里：
+
+```python
+_proc = None          # 只有「本进程亲手 Popen 出 mihomo」时才有值
+_mixed_port = 0       # 仅在 _write_config() 内赋值，而它只被 start() 调用
+_ctrl_port = 0
+
+def is_running():
+    if _proc is None:
+        return False      # ← 一行就把「内核客观在跑」判成没跑
+```
+
+于是只要出现下面任一种情况，新进程就彻底「看不见」内核：
+后端重启 / 同机跑了第二个后端实例 / 上一个实例把 mihomo 留成了孤儿进程。
+
+连锁反应：
+
+```
+is_running() → False
+  → proxy_url(内核型节点) → None
+    → _apply_env() 走 else 分支，把 HTTP_PROXY / HTTPS_PROXY / ALL_PROXY 全部 pop 掉
+      → 技能子进程（继承进程 env）拿不到任何代理 → Node/undici 直连 → UND_ERR_CONNECT_TIMEOUT
+```
+
+**现场证据**：同一时刻 `127.0.0.1:9099/version` 返回 `HTTP 200 {"version":"v1.19.30"}`
+（内核客观在跑），而进程内 `is_running()` 返回 `False`、`mixed_port()` 返回 `0`。
+
+### 修复
+1. **`proxy_kernel` 新增跨进程状态恢复**：启动成功即把 `pid + 实际端口` 落盘到
+   `.system/kernel/state.json`；`_recover()` 按 `state.json` → `config.yaml` 顺序恢复端口，
+   再用控制面 `/version` 探活确认。`is_running()` / `mixed_port()` / `version()` 全部接上
+2. **`stop()` 能收掉「别的进程拉起的」内核**：从 `state.json` 取 pid，**先核对镜像名确为
+   `mihomo.exe`**（防 PID 复用误杀无关进程）再 `taskkill /T /F`；退出时清理 `state.json`
+3. **`/api/proxies/kernel/start` 补调 `apply_env()`** —— 此前只拉起内核却不注入 env，
+   用户点「启动内核」等于没启用代理；`/stop` 同步清理
+4. **`bootstrap()` 后台救活内核并重选节点**（mihomo 重启后 selector 会回到默认，
+   不重选就仍然走不到用户选的那个节点）；放后台线程，不阻塞后端启动
+5. **`ensure_working_proxy()` 先救活「用户选中的那个内核节点」**再去找别的候选 ——
+   此前直接跳过 active 去试候选，等于用户自己选的节点永远不会被救活
+6. **新增 `proxy_pool.env_snapshot()`**，`/api/proxies` 响应增加 `env` 字段，
+   一眼看清代理到底注入进程没有（此前只能靠翻日志猜）
+
+### 附带修复：子进程文本模式未指定编码 → GBK 解码崩掉读取线程
+zh-CN Windows 上 `subprocess.run(text=True)` 默认按 **locale(GBK) 严格**解码。
+`baw` / `npx` 输出含非 ASCII 时，`subprocess.py` 的 `_readerthread` 抛
+`UnicodeDecodeError` 直接死掉，`proc.stdout` 变空 —— 技能「明明跑了却没有任何输出」，
+排障时极具误导性。7 个文件共 10 处统一补 `encoding="utf-8", errors="replace"`，
+并新增 AST 护栏测试禁止再出现裸 `text=True`。
+
+### 验证
+- 新增 `tests/test_v1532_proxy_kernel_state.py`：**12/12 通过**
+  （跨进程恢复 / `config.yaml` 兜底 / 探活失败不残留假端口 / env 注入 / 救活 active 内核节点 /
+  内核启停端点接线 / `stop()` 清状态 / GBK 护栏）
+- **真实环境实测**（用户机器，mihomo 在 7899/9099 运行中）：模拟「后端重启后的新进程」→
+  `is_running()=True`、`mixed_port()=7899`、`proxy_url()=http://127.0.0.1:7899`、
+  `HTTP_PROXY/HTTPS_PROXY/ALL_PROXY` 全部注入、`NO_PROXY` 含 `127.0.0.1`
+- **端到端**（技能实际走的 Node/undici 路径）：
+
+  | 场景 | `square/content/add` | `public.bnbstatic.com` |
+  |---|---|---|
+  | 无代理 env（故障复现） | `UND_ERR_CONNECT_TIMEOUT` **10686ms** | `UND_ERR_CONNECT_TIMEOUT` **10589ms** |
+  | 有代理 env（修复后） | **HTTP 404 @1295ms** | **HTTP 403 @629ms** |
+
+- 全套回归：test_v150 ✓ · test_v151 ✓ · test_v1528 **15/15** · test_v1529 **23/23**
+  · test_v1530 **20/20** · test_v1531 **14/14** · test_v1532 **12/12**
+
+## 📌 历史版本（v1.5.31 及更早）
+
 # BAZZ.AGENT v1.5.31
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**

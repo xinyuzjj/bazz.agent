@@ -1181,12 +1181,19 @@ def proxies_kernel_download():
 
 @app.post("/api/proxies/kernel/start")
 def proxies_kernel_start():
-    return proxy_kernel.start()
+    r = proxy_kernel.start()
+    if r.get("ok"):
+        # v1.5.32：内核起来后必须立刻注入 env —— 此前只拉内核不注入，
+        # 用户点「启动内核」后 HTTP(S)_PROXY 仍为空，技能照样直连超时。
+        proxy_pool.apply_env()
+    return r
 
 
 @app.post("/api/proxies/kernel/stop")
 def proxies_kernel_stop():
-    return proxy_kernel.stop()
+    r = proxy_kernel.stop()
+    proxy_pool.apply_env()      # v1.5.32：内核停掉后同步清理/回退代理 env
+    return r
 
 
 # ---------------- LLM 连通性 / 模型目录 ----------------

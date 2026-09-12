@@ -161,7 +161,8 @@ def _update_baw() -> tuple:
            "--prefix", workspace.RUNTIME_DIR, "--loglevel=error", *_PINNED_NPM_SPEC]
     try:
         print(f"[skill_updater] 安装锁定版本：{' '.join(_PINNED_NPM_SPEC)}")
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        p = subprocess.run(cmd, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=300)
         if p.returncode == 0:
             installed = _baw_version() or "?"
             print(f"[skill_updater] baw 安装完成，落地版本 v{installed}"

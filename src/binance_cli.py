@@ -32,7 +32,8 @@ def _run(args: list, timeout: int = 120) -> Tuple[int, str, str]:
         return 127, "", f"{_BIN} not found in PATH"
     cmd = ["cmd", "/c", _BIN, *args] if _IS_WIN else [_BIN, *args]
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(cmd, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=timeout)
         return p.returncode, (p.stdout or ""), (p.stderr or "")
     except FileNotFoundError:
         return 127, "", f"{_BIN} not found in PATH"

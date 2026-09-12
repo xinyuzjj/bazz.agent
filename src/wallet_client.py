@@ -121,7 +121,8 @@ def get_version() -> dict:
     argv, mode = wallet_runtime.baw_invocation(["--version"])
     try:
         p = subprocess.run(["cmd", "/c"] + argv,
-                           capture_output=True, text=True, timeout=5)
+                           capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=5)
         return {"installed": True, "version": (p.stdout or p.stderr).strip()[:120],
                 "bundled": mode == "bundled",
                 "detail": None if p.returncode == 0 else (p.stderr or p.stdout).strip()[:200]}
@@ -140,7 +141,8 @@ def get_status() -> dict:
     argv, mode = wallet_runtime.baw_invocation(["wallet", "status"])
     try:
         p = subprocess.run(["cmd", "/c"] + argv,
-                           capture_output=True, text=True, timeout=5)
+                           capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=5)
         out = (p.stdout or p.stderr or "").strip()
         low = out.lower()
         not_logged = "not logged in" in low or "not logged" in low
@@ -172,7 +174,8 @@ def run_command(cmd: str) -> dict:
         parts = cmd.split()
         argv, mode = wallet_runtime.baw_invocation(parts[1:])
         # Windows 下 .CMD 必须走 cmd /c（shell=True 会引入用户输入注入风险）
-        p = subprocess.run(["cmd", "/c"] + argv, capture_output=True, text=True, timeout=120)
+        p = subprocess.run(["cmd", "/c"] + argv, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=120)
         return {"status": "ok" if p.returncode == 0 else "error",
                 "code": "ok" if p.returncode == 0 else "non_zero_exit",
                 "returncode": p.returncode,
@@ -198,7 +201,8 @@ def install_cli() -> dict:
                 "detail": "baw 已安装，无需重复安装。", "install_cmd": INSTALL_CMD}
     try:
         # Windows 下 npm 是 .cmd 脚本，直接传 argv 经常报 WinError 2；用 shell=True 走 cmd 解析
-        p = subprocess.run(INSTALL_CMD, capture_output=True, text=True, timeout=300, shell=True)
+        p = subprocess.run(INSTALL_CMD, capture_output=True, text=True, timeout=300, shell=True,
+                           encoding="utf-8", errors="replace")
         if p.returncode == 0:
             return {"status": "ok", "code": "installed",
                     "detail": "安装成功。", "install_cmd": INSTALL_CMD,
@@ -225,7 +229,8 @@ def _baw_json(parts: list, timeout: int) -> dict:
     try:
         argv, mode = wallet_runtime.baw_invocation(parts[1:])
         p = subprocess.run(["cmd", "/c"] + argv, capture_output=True,
-                           text=True, timeout=timeout)
+                           text=True, timeout=timeout,
+                           encoding="utf-8", errors="replace")
     except subprocess.TimeoutExpired:
         return {"status": "error", "code": "timeout",
                 "message": f"baw {' '.join(parts[2:])} 超时（>{timeout}s）。"}

@@ -342,6 +342,7 @@ def install_skill(skill_key: str) -> dict:
         proc = subprocess.run(
             _npx_cmd() + ["skills", "add", url, "-y"],
             capture_output=True, text=True, timeout=240,
+            encoding="utf-8", errors="replace",
             cwd=os.path.dirname(os.path.abspath(AGENTS_DIR)),
         )
         r = {
