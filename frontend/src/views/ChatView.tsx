@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, streamChat, authHeaders } from "../api";
 import { I } from "../components/icons";
 import { AgentSigninCard, ChainWalletPanel, Spin } from "../components/WalletBits";
@@ -6,6 +6,34 @@ import { AgentAvatar, Blobatar } from "../components/Blobatar";
 import { useT } from "../i18n/i18n";
 import { pushToast } from "../components/Toasts";
 import { confirmDialog } from "../components/ConfirmDialog";
+
+// v1.5.34：可预览的图片扩展名 —— 与后端 /api/workspace/raw 的白名单保持一致。
+// 文件查看器此前**从不给 img_url 赋值**（字段声明了却没人写），于是图片一律落到
+// 「二进制文件，不可文本预览」；v1.5.24 加的后端图片端点等于没接上界面。
+const IMG_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|svg|ico)$/i;
+const isImageName = (n: string) => IMG_EXT_RE.test(n || "");
+const THUMB_LIMIT = 30;   // 单个目录最多给 30 个图片文件取缩略图，避免一次打几十个请求
+
+/** 文件列表里的图片缩略图。
+ *  图片端点要带鉴权头（X-BAZZ-Token），<img src> 直指后端拿不到 token，
+ *  所以先 fetch blob 再转 objectURL；卸载/换目录时 revoke，失败则退回普通图标。 */
+function FileThumb({ path }: { path: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [dead, setDead] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    let made: string | null = null;
+    setUrl(null); setDead(false);
+    api.workspaceRawBlob(path)
+      .then((b) => { if (!alive) return; made = URL.createObjectURL(b); setUrl(made); })
+      .catch(() => { if (alive) setDead(true); });
+    return () => { alive = false; if (made) URL.revokeObjectURL(made); };
+  }, [path]);
+  if (dead) return <I.Download size={11} className="text-ink-dim shrink-0" />;
+  return url
+    ? <img src={url} alt="" className="h-8 w-8 rounded border border-line object-cover shrink-0" />
+    : <div className="h-8 w-8 rounded border border-line bg-elevated/60 shimmer shrink-0" />;
+}
 
 type ChatMsg = {
   id: string; role: "user" | "assistant"; text: string;
@@ -55,6 +83,7 @@ export function ChatView({
   const approvalRef = useRef<any>(null); // 待确认动作（确认后随下一条消息发回后端执行）
   // v1.4.5 结构化追问（clarify）：120s 超时定时器 + 已答标记（key = `${asstId}:${qIdx}`）
   const clarifyTimerRef = useRef<number | null>(null);
+  const imgUrlRef = useRef<string | null>(null);   // v1.5.34 图片预览 objectURL（切换/关闭必须 revoke）
   const clarifyAnsweredRef = useRef<Set<string>>(new Set());
   const [clarifyAnswered, setClarifyAnswered] = useState<Record<string, boolean>>({});
   // 流式文本/思考累积缓冲：text delta 同帧多发会被 React 批处理吞掉，先累积到 ref，requestAnimationFrame 内 setMessages commit，每帧最多 1 次
@@ -1020,18 +1049,58 @@ export function ChatView({
     parts.pop();
     refreshFiles(parts.join("/"));
   };
+  // 后端错误体是 JSON（jget 把整个 body 塞进 Error.message），解出可读文案
+  const errText = (e: any) => {
+    const raw = String(e?.message ?? e);
+    try { const j = JSON.parse(raw); return String(j?.error || raw); } catch { return raw.slice(0, 200); }
+  };
+  // v1.5.34：释放上一张预览图的 objectURL —— 不 revoke 会一直占着内存
+  const releaseImg = () => {
+    if (imgUrlRef.current) { URL.revokeObjectURL(imgUrlRef.current); imgUrlRef.current = null; }
+  };
   const openFile = async (relName: string) => {
     const full = fileCwd ? `${fileCwd}/${relName}` : relName;
+    releaseImg();
     setFileModal({ name: relName, path: full, size: 0, is_text: false, content: "", loading: true });
+    // 图片走 /workspace/raw（20MB 上限 + 扩展名白名单）取原文 blob。
+    // 不能走 /workspace/read —— 那是文本通道：1.5MB 上限，且「含 NUL 字节即判二进制」，
+    // PNG 头部就带 NUL，必然被挡。
+    if (isImageName(relName)) {
+      try {
+        const blob = await api.workspaceRawBlob(full);
+        const url = URL.createObjectURL(blob);
+        imgUrlRef.current = url;
+        setFileModal({ name: relName, path: full, size: blob.size, is_text: false,
+                       content: "", loading: false, img_url: url });
+      } catch (e: any) {
+        setFileModal({ name: relName, path: full, size: 0, is_text: false, content: "",
+                       loading: false, error: `${t("chat.fileImgFail")} ${errText(e)}` });
+      }
+      return;
+    }
     try {
       const r: any = await api.workspaceRead(full);
       setFileModal({ name: relName, path: full, size: r?.size ?? 0, is_text: !!r?.is_text,
                      content: r?.content ?? "", too_large: !!r?.too_large, loading: false, error: r?.error });
     } catch (e: any) {
-      setFileModal({ name: relName, path: full, size: 0, is_text: false, content: "", loading: false, error: String(e?.message ?? e) });
+      setFileModal({ name: relName, path: full, size: 0, is_text: false, content: "",
+                     loading: false, error: errText(e) });
     }
   };
-  const closeFileModal = () => setFileModal(null);
+  const closeFileModal = () => { releaseImg(); setFileModal(null); };
+  // 组件卸载兜底：objectURL 不释放会泄漏到页面关闭为止
+  useEffect(() => () => releaseImg(), []);
+  // 当前目录里值得做缩略图的图片文件（上限 THUMB_LIMIT，避免一次打太多请求）
+  const thumbNames = useMemo(() => {
+    const s = new Set<string>();
+    for (const f of files) {
+      if (f?.type === "file" && isImageName(f.name)) {
+        s.add(f.name);
+        if (s.size >= THUMB_LIMIT) break;
+      }
+    }
+    return s;
+  }, [files]);
   // 删除文件/目录（文件浏览器每行右侧的删除按钮）：state.db 二次确认（存着全部会话与记忆）
   const deleteFile = async (name: string) => {
     const full = fileCwd ? `${fileCwd}/${name}` : name;
@@ -1039,7 +1108,7 @@ export function ChatView({
     try {
       await api.workspaceDelete(full);
       pushLog(`DEL > ${full}`);
-      if (fileModal?.path === full) setFileModal(null);
+      if (fileModal?.path === full) closeFileModal();
       refreshFiles();
     } catch (e: any) {
       pushLog(`DEL_ERR > ${full}: ${String(e?.message ?? e).slice(0, 140)}`);
@@ -1370,13 +1439,16 @@ export function ChatView({
                 <div className="shimmer h-10" />
               ) : files.map((f, i) => {
                 const descKey = fileDescKey(f.name);
+                const rel = fileCwd ? `${fileCwd}/${f.name}` : f.name;
                 return (
-                <div key={i}
+                <div key={f.name ?? i}
                   onClick={() => f.type === "dir" ? enterDir(f.name) : openFile(f.name)}
                   className={`group w-full flex items-center gap-2 rounded-md border pl-3 pr-1.5 py-1.5 text-left cursor-pointer ${f.type === "dir" ? "border-line bg-card/40 hover:border-gold/40 hover:bg-elevated/60" : "border-line bg-card/30 hover:bg-elevated/60"}`}>
                   {f.type === "dir"
                     ? <I.Cex size={12} className="text-gold shrink-0" />
-                    : <I.Download size={11} className="text-ink-dim shrink-0" />}
+                    : thumbNames.has(f.name)
+                      ? <FileThumb path={rel} />
+                      : <I.Download size={11} className="text-ink-dim shrink-0" />}
                   <span className="flex-1 min-w-0">
                     <span className="font-mono text-[12px] text-ink truncate block">{f.name}</span>
                     {!!descKey && (
@@ -2080,7 +2152,7 @@ export function ChatView({
                 <div className="font-mono text-[13px] font-bold text-ink truncate">{fileModal.name}</div>
                 <div className="font-mono text-[10px] text-ink-mute truncate">
                   {fileModal.path || t("chat.fileRoot")} · {fmtSize(fileModal.size) || "—"}
-                  {fileModal.is_text ? t("chat.fileText") : fileModal.size > 0 ? t("chat.fileBin") : ""}
+                  {fileModal.img_url ? t("chat.fileImage") : fileModal.is_text ? t("chat.fileText") : fileModal.size > 0 ? t("chat.fileBin") : ""}
                 </div>
               </div>
               <button onClick={(e) => { e.stopPropagation(); setFileModal({ ...fileModal, minimized: true }); }}
@@ -2098,9 +2170,13 @@ export function ChatView({
                 <div className="font-mono text-[12px] text-ink-mute">{t("chat.fileTooLarge")}<span className="text-ink">{fileModal.path}</span></div>
               ) : fileModal.img_url ? (
                 <div className="flex items-center justify-center">
-                  <img src={fileModal.img_url} alt={fileModal.name}
-                       className="max-w-full rounded-md"
-                       style={{ maxHeight: "58vh", objectFit: "contain" }} />
+                  {/* 点图直接看原图（objectURL 新标签打开，不受 58vh 限制） */}
+                  <a href={fileModal.img_url} target="_blank" rel="noreferrer"
+                     title={t("chat.fileOpenRaw")}>
+                    <img src={fileModal.img_url} alt={fileModal.name}
+                         className="max-w-full rounded-md cursor-zoom-in"
+                         style={{ maxHeight: "58vh", objectFit: "contain" }} />
+                  </a>
                 </div>
               ) : !fileModal.is_text ? (
                 <div className="font-mono text-[12px] text-ink-mute">{t("chat.fileBinPrev", { size: fmtSize(fileModal.size) })}</div>
@@ -2113,6 +2189,12 @@ export function ChatView({
             <div className="px-5 py-2.5 border-t border-line flex items-center justify-between">
               <span className="font-mono text-[10px] text-ink-mute">{t("chat.escHint")}</span>
               <div className="flex items-center gap-2">
+                {fileModal.img_url && (
+                  <a href={fileModal.img_url} target="_blank" rel="noreferrer"
+                     className="btn-ghost text-[11px]">
+                    <I.Arrow size={11} /> {t("chat.fileOpenRaw")}
+                  </a>
+                )}
                 <button onClick={() => { if (fileModal) deleteFile(fileModal.name); }}
                   className="btn-ghost text-[11px] text-red/80 hover:text-red" disabled={fileModal.loading}>
                   <I.Trash size={11} /> {t("chat.fileDelete")}

@@ -1,4 +1,4 @@
-# BAZZ.AGENT 项目状态交接（v1.5.33 · 2026-09-12 更新）
+# BAZZ.AGENT 项目状态交接（v1.5.34 · 2026-09-12 更新）
 
 > 用途：开新任务/新会话前快速恢复上下文。读完即可继续开发，无需翻旧对话。
 > 仓库：`github.com/xinyuzjj/bazz.agent`
@@ -6,7 +6,7 @@
 > 链接工作树：`C:\Users\Administrator\WorkBuddy\Worktrees\binance-agent-os-scout\main-a919d7e7`
 > （分支 `workbuddy/main-a919d7e7`，同一仓库同一提交 —— 在此改动**不会**影响主目录，注意别改错地方）
 >
-> ⚠️ 上一版本文档停留在 v1.5.3 / 表格到 v1.5.11，与代码实际差 18 个版本。**本文档已按 v1.5.33 全量校准。**
+> ⚠️ 上一版本文档停留在 v1.5.3 / 表格到 v1.5.11，与代码实际差 18 个版本。**本文档已按 v1.5.34 全量校准。**
 
 ---
 
@@ -21,10 +21,11 @@
 
 ---
 
-## 二、近期发布版本（v1.5.12 → v1.5.33）
+## 二、近期发布版本（v1.5.12 → v1.5.34）
 
 | 版本 | 核心内容 |
 |---|---|
+| **v1.5.34** | **文件查看器图片预览：后端能力早已就绪，界面这端从未接线**。① **现象**：在 Files 面板点开 `chart_24h.png`，查看器只显示「二进制文件，不可文本预览（共 33.8K）」，图片看不到。② **根因（典型「做了半截」）**：后端更早版本就加了图片原文端点 `/api/workspace/raw`（20MB 上限、扩展名白名单、`FileResponse` 直出），`api.ts` 也早有配套的 `workspaceRawBlob()` —— 但**全仓没有第二个调用点**；同时 `ChatView` 的 `fileModal` 类型声明了 `img_url?: string` 却**从未被赋值**，渲染分支 `fileModal.img_url ? <img ...>` 因此永远走不到，所有文件一律落到 `!is_text` 的「二进制不可预览」兜底。补充：图片**不能**复用文本通道 `/api/workspace/read` —— 那是文本接口（1.5MB 上限）且**含 NUL 字节即判二进制**，PNG 文件头就带 NUL，必然被挡。③ **修复**：`openFile()` 按扩展名分流（图片走 `workspaceRawBlob()` → `URL.createObjectURL()` → 写入 `img_url`，且分流必须排在 `workspaceRead` 之前）；objectURL 在**关闭 / 切换 / 卸载**三处全部 `revokeObjectURL()`；文件列表给图片加**缩略图**（`THUMB_LIMIT = 30` 限制请求数）；查看器内图片可点击打开原图 + 底部「打开原图」按钮；错误文案解包（`jget` 把整个 JSON body 塞进 `Error.message`，现在解出 `error` 字段）。④ **验证**：新增 `tests/test_v1534_image_preview.py` **7/7**，并**已验证能抓住旧行为**（临时回退 `ChatView.tsx` → **1/7**，恢复后 **7/7**；唯一「通过」的渲染顺序断言恰好印证事故本质 —— 分支写好了，只是永远走不到）。其中 `test_workspace_raw_blob_has_a_caller` 是**核心护栏**：能力存在但没人调用 = 功能不存在。另含前后端扩展名白名单**交叉校验**（AST 取后端 `_IMG_EXT_MEDIA` 键集合 vs 前端 `IMG_EXT_RE` 正则，并做真实正则匹配验证含大写/非图片/结尾锚定）。前端 `tsc --noEmit` 退出码 0、`npm run build` 成功 |
 | **v1.5.33** | **修 v1.5.32 自己引入的启动竞态**。v1.5.32 给 `_recover()` 加的「探活失败即清空端口缓存」是**无条件**的，而 `start()` 里端口是**先写、后起进程**：`_write_config()` 写好端口 → `open(LOG_PATH)` → `Popen()`，在后两步之间 `_proc` 仍是 `None`。若前端此刻正好轮询 `/api/proxies`（`status()` → `is_running()` → `_recover()`），内核尚未就绪 → 探活失败 → **把刚写好的端口清零** → 等待循环 40 次都在请求 `http://127.0.0.1:0/version` → 误报「内核启动超时」，并把 `mixed_port: 0` 写进 `state.json` —— **症状与「代理没启用」完全一致，等于把刚修好的 bug 换个入口又放回来**。修复：① 新增 `_recovered` 标记区分「落盘恢复来的端口」与「本进程 `start()` 刚写的端口」，`_recover()` **只清前者**；② `_write_config()` 写入时置 `_recovered=False`；③ `stop()` 同步归零端口缓存（此前停掉内核后 `mixed_port()` 仍返回过期端口）；④ `_revive_kernel_async()` 在线程内**重读** active 节点（启动期间用户在界面上换过节点时不会再把旧节点选回去）。测试 `tests/test_v1532_proxy_kernel_state.py` 扩到 **14/14**，并**已验证新断言能抓住旧行为**（临时回退 `src/proxy_kernel.py` → 12/14，两条 FAIL） |
 | **v1.5.32** | **内核型代理静默失效 → 广场发文 `UND_ERR_CONNECT_TIMEOUT` 根因修复** + 子进程 GBK 解码崩溃。① **根因**：代理池启用的是内核型节点（`vless` 等），代理入口是 mihomo 的本地混合端口，而该端口只被记在 `proxy_kernel` 的三个**模块级变量**里（`_proc` / `_mixed_port` / `_ctrl_port`），且 `is_running()` 一上来就 `if _proc is None: return False` —— 只有「本进程亲手 Popen 出 mihomo」才认得内核。于是后端重启 / 同机第二个实例 / 上一实例把 mihomo 留成孤儿进程时，新进程 `is_running()=False` → `mixed_port()=0` → `proxy_pool.proxy_url()` 返回 `None` → `_apply_env()` 走 else 分支把 `HTTP(S)_PROXY` **全部 pop 掉** → 技能子进程继承不到任何代理 → Node/undici 直连 → `UND_ERR_CONNECT_TIMEOUT`（~10.6s）。现场铁证：`127.0.0.1:9099/version` 返回 `HTTP 200 {"version":"v1.19.30"}`（内核客观在跑）而同进程 `is_running()` 返回 `False`。② **修复**：`proxy_kernel` 新增 `state.json` 落盘（pid + 实际端口）+ `_recover()`（state.json → config.yaml 兜底恢复端口 + 控制面探活），`is_running()` / `mixed_port()` / `version()` 全部接上；`stop()` 支持收掉别的进程拉起的内核（**先核对镜像名确为 `mihomo.exe`** 防 PID 复用误杀）；`/api/proxies/kernel/start` 补调 `apply_env()`（此前只拉内核不注入 env，「启动内核」等于没启用代理）、`/stop` 同步清理；`bootstrap()` 后台救活内核并**重选节点**（mihomo 重启后 selector 回默认）；`ensure_working_proxy()` 先救活「用户选中的那个内核节点」再找别的候选；新增 `proxy_pool.env_snapshot()` 并让 `/api/proxies` 返回 `env` 字段（一眼看清代理注入没有）。③ **附带**：7 文件 10 处 `subprocess.run(text=True)` 未指定编码 → zh-CN Windows 按 GBK 严格解码，`_readerthread` 抛 `UnicodeDecodeError` 直接死掉、`proc.stdout` 变空（技能「跑了却没输出」）→ 统一补 `encoding="utf-8", errors="replace"` + AST 护栏。④ **验证**：`tests/test_v1532_proxy_kernel_state.py` **12/12**；真实环境实测新进程 `is_running()=True / mixed_port()=7899 / proxy_url()=http://127.0.0.1:7899 / HTTP_PROXY 已注入`；端到端（技能实际 Node/undici 路径）修复前 `content/add` 与 `public.bnbstatic.com` 均 `UND_ERR_CONNECT_TIMEOUT`（10686ms / 10589ms），修复后 **HTTP 404 @1295ms / HTTP 403 @629ms** |
 | **v1.5.31** | 提示词侧两处缺陷：① **`market-data` 宣传了不存在的子命令**——`SKILL.md` 的 description 把「资金费率 / funding」列为触发词，但 CLI 的 `CMDS` 只有 klines/fng/oi/longshort/liq/overview/bundle，模型调用 `market-data "funding BTCUSDT"` 只得 `{"error":"未知命令 \"funding\""}`；资金费率当时仅作为 `bundle` 的一个字段存在，为拿单币费率要跑完整分析包（90d 日K + 24h + FNG + OI + 多空比）代价过高。→ 新增真正的 `funding [SYM[,SYM...]]` 子命令（返回 `funding_pct_8h` 每 8h 费率 + `annualized_pct` 年化；无参数则返回费率最高/最低各 10 个），未知命令报错补 `hint` 指出最可能的替代写法，`SKILL.md` 命令表与用法示例同步登记。② **模型把 HTTP 状态码当文件路径**——技能报错文本含 `:8080 HTTP 401: {"error":"unauthorized"}`，模型随后执行 `grep <pattern> 401`，把状态码当路径传入，只得到干巴巴的「路径不存在: 401」无从纠正。→ `exec_sandbox` 新增 `_not_a_path_hint()`（识别裸数字/HTTP 状态码、URL、`-` 开头选项，命中才追加、正常路径零噪音），接入全部 4 个路径报错点（`文件不存在`/ls `目录不存在`/grep `路径不存在`/find `目录不存在`）；`llm.py` 的 `run_command` 工具描述正面写清「不要把数字、HTTP 状态码、URL 或错误消息片段当路径传」。测试 `tests/test_v1531_prompt_fixes.py` **14/14**（含端到端：起本机 stub 后端真跑 funding），并新增通用护栏 `test_skill_md_commands_all_dispatchable`（逐技能比对 SKILL.md 命令表与 CLI 实际命令，防止再出现同类问题）；同时修正 `test_v1530_local_backend.py` 的模块 docstring（此前把已被推翻的「NO_PROXY 是根因」当实测结论写入） || **v1.5.30** | 技能全线 401 根因修复（本机回环令牌被沙箱误删）：① **根因两层叠加**——(a) v1.5.29 的 F06 沙箱环境清洗按**子串**匹配，`BAZZ_AUTH_TOKEN` 含 `TOKEN`/`AUTH` 被当凭据剥离；但它其实是**应用自己的本机回环令牌**（Electron 每次启动 `crypto.randomBytes(24)` 生成，仅用于访问 127.0.0.1 自身后端），技能必须携带才能过 `/api/*` 鉴权 → 一律 401（v1.5.28 及更早继承完整 `os.environ`，无此问题）；(b) 技能 CLI 端口回退用单个 `lastErr`，8080 的 **401 被 8081 的连接错误覆盖**，抛出「本地后端不可达: fetch failed」，把鉴权问题伪装成连通性问题；② **修复**——`exec_sandbox` 新增 `_ENV_ALLOW_EXACT` 精确放行 `BAZZ_AUTH_TOKEN`（第三方凭据照常剥离，安全边界不变）；5 个技能 CLI（coin-report/market-data/portfolio-review/risk-guard/track-monitor）的 `jget()` 逐端口错误全部保留；`proxy_pool._ensure_no_proxy()` 把 NO_PROXY 由 `setdefault` 改**强制并集**；`proxy-preload.cjs` 显式传 `noProxy`；`skills_client`/`agent_core` 本机后端故障前置判定并按 401/连通性分诊。测试 `tests/test_v1530_local_backend.py` 20/20；**`test_v1529_hardening.py` 的 F06 断言已修正**（原断言要求 `BAZZ_AUTH_TOKEN` 必须被剥离，正是它把回归固化成了预期行为）→ 23/23 |
@@ -169,8 +170,9 @@ verification_stop 收尾验证门、思考小件（`<thinking>` 未闭合截断�
 | `src/workspace.py` | 工作区路径解析（NODE_EXE / WORKSPACE / AGENTS_DIR） |
 | `frontend/src/views/*.tsx` | 12 个视图：ChatView / MarketsView / ExchangeView / WalletView / Web3SkillsView / SquarePostView / CouncilView / MemoryOverlay / SettingsView / ProxyPoolView / AdminPanels / PanicHaltModal |
 | `frontend/src/i18n/locales.ts` | 双语（zh / en 两处都要加 key） |
-| `frontend/src/lib/api.ts` · `live.ts` | 统一 fetch（带 X-BAZZ-Token）/ 行情实时快照 diff |
-| `tests/test_v150_market.py` · `test_v151_radar_track.py` · `test_v1528_fixes.py` · `test_v1529_hardening.py` | 4 个离线回归套件（AST/桩隔离，不联网不下单） |
+| `frontend/src/api.ts` · `frontend/src/lib/live.ts` | 统一 fetch（带 X-BAZZ-Token）/ 行情实时快照 diff。**注意 `api.ts` 在 `src/` 根下，不在 `src/lib/`** |
+| `desktop_app.py` `/api/workspace/raw` ↔ `api.ts` `workspaceRawBlob()` ↔ `ChatView.tsx` `openFile()` | **图片预览链路**（v1.5.34 接通）：`/raw` 是图片原文通道（20MB、扩展名白名单、`FileResponse`），与文本通道 `/read` 分离（`/read` 1.5MB 且含 NUL 即判二进制，PNG 头部就带 NUL 必被挡）。扩展名白名单**两端必须一致**，有交叉校验测试 |
+| `tests/` 8 个套件：`test_v150_market.py` · `test_v151_radar_track.py` · `test_v1528_fixes.py` · `test_v1529_hardening.py` · `test_v1530_local_backend.py` · `test_v1531_prompt_fixes.py` · `test_v1532_proxy_kernel_state.py` · `test_v1534_image_preview.py` | 离线回归套件（AST/桩隔离，不联网不下单） |
 
 ---
 
@@ -183,13 +185,15 @@ python -m py_compile desktop_app.py src/xxx.py
 # 前端类型 + 构建
 cd frontend; npx tsc --noEmit; npx vite build
 
-# 离线回归测试（6 个套件；用主目录自带 .venv 跑最省事）
+# 离线回归测试（8 个套件；用主目录自带 .venv 跑最省事）
 .venv/Scripts/python.exe tests/test_v150_market.py          # ✓ 全部通过（需 requests）
 .venv/Scripts/python.exe tests/test_v151_radar_track.py     # ✓ 全部通过（需 requests）
 .venv/Scripts/python.exe tests/test_v1528_fixes.py          # 15/15
 .venv/Scripts/python.exe tests/test_v1529_hardening.py      # 23/23
 .venv/Scripts/python.exe tests/test_v1530_local_backend.py  # 20/20
 .venv/Scripts/python.exe tests/test_v1531_prompt_fixes.py   # 14/14（含本机 stub 后端端到端）
+.venv/Scripts/python.exe tests/test_v1532_proxy_kernel_state.py  # 14/14
+.venv/Scripts/python.exe tests/test_v1534_image_preview.py  # 7/7（源码/AST + 前后端白名单交叉校验）
 
 # baw 代理补丁 A/B 实测（本地代理 127.0.0.1:7897 / mihomo 7899）
 $env:NODE_OPTIONS='--require="<repo>/runtime/proxy-preload.cjs"'
@@ -209,14 +213,15 @@ git -c http.proxy=http://127.0.0.1:7899 push origin main v1.5.x
 - **主开发目录已确认为 `E:\hermes_app\binance-agent-os-scout`**（`main` 主工作树）；
   `C:\...\Worktrees\main-a919d7e7` 是链接工作树（分支 `workbuddy/main-a919d7e7`）。
   此前改动曾误落在链接工作树上 —— 已全部迁移回主目录，两边 `git diff | git hash-object` 哈希一致 ✅
-- **v1.5.32**（HEAD `e6fc42a`）已发布：CI `release-setup` success，Release 含
-  `BAZZ.AGENT-v1.5.32-setup.exe`（134.8 MB）+ `MANIFEST.json` + `SHA256SUMS`；
-  **v1.5.33** 的改动已完成（见 §二 表格首行）
-- 7 个离线回归套件**全部通过**：test_v150_market ✓ · test_v151_radar_track ✓ ·
+- **v1.5.33**（HEAD `c92dc98`）已发布：CI `release-setup` success，Release 含
+  `BAZZ.AGENT-v1.5.33-setup.exe` + `MANIFEST.json` + `SHA256SUMS`；
+  **v1.5.34** 的改动已完成（见 §二 表格首行）
+- 8 个离线回归套件**全部通过**：test_v150_market ✓ · test_v151_radar_track ✓ ·
   test_v1528_fixes 15/15 · test_v1529_hardening 23/23 · test_v1530_local_backend 20/20 ·
-  test_v1531_prompt_fixes 14/14 · test_v1532_proxy_kernel_state 14/14 ✅
-- 上一版本文档（停留在 v1.5.3 / 表格到 v1.5.11）已按 v1.5.33 全量重写；`RELEASE_NOTES.md`
-  版本顺序严格降序，且已模拟 CI 截取校验（v1.5.33 小节 34 行、无历史版本标题渗入）
+  test_v1531_prompt_fixes 14/14 · test_v1532_proxy_kernel_state 14/14 ·
+  test_v1534_image_preview 7/7 ✅
+- 上一版本文档（停留在 v1.5.3 / 表格到 v1.5.11）已按 v1.5.34 全量重写；`RELEASE_NOTES.md`
+  版本顺序严格降序，且已模拟 CI 截取校验（v1.5.34 / v1.5.33 / v1.5.32 … 各**恰好命中 1 行**）
 - **⚠️ `RELEASE_NOTES.md` 的两个坑**：① `##` 标题里**不要写别的版本号** —— CI 用
   `^##\s.*v<version>(?![.\d])` 找起点，标题里出现旧版本号会把起点抢走（v1.5.33 标题
   一开始写了「修 v1.5.32 引入的…」，导致 v1.5.32 也命中同一行）；② 最新版本块之后必须紧跟

@@ -1,6 +1,54 @@
-# BAZZ.AGENT v1.5.33
+# BAZZ.AGENT v1.5.34
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.34 更新要点（文件查看器图片预览：后端能力早已就绪，界面这端从未接线）
+
+### 现象
+在 Files 面板点开 `chart_24h.png`，查看器只显示：
+
+> 二进制文件，不可文本预览（共 33.8K）
+
+图片看不到。
+
+### 根因：一条腿的活儿干了两遍，最后一根线没接
+后端在更早的版本就加了图片原文端点 `/api/workspace/raw`（20MB 上限、扩展名白名单、
+`FileResponse` 直出），`api.ts` 也早就有配套的 `workspaceRawBlob()`：
+
+```ts
+workspaceRawBlob: async (path: string): Promise<Blob> => {
+  const r = await fetch(BASE + "/workspace/raw?path=" + encodeURIComponent(path), { headers: authHeaders() });
+  if (!r.ok) throw new Error(await r.text());
+  return r.blob();
+},
+```
+
+**但全仓没有第二个调用点。** 同时 `ChatView` 的 `fileModal` 类型里声明了 `img_url?: string`，
+却**从来没有被赋值过** —— 渲染分支 `fileModal.img_url ? <img ...>` 因此永远走不到，
+所有文件一律落到 `!is_text` 的「二进制不可预览」兜底。
+
+顺带说清为什么图片**不能**复用文本通道 `/api/workspace/read`：那是文本接口（1.5MB 上限），
+且**含 NUL 字节即判定为二进制** —— PNG 的文件头就带 NUL，必然被挡在门外。
+
+### 修复
+1. `openFile()` 按扩展名分流：图片走 `workspaceRawBlob()` → `URL.createObjectURL()` → 写入 `img_url`
+   （分流必须排在 `workspaceRead` 之前，否则 PNG 先撞 NUL 判定）
+2. **objectURL 生命周期**：关闭查看器、切换文件、组件卸载三处都 `revokeObjectURL()`，一处不漏
+3. 文件列表给图片加**缩略图**（`THUMB_LIMIT = 30`，避免一次列表打几十个请求）
+4. 查看器里的图片可**点击打开原图**，底部另有「打开原图」按钮
+5. 错误文案解包：`jget` 会把整个 JSON body 塞进 `Error.message`，现在解出 `error` 字段再展示
+
+### 验证
+- 新增 `tests/test_v1534_image_preview.py` —— **7/7**
+- **已确认能抓住旧行为**：临时回退 `ChatView.tsx` → **1/7**，恢复后 **7/7**。
+  唯一「通过」的是渲染顺序断言 —— 恰好印证事故本质：分支写好了，只是永远走不到
+- 其中 `test_workspace_raw_blob_has_a_caller` 是本次事故的**核心护栏**：
+  能力存在但没人调用 = 功能不存在
+- 前后端扩展名白名单**交叉校验**（AST 取后端 `_IMG_EXT_MEDIA` 键集合 vs 前端 `IMG_EXT_RE` 正则），
+  并做真实正则匹配验证（含大写、非图片扩展名、结尾锚定）
+- 全套回归：test_v150 ✓ · test_v151 ✓ · test_v1528 15/15 · test_v1529 23/23
+  · test_v1530 20/20 · test_v1531 14/14 · test_v1532 14/14 · test_v1534 **7/7**
+- 前端 `tsc --noEmit` 退出码 0，`npm run build` 成功
 
 ## 🆕 v1.5.33 更新要点（修上一版引入的启动竞态：内核端口被并发探活清零）
 
