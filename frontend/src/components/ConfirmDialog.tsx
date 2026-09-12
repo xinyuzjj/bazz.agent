@@ -39,8 +39,13 @@ function open(opts: DialogOptions): Promise<{ choice: string; checked: boolean }
 
 /** window.confirm 的直接替代：确定→true，取消/Esc→false */
 export function confirmDialog(message: string, o?: { title?: string; confirmText?: string; cancelText?: string; danger?: boolean }): Promise<boolean> {
+  // 传了 title 时 message 不能丢：标题走 title，具体问句下移到 detail 行渲染。
+  // （此前只有一个 title 字段，带上 title 的调用点会把 "确定删除…？" 整句吞掉，
+  //   弹窗退化成只有「删除」两个字的标题。）
+  const title = o?.title ?? message;
   return open({
-    title: o?.title ?? message,
+    title,
+    detail: title === message ? undefined : message,
     icon: o?.danger ? "danger" : "info",
     choices: o?.danger
       ? [{ id: "cancel", label: o?.cancelText ?? tr("dialog.cancel"), variant: "ghost" }, { id: "ok", label: o?.confirmText ?? tr("dialog.delete"), variant: "danger" }]

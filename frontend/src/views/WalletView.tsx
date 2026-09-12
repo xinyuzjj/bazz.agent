@@ -108,7 +108,7 @@ export function WalletView() {
       {/* 主列：所有现有面板 */}
       <div className="space-y-4 min-w-0">
       {/* Header */}
-      <div className="flex items-center gap-3 flex-wrap">
+      <div className="page-heading flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2.5">
           <I.Hex className="text-gold" size={24} />
           <span className="font-mono text-[15px] font-bold tracking-wide text-ink">{t("wallet.hubTitle")}</span>
@@ -128,7 +128,8 @@ export function WalletView() {
             {state && (
               <span className={`pill ${connected ? "pill-green" : "pill-red"}`}>
                 <span className={`dot ${connected ? "dot-green live" : "dot-red"}`} />
-                {connected ? `LIVE · ${t("wallet.signedIn")}` : t("wallet.signedOut")}
+                {/* wallet.signedIn 文案本身已含 "LIVE ·"，这里不能再拼一次 */}
+                {connected ? t("wallet.signedIn") : t("wallet.signedOut")}
               </span>
             )}
           </div>
@@ -232,11 +233,11 @@ export function WalletView() {
 
                   {/* 多链地址总览（合并 + 美化） */}
                   <div className="glass p-4" style={{ borderRadius: 12 }}>
-                    <div className="flex items-center gap-2 mb-3">
+                    <div className="flex items-center gap-2 mb-3 flex-wrap">
                       <I.Wallet size={13} className="text-gold" />
-                      <span className="font-mono text-[12px] tracking-wider text-ink">{t("wallet.chainsTitle")}</span>
+                      <span className="font-mono text-[12px] tracking-wider text-ink min-w-0">{t("wallet.chainsTitle")}</span>
                       <span className="pill pill-dim text-[10px]">{t("wallet.mpcMulti")}</span>
-                      <button onClick={() => liveLoad(["address", "chains"])} className="ml-auto text-[11px] font-mono text-gold hover:underline">{t("wallet.refetch")}</button>
+                      <button onClick={() => liveLoad(["address", "chains"])} className="ml-auto shrink-0 whitespace-nowrap text-[11px] font-mono text-gold hover:underline">{t("wallet.refetch")}</button>
                     </div>
                     <MultiChainGrid addressResult={parse("address")} chainsResult={parse("chains")} onCopy={copy} copied={copied} />
                   </div>
@@ -388,10 +389,12 @@ function StatusTile({ label, ok, text, sub, warn }: { label: string; ok: boolean
 
 function PanelHead({ icon, title, extra }: { icon: React.ReactNode; title: string; extra?: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-2 mb-3">
+    // 窄列（左侧 7/5 子栅格的 5 列只有 ~290px）下，标题与右侧动作会互相挤压：
+    // 允许换行让动作整体落下一行，动作本身禁止折行（"重新获取" 曾被拆成两行）。
+    <div className="flex items-center gap-2 mb-3 flex-wrap">
       {icon}
-      <span className="font-mono text-[12px] tracking-wider text-ink">{title}</span>
-      <div className="ml-auto">{extra}</div>
+      <span className="font-mono text-[12px] tracking-wider text-ink min-w-0">{title}</span>
+      <div className="ml-auto shrink-0 whitespace-nowrap">{extra}</div>
     </div>
   );
 }
@@ -638,11 +641,13 @@ function LivePanel({ className, title, icon, cmd, live, setLive, copy, copied, b
 
   return (
     <div className={`glass p-4 ${className ?? ""}`} style={{ borderRadius: 12 }}>
-      <div className="flex items-center gap-2 mb-3">
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
         {icon}
-        <span className="font-mono text-[12px] tracking-wider text-ink">{title}</span>
-        <code className="font-mono text-[10px] text-ink-mute truncate ml-1" title={cmd}>{cmd}</code>
-        <button onClick={refresh} disabled={!!refreshing} className="ml-auto text-[11px] font-mono text-gold hover:underline disabled:opacity-50">
+        <span className="font-mono text-[12px] tracking-wider text-ink min-w-0">{title}</span>
+        {/* code 必须 min-w-0 + flex-1 才真的能收缩截断，否则其内容宽度即自动最小宽度，
+            会把右侧「刷新」挤成 20px 宽、文字折成三行 */}
+        <code className="font-mono text-[10px] text-ink-mute truncate ml-1 min-w-0 flex-1" title={cmd}>{cmd}</code>
+        <button onClick={refresh} disabled={!!refreshing} className="ml-auto shrink-0 whitespace-nowrap text-[11px] font-mono text-gold hover:underline disabled:opacity-50">
           <I.Refresh size={11} className={`inline ${refreshing ? "animate-spin" : ""}`} /> {refreshing ? t("wallet.refreshing") : t("wallet.refresh")}
         </button>
       </div>

@@ -111,8 +111,8 @@ export function SettingsView({ settings, onSaved, onNav }: { settings: any; onSa
   return (
     <div className="p-5 space-y-4">
       {/* Header */}
-      <div className="glass p-4">
-        <div className="flex items-center gap-3">
+      <div className="page-heading settings-heading">
+        <div className="flex items-center gap-3 flex-wrap">
           <I.Shield className="text-gold" size={22} />
           <div>
             <div className="font-mono font-bold text-ink text-[16px]">{t("settings.title")}</div>

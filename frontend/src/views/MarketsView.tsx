@@ -51,7 +51,7 @@ function HeroCoin({ base }: { base: Ticker }) {
   const flash = useFlash(price);
   const up = chg >= 0;
   return (
-    <div className="glass p-3 flex flex-col gap-2 min-w-0" style={{ borderRadius: 12 }}>
+    <div className="market-hero glass flex flex-col min-w-0">
       <div className="flex items-center justify-between gap-1">
         <span className="font-mono text-[13.5px] font-semibold text-ink">{baseName(base.symbol)}</span>
         <span className={`font-mono tabular text-[13px] font-semibold px-1.5 py-0.5 rounded ${up ? "text-green bg-green/10" : "text-red bg-red/10"}`}>
@@ -290,7 +290,7 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
   return (
     <div className="p-5 space-y-4">
       {/* Header */}
-      <div className="flex items-center gap-3 flex-wrap">
+      <div className="page-heading flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2.5">
           <I.Market className="text-gold" size={20} />
           <span className="font-mono text-[15px] font-bold tracking-wide text-ink">{t("markets.title")}</span>
@@ -677,13 +677,15 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
             <span className="pill pill-dim text-[11.5px]">{t("markets.scanPill")}</span>
             <span className="pill pill-gold ml-auto text-[11.5px]">{t("markets.signalCount", { n: data.signals.length })}</span>
           </div>
+          <div className="overflow-x-auto" tabIndex={0} aria-label={t("markets.smartScan")}>
           <div className="grid items-center px-4 py-2 mt-1.5 border-b border-line text-[11.5px] font-mono tracking-[0.08em] text-ink-dim"
-            style={{ gridTemplateColumns: "1.4fr 1fr 1fr 1.1fr 1fr 0.9fr 1.9fr 0.8fr" }}>
+            style={{ gridTemplateColumns: "200px 100px 95px 105px 100px 90px minmax(150px,1fr) 70px", minWidth: 950, gap: 12 }}>
             <div>{t("markets.h.symbol")}</div><div>{t("markets.h.price")}</div><div>{t("markets.h.change")}</div><div>{t("markets.h.quotevol")}</div><div>{t("markets.h.funding")}</div><div>{t("markets.h.direction")}</div><div>{t("markets.h.reason")}</div><div>{t("markets.h.strength")}</div>
           </div>
           {data.signals.map((r) => (
             <SignalRow key={r.symbol} r={r} onDetail={openDetail("spot")} onAnalyze={onAnalyze} />
           ))}
+          </div>
         </div>
       )}
 

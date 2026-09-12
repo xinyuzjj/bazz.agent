@@ -81,7 +81,7 @@ export function MemoryOverlay({ open, full, onClose }: { open: boolean; full?: b
   if (full) {
     return (
       <div className="p-5">
-        <div className="glass-bright overflow-hidden" style={{ borderRadius: 12 }}>
+        <div className="memory-page glass overflow-hidden">
           <MemoryBody onClose={onClose} />
         </div>
       </div>

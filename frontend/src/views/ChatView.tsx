@@ -3,7 +3,7 @@ import { api, streamChat, authHeaders } from "../api";
 import { I } from "../components/icons";
 import { AgentSigninCard, ChainWalletPanel, Spin } from "../components/WalletBits";
 import { AgentAvatar, Blobatar } from "../components/Blobatar";
-import { useT } from "../i18n/i18n";
+import { useT, useI18n } from "../i18n/i18n";
 import { pushToast } from "../components/Toasts";
 import { confirmDialog } from "../components/ConfirmDialog";
 
@@ -71,6 +71,7 @@ export function ChatView({
   pendingMsg?: string; onPendingConsumed?: () => void;
 }) {
   const t = useT();
+  const { locale } = useI18n();
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
   const [autoExec, setAutoExec] = useState(true);  // 默认开：首页 = 全能模式（沙箱工具自动放行）
@@ -1177,9 +1178,9 @@ export function ChatView({
   }) : sessConvs;
 
   return (
-    <div className="grid grid-cols-12 gap-4 p-5 h-full">
-      {/* Left rail */}
-      <aside className="col-span-12 md:col-span-3 glass flex flex-col overflow-hidden" style={{ borderRadius: 12 }}>
+    <div className="chat-workspace">
+      {/* Context navigation keeps sessions, agents, files and terminal in one place. */}
+      <aside className="chat-sidebar glass" aria-label={locale === "zh" ? "会话与资源" : "Sessions and resources"}>
         <div className="px-3 pt-3">
           <div className="flex items-center gap-1 px-1 py-1 rounded-md bg-elevated/50 border border-line">
             {(["sessions", "bots", "files", "terminal"] as LeftTab[]).map(tab => (
@@ -1494,7 +1495,7 @@ export function ChatView({
       </aside>
 
       {/* Center: chat */}
-      <main className="col-span-12 md:col-span-9 flex flex-col gap-3 min-h-0">
+      <main className="chat-main">
         {/* Active bot persona strip */}
         {activeBot && !inRoom && (
           <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg border border-gold/40 bg-gold/5">
@@ -1548,9 +1549,10 @@ export function ChatView({
         )}
 
         {/* Messages / empty state */}
-        <div ref={scrollRef} className="flex-1 glass overflow-auto" style={{ borderRadius: 12 }}>
+        <div ref={scrollRef} className="chat-messages glass overflow-auto">
           {isEmpty ? (
-            <div className="h-full min-h-[60vh] flex flex-col items-center justify-center text-center px-6">
+            <div className="chat-welcome">
+              {!activeBot && !inRoom && <><div className="welcome-mark"><I.Hex size={30} /></div><div className="welcome-eyebrow">YOUR PERSONAL AGENT WORKSPACE</div></>}
               <div className="flex items-center gap-4 select-none">
                 {activeBot && !inRoom ? (
                   <><AgentAvatar avatar={activeBot.avatar} name={activeBot.name} color={activeBot.color} size={72} ring={false} />
@@ -1568,7 +1570,7 @@ export function ChatView({
                     </span>
                   </div>
                 ) : (
-                  <span className="font-mono font-extrabold tracking-tight text-ink leading-none" style={{ fontSize: "clamp(40px, 6vw, 84px)" }}>BAZZ<span className="text-gold">.</span>AGENT</span>
+                  <h1 className="welcome-title">{locale === "zh" ? <>想法在这里，<span>开始行动。</span></> : <>Your ideas. <span>Put into action.</span></>}</h1>
                 )}
               </div>
               {activeBot && !inRoom ? (
@@ -1580,14 +1582,15 @@ export function ChatView({
                   {t("chat.roomEmptyHint", { name: roomInfo.title, n: (roomInfo.members ?? []).length })}
                 </p>
               ) : (
-                <p className="mt-6 max-w-2xl text-ink-dim text-[14px] leading-relaxed">
-                  Type a task, question, or snippet. I remember the session, cite my sources, and stop to ask when I&rsquo;m unsure.
+                <p className="welcome-description">
+                  {locale === "zh" ? "从一次市场洞察，到一份完整计划。告诉我你的目标，我们一起理清信息、分析机会、审视风险。" : "From a market insight to a considered plan. Share your goal, explore the data and understand the risks."}
                 </p>
               )}
-              <div className="mt-6 flex flex-wrap items-center justify-center gap-2 font-mono text-[11px]">
-                {!inRoom && [t("chat.qScanAnomaly"), t("chat.qArbPath"), t("chat.qBnbReview"), t("chat.qHedge"), t("chat.qRiskTest")].map(s => (
-                  <button key={s} onClick={() => send(s)} className="pill pill-dim hover:border-gold/40 hover:text-gold transition-colors">⚡ {s}</button>
-                ))}
+              <div className="welcome-actions">
+                {!inRoom && [t("chat.qScanAnomaly"), t("chat.qArbPath"), t("chat.qBnbReview"), t("chat.qHedge"), t("chat.qRiskTest")].map((s, i) => {
+                  const Icon = [I.Market, I.Zap, I.Cex, I.Target, I.Shield][i];
+                  return <button key={s} onClick={() => send(s)} className="welcome-action"><Icon size={17} /><span>{s}</span><I.Arrow size={13} /></button>;
+                })}
               </div>
             </div>
           ) : (
@@ -1797,7 +1800,7 @@ export function ChatView({
         </div>
 
         {/* Composer */}
-        <div className="glass relative" style={{ borderRadius: 12 }}>
+        <div className="chat-composer glass relative">
           {mention && mentionPool.length > 0 && (
             <div className="absolute bottom-full left-3 right-3 mb-1.5 z-40 overflow-hidden rounded-md border border-line/80 bg-card shadow-xl shadow-black/40" style={{ backdropFilter: "blur(10px)" }}>
               <div className="px-3 py-1.5 border-b border-line/50 font-mono text-[9.5px] text-ink-mute flex items-center justify-between">
@@ -1834,7 +1837,8 @@ export function ChatView({
                 : activeBot
                   ? t("chat.phToBot", { name: activeBot.name })
                   : t("chat.phDefault")}
-              className="flex-1 bg-transparent font-mono text-[14px] text-ink placeholder-ink-mute outline-none" />
+              aria-label={locale === "zh" ? "向 Agent 发送消息" : "Message Agent"}
+              className="flex-1 min-w-0 bg-transparent font-sans text-[14px] text-ink placeholder-ink-mute outline-none py-4" />
             <button onClick={submit} disabled={streaming}
               className={`btn-gold ${streaming ? "opacity-50 cursor-not-allowed" : ""}`} title={editSel ? t("chat.saveResend") : t("chat.send")}>
               <I.Send size={12} />

@@ -111,7 +111,8 @@ export function ExchangeView({ initialSymbol, initialTab, initialSide, halted, o
   };
 
   return (
-    <div className="p-5 space-y-4">
+    <div className="p-5 space-y-4 exchange-page">
+      <div className="page-heading flex items-center gap-3"><I.Cex size={26} className="text-gold" /><div className="leading-tight"><div>{t("nav.cex")}</div><div>BINANCE EXCHANGE / ACCOUNT OVERVIEW</div></div></div>
       {/* 顶部 KPI —— 真实账户数据 */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         <Kpi label={t("exch.kpiEquity")} value={acc ? `$${fmt(acc.total_usdt, 2)}` : "—"} sub={acc ? (() => {

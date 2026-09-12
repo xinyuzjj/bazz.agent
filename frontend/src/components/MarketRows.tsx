@@ -542,7 +542,7 @@ export const SignalRow = memo(function SignalRow({ r, onDetail, onAnalyze }: {
   return (
     <div onClick={() => onDetail?.(r.symbol, r)} title={t("markets.detail.open")}
       className="grid items-center px-4 py-2.5 border-b border-line/60 last:border-0 hover:bg-elevated/40 transition-colors cursor-pointer group"
-      style={{ gridTemplateColumns: "1.4fr 1fr 1fr 1.1fr 1fr 0.9fr 1.9fr 0.8fr" }}>
+      style={{ gridTemplateColumns: "200px 100px 95px 105px 100px 90px minmax(150px,1fr) 70px", minWidth: 950, gap: 12 }}>
       <div className="flex items-center gap-2 min-w-0">
         <span className="font-mono font-semibold text-ink group-hover:text-gold">{baseName(r.symbol)}</span>
         <span className="font-mono text-[11.5px] text-ink-mute">/USDT</span>

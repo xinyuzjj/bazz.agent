@@ -222,8 +222,8 @@ export function Web3SkillsView() {
 
   if (!selected) {
     return (
-      <div className="p-5 space-y-4">
-        <div className="flex items-center gap-3 flex-wrap">
+      <div className="p-5 space-y-4 skills-page">
+        <div className="page-heading flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-2.5">
             <I.Grid className="text-gold" size={24} />
             <span className="font-mono text-[15px] font-bold tracking-wide text-ink">{t("skills.title")}</span>
@@ -278,7 +278,7 @@ export function Web3SkillsView() {
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-2.5">
                   {items.map((s) => (
-                    <div key={s.name} className={`rounded-lg border p-3.5 transition-colors ${s.installed ? "border-line bg-card/40" : "border-line bg-elevated/20 opacity-80"}`}>
+                    <div key={s.name} className={`skill-card rounded-lg border p-3.5 transition-colors ${s.installed ? "border-line bg-card/40" : "border-line bg-elevated/20 opacity-80"}`}>
                       <button onClick={() => s.installed && open(s)} disabled={!s.installed} className="w-full text-left">
                         <div className="flex items-start gap-2">
                           <span className="font-mono text-[12.5px] font-semibold text-ink break-all">{s.title || s.name}</span>
@@ -322,7 +322,7 @@ export function Web3SkillsView() {
   const presets = PRESETS[selected.name] ?? [];
 
   return (
-    <div className="p-5 space-y-4">
+    <div className="skills-page p-5 space-y-4">
       <div className="flex items-center gap-3 flex-wrap">
         <button onClick={back} className="btn-ghost py-1.5 px-3 text-[12px]"><I.Arrow size={11} className="rotate-180" /> {t("skills.backToList")}</button>
         <span className="font-mono text-[15px] font-bold tracking-wide text-ink">{selected.name}</span>

@@ -5,135 +5,87 @@ import { useTheme } from "../theme/theme";
 
 export type NavId = "chat" | "markets" | "wallet" | "skills" | "cex" | "council" | "settings" | "memory";
 
-// vite.config.ts define 注入的 package.json 版本号
+// vite.config.ts / preview.config.ts 的 define 注入的包版本号
 declare const __APP_VERSION__: string;
+
+type ShellProps = {
+  nav: NavId; setNav: (n: NavId) => void; onMemory: () => void; llmReady: boolean;
+};
 
 // 仅当 desktop（preload 暴露了 bazzWindow）时显示窗口控制按钮
 function WindowControls() {
-  const w: any = (typeof window !== "undefined") ? (window as any) : null;
+  const w = (window as any).bazzWindow;
   const { t } = useI18n();
-  if (!w?.bazzWindow) return null;
-  const btn = "w-9 h-9 flex items-center justify-center rounded-md text-ink-dim hover:bg-elevated hover:text-ink transition-colors app-no-drag";
-  const close = "w-9 h-9 flex items-center justify-center rounded-md text-ink-dim hover:bg-red-500/85 hover:text-white transition-colors app-no-drag";
-  return (
-    <div className="flex items-center gap-0.5 ml-1">
-      <button onClick={() => w.bazzWindow.minimize()} className={btn} title={t("shell.min")} aria-label={t("shell.min")}>
-        <svg width="10" height="10" viewBox="0 0 10 10"><rect x="1" y="5" width="8" height="1" fill="currentColor"/></svg>
-      </button>
-      <button onClick={() => w.bazzWindow.toggleMaximize()} className={btn} title={t("shell.max")} aria-label={t("shell.max")}>
-        <svg width="10" height="10" viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1"/></svg>
-      </button>
-      <button onClick={() => w.bazzWindow.close()} className={close} title={t("shell.close")} aria-label={t("shell.close")}>
-        <svg width="10" height="10" viewBox="0 0 10 10">
-          <path d="M1.5 1.5 L8.5 8.5 M8.5 1.5 L1.5 8.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" fill="none"/>
-        </svg>
-      </button>
-    </div>
-  );
+  if (!w) return null;
+  return <div className="window-controls app-no-drag">
+    <button className="icon-button" onClick={() => w.minimize()} title={t("shell.min")} aria-label={t("shell.min")}><I.Minus size={15} /></button>
+    <button className="icon-button" onClick={() => w.toggleMaximize()} title={t("shell.max")} aria-label={t("shell.max")}><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="2.5" y="2.5" width="9" height="9" rx="1" stroke="currentColor" /></svg></button>
+    <button className="icon-button window-close" onClick={() => w.close()} title={t("shell.close")} aria-label={t("shell.close")}><I.X size={15} /></button>
+  </div>;
 }
 
-export function TopBar({
-  nav, setNav, onMemory, llmReady,
-}: {
-  nav: NavId; setNav: (n: NavId) => void; onMemory: () => void;
-  llmReady: boolean;
-}) {
+function useNavigation() {
+  const { t, locale } = useI18n();
+  // 记忆入口也在导航里：点击走 App 的 onMemory（打开记忆浮层），不是普通 setNav
+  return {
+    locale,
+    items: [
+      { id: "chat", label: t("nav.chat"), Icon: I.Chat },
+      { id: "markets", label: t("nav.markets"), Icon: I.Market },
+      { id: "wallet", label: t("nav.wallet"), Icon: I.Wallet },
+      { id: "cex", label: t("nav.cex"), Icon: I.Cex },
+      { id: "council", label: t("nav.council"), Icon: I.Megaphone },
+      { id: "skills", label: t("nav.skills"), Icon: I.Grid },
+      { id: "memory", label: t("topbar.memory"), Icon: I.Memory },
+      { id: "settings", label: t("nav.settings"), Icon: I.Gear },
+    ] as { id: NavId; label: string; Icon: React.FC<any> }[],
+  };
+}
+
+/** 顶部导航条：品牌 | 导航 | 工具。导航不再占左侧一整列。 */
+export function TopBar({ nav, setNav, llmReady, onMemory }: ShellProps) {
   const { t, locale, toggle: toggleLocale } = useI18n();
   const { theme, toggle: toggleTheme } = useTheme();
-
-  const NAV: { id: NavId; label: string; Icon: React.FC<any> }[] = [
-    { id: "chat", label: t("nav.chat"), Icon: I.Chat },
-    { id: "markets", label: t("nav.markets"), Icon: I.Market },
-    { id: "wallet", label: t("nav.wallet"), Icon: I.Wallet },
-    { id: "cex", label: t("nav.cex"), Icon: I.Cex },
-    { id: "council", label: t("nav.council"), Icon: I.Megaphone },
-    { id: "skills", label: t("nav.skills"), Icon: I.Grid },
-    { id: "settings", label: t("nav.settings"), Icon: I.Gear },
-  ];
-
-  // 切语言按钮上显示「另一个」语言：中文时显示 EN，英文时显示 中
-  const otherLocaleLabel = locale === "zh" ? "EN" : "中";
-
-  return (
-    <header className="sticky top-0 z-40 border-b border-line bg-canvas/85 backdrop-blur-md app-drag">
-      <div className="flex items-center gap-3 px-4 h-14">
-        {/* Brand left */}
-        <div className="flex items-center gap-2.5 shrink-0">
-          <I.Hex className="text-gold" size={22} />
-          <div className="leading-tight">
-            <div className="font-mono font-bold tracking-wide text-[16px] text-ink">BAZZ<span className="text-gold">.</span>AGENT</div>
-            <div className="font-mono text-[10px] tracking-[0.12em] text-ink-dim">BINANCE AGENT OS // v{__APP_VERSION__}</div>
-          </div>
-        </div>
-
-        {/* Nav center */}
-        <nav className="flex items-center gap-0.5 mx-auto px-2 py-1 rounded-lg bg-elevated/40 border border-line app-no-drag">
-          {NAV.map(n => (
-            <button key={n.id}
-              onClick={() => setNav(n.id)}
-              className={`px-3 py-1.5 rounded-md font-mono text-[12px] tracking-wide transition-colors whitespace-nowrap
-                ${nav === n.id
-                  ? "bg-card text-gold border border-line"
-                  : "text-ink-dim hover:text-ink hover:bg-card/60 border border-transparent"}`}>
-              {n.label}
-            </button>
-          ))}
-        </nav>
-
-        {/* Tools right */}
-        <div className="flex items-center gap-2 shrink-0 app-no-drag">
-          <button onClick={onMemory}
-            className={`pill ${nav === "memory" ? "pill-gold" : "pill-dim hover:bg-elevated"} transition-colors`}>
-            <I.Memory size={12} /> {t("topbar.memory")}
-          </button>
-          <span className={`pill ${llmReady ? "pill-green" : "pill-red"}`}>
-            <span className={`dot ${llmReady ? "dot-green live" : "dot-red"}`} />
-            {llmReady ? t("topbar.llmArmed") : t("topbar.llmOffline")}
-          </span>
-
-          {/* 主题切换：当前是 dark 时显示太阳（点击切到 light），反之亦然 */}
-          <button
-            onClick={toggleTheme}
-            title={theme === "dark" ? t("topbar.theme.dark") : t("topbar.theme.light")}
-            className="pill pill-dim hover:bg-elevated transition-colors"
-            aria-label={theme === "dark" ? t("topbar.theme.dark") : t("topbar.theme.light")}
-          >
-            {theme === "dark" ? <I.Sun size={12} /> : <I.Moon size={12} />}
-          </button>
-
-          {/* 语言切换：按钮上显示「另一个」语言名，点击即切换 */}
-          <button
-            onClick={toggleLocale}
-            title={t("topbar.lang.tooltip")}
-            className="pill pill-dim hover:bg-elevated transition-colors font-mono"
-            aria-label={t("topbar.lang.tooltip")}
-          >
-            <I.Globe size={12} />
-            <span className="ml-0.5">{otherLocaleLabel}</span>
-          </button>
-
-          <div className="w-7 h-7 rounded-full bg-elevated border border-line flex items-center justify-center font-mono text-[11px] text-gold">Q</div>
-        </div>
-
-        {/* 窗口控制按钮（仅桌面版显示） */}
-        <WindowControls />
-      </div>
-    </header>
-  );
+  const { items } = useNavigation();
+  const activate = (id: NavId) => id === "memory" ? onMemory() : setNav(id);
+  const openCommands = () => {
+    setNav("chat");
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }));
+  };
+  return <header className="app-topbar app-drag">
+    <div className="topbar-brand">
+      <span className="brand-symbol"><I.Hex size={24} /></span>
+      <div className="brand-wordmark"><strong>BAZZ<span>.</span>AGENT</strong><small>BINANCE AGENT OS · v{__APP_VERSION__}</small></div>
+    </div>
+    <nav className="topbar-nav app-no-drag" aria-label={locale === "zh" ? "主导航" : "Main navigation"}>
+      {items.map(n => (
+        <button key={n.id} className={`topbar-nav-item ${nav === n.id ? "is-active" : ""}`} onClick={() => activate(n.id)}
+          aria-current={nav === n.id ? "page" : undefined} title={n.label}>
+          <n.Icon size={15} /><span>{n.label}</span>
+        </button>
+      ))}
+    </nav>
+    <div className="topbar-tools app-no-drag">
+      <button className="icon-button" onClick={openCommands}
+        title={locale === "zh" ? "搜索与快捷操作 (Ctrl K)" : "Search and commands (Ctrl K)"}
+        aria-label={locale === "zh" ? "搜索与快捷操作" : "Search and commands"}><I.Search size={16} /></button>
+      <span className="connection-status">
+        <span className={`dot ${llmReady ? "dot-green live" : "dot-red"}`} />
+        <span className="connection-label">{llmReady ? t("topbar.llmArmed") : t("topbar.llmOffline")}</span>
+      </span>
+      <span className="tool-divider" />
+      <button className="icon-button" onClick={toggleTheme} title={theme === "dark" ? t("topbar.theme.dark") : t("topbar.theme.light")} aria-label={theme === "dark" ? t("topbar.theme.dark") : t("topbar.theme.light")}>
+        {theme === "dark" ? <I.Sun size={17} /> : <I.Moon size={17} />}
+      </button>
+      <button className="icon-button language-button" onClick={toggleLocale} title={t("topbar.lang.tooltip")} aria-label={t("topbar.lang.tooltip")}>{locale === "zh" ? "EN" : "中"}</button>
+      <WindowControls />
+    </div>
+  </header>;
 }
 
-export function Shell({
-  nav, setNav, llmReady, onMemory, children,
-}: {
-  nav: NavId; setNav: (n: NavId) => void;
-  llmReady: boolean;
-  onMemory: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="h-screen flex flex-col text-ink">
-      <TopBar nav={nav} setNav={setNav} onMemory={onMemory} llmReady={llmReady} />
-      <main className="flex-1 min-h-0 min-w-0 overflow-auto">{children}</main>
-    </div>
-  );
+export function Shell({ nav, setNav, llmReady, onMemory, children }: ShellProps & { children: React.ReactNode }) {
+  return <div className="app-shell text-ink">
+    <TopBar nav={nav} setNav={setNav} llmReady={llmReady} onMemory={onMemory} />
+    <main className={`workspace-content view-${nav}`} id="workspace-content">{children}</main>
+  </div>;
 }

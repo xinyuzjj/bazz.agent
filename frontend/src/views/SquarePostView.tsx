@@ -146,7 +146,7 @@ export function SquarePostView() {
   return (
     <div className="p-5 space-y-4">
       {/* Header */}
-      <div className="glass p-4 flex items-center gap-3 flex-wrap" style={{ borderRadius: 12 }}>
+      <div className="page-heading flex items-center gap-3 flex-wrap">
         <I.Megaphone className="text-gold" size={22} />
         <div className="leading-tight">
           <div className="font-mono text-[15px] font-bold text-ink tracking-wide">{t("square.title")}</div>
@@ -299,7 +299,7 @@ export function SquarePostView() {
 function Stat({ label, value, sub, gold, green, red }: { label: string; value: string; sub: string; gold?: boolean; green?: boolean; red?: boolean }) {
   const color = gold ? "text-gold" : green ? "text-green" : red ? "text-red" : "text-ink";
   return (
-    <div className="glass px-4 py-3" style={{ borderRadius: 12 }}>
+    <div className="square-stat glass">
       <div className="prefix">{label}</div>
       <div className={`mt-1 font-mono text-[19px] font-bold tabular ${color}`}>{value}</div>
       <div className="mt-0.5 font-mono text-[10px] text-ink-mute">{sub}</div>
@@ -314,7 +314,7 @@ function PostCard({ p, onDelete }: { p: Post; onDelete?: (id: string) => void })
   const share = p.share_url || (p.post_id ? `https://www.binance.com/square/post/${p.post_id}` : "");
   const relTime = rel(p.ts);
   return (
-    <div className="glass p-3.5 space-y-2" style={{ borderRadius: 12 }}>
+    <div className="square-post glass space-y-2">
       {/* head */}
       <div className="flex items-center gap-2 flex-wrap">
         <span className="pill pill-dim text-[10px] font-mono" title={meta.tip}>

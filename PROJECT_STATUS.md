@@ -1,4 +1,4 @@
-# BAZZ.AGENT 项目状态交接（v1.5.35 · 2026-09-12 更新）
+# BAZZ.AGENT 项目状态交接（v1.5.36 界面改版已落地并发布 · 2026-09-12 更新）
 
 > 用途：开新任务/新会话前快速恢复上下文。读完即可继续开发，无需翻旧对话。
 > 仓库：`github.com/xinyuzjj/bazz.agent`
@@ -14,8 +14,9 @@
 
 - **形态**：Windows 桌面端（Electron 壳）+ FastAPI Python 后端 + TS/Vite 前端；同一套代码也能纯浏览器跑
 - **定位**：币安 AI 交易终端 —— Agent 对话、行情（现货/合约/股票化代币）、交易方案卡、CEX 连接、Agentic Wallet、广场发文、Skills Hub、多 Bot 群聊、x402 支付
-- **当前版本**：**v1.5.35**（`package.json` 与最新 git tag 一致）
-- **规模**：后端 `src/` 32 个 py 模块 + `desktop_app.py`（**130 个 API 端点**，实测 `@app.<method>(` 计数：v1.5.34 为 129）；前端 12 个视图 / 40 个文件；9 个离线回归测试套件
+- **当前版本**：**v1.5.36（界面改版：导航回到顶部 + 窄屏换行 + 隔离预览验收，已通过 84 项浏览器验收并发布）**；
+  `package.json` 与最新 git tag 均为 v1.5.36
+- **规模**：后端 `src/` 32 个 py 模块 + `desktop_app.py`（**130 个 API 端点**，实测 `@app.<method>(` 计数：v1.5.34 为 129）；前端 12 个视图 / 40 个文件；9 个离线回归测试套件 + 1 套浏览器视觉验收（`tests/ui_preview_check.py`）
 - **工作区**：安装目录 `<安装根>/workspace`（state.db / proxies.json / 附件 / 日志 / spill / 复盘 / square_rich）；只读盘回退 `%APPDATA%\BAZZ.AGENT\workspace`
 - **预置资产**：`.agents/skills/` 官方技能包 + `.agents/bots/` 5 个 Bot 人设（default-assistant / trend-hunter / liquidity-hunter / onchain-fox / risk-sentinel）
 
@@ -25,6 +26,7 @@
 
 | 版本 | 核心内容 |
 |---|---|
+| **v1.5.36** | **界面视觉系统重构（导航回到顶部）+ 隔离预览 / 浏览器验收链路**。① **布局**：上一稿把导航做成左侧一整列（`.workspace-sidebar` + `--sidebar-width`），**用户明确否掉**（「还是喜欢这个放在上面」）→ 导航回到顶部单条 `.app-topbar` = 品牌 \| 横向导航（8 项）\| 工具（搜索 / 连接状态 / 主题 / 语言 / 窗口控制）；面包屑那一行删除，版本号移进品牌副标题。② **窄屏换行而不是横向滚动**：`.topbar-nav` 一旦装不下就**不能靠滚动** —— 滚动条隐形，末尾几项等于藏起来（390px 下「技能库 / 设置」点不到，是浏览器验收实测抓出来的）。规则：≤1000px 整条 bar 转两行（品牌+工具一行 / 导航独占下一行并内部换行），≥1001px 保持单行 + `overflow-x:auto` 兜底；断点 1420（去导航图标）/ 1120（收副标题 + 连接状态文字）/ 1000（转两行）/ 900（会话页单列）/ 760 / 520。③ **顺手修三处遗留**：**(a)** 钱包页头部 `LIVE · LIVE · 已登录` —— `wallet.signedIn` 文案本身已含 `LIVE ·`，代码又拼了一次；**(b)** 窄列卡片头部挤压 —— 左侧 7/5 子栅格里 `PanelHead` / `LivePanel` 的标题与「重新获取 / 刷新」抢位（按钮被压到 41px 宽折成两行；`LivePanel` 的 `<code>` 缺 `min-w-0`，把「刷新」挤成 22×53），修法 = 行容器 `flex-wrap` + 动作 `shrink-0 whitespace-nowrap` + code `min-w-0 flex-1`；**(c)** `confirmDialog` 传了 `title` 就把 message 整句吞掉（广场删帖弹窗只剩「删除」二字标题）→ message 下移到 `detail` 行渲染。④ **隔离预览 + 浏览器验收（新增资产）**：`frontend/preview.html` + `preview.config.ts` + `src/preview/{main.tsx,mock.ts}` 独立入口，内存 fixture 覆盖约 48 个端点，fetch / XHR 全拦、CSP `connect-src 'none'`、在真实桌面桥里直接抛错拒绝运行；`tests/ui_preview_check.py` 用真浏览器走查 **8 视图 × 明暗 × 4 档宽度（1440/1024/760/390）= 84 项断言 + 25 张截图 + verification.json**（含广场删帖/清空失败的二次确认、会话流式回复与切页保持、以及「所有请求都是本地静态资源」）。⑤ **踩坑（都写进测试注释了）**：agent-browser CLI 的守护进程会**继承父进程 stdout**，Python 用 `capture_output` 抓输出会在**第一次调用就死锁** → 一律重定向到文件 + `Popen.wait(timeout)` + 超时 kill；该 CLI 的 **`find role textbox` 解析不了普通 `<input>`**（4 种参数写法全失败），**图标按钮的 `aria-label` / `title` 也不参与 `--name` 匹配** → 改 `fill/click <css>`；判定卡片头部碰撞必须**同时比 y 轴**，否则换行后的动作会被误判成重叠；预览构建 `emptyOutDir:false`，旧 hash 资源会累积；沙箱**批量删除守卫**（50 次/轮）命中时抛的是 `SystemExit`，`except Exception` 抓不到 |
 | **v1.5.35** | **两处「用起来别扭」：更新时不再弹「关闭还是最小化」；广场失败文章可删除**。① **更新弹窗（真实故障路径）**：应用内点「安装更新」竟弹出「关闭还是最小化到托盘」询问 —— 根因是 `useUpdater` 复用了「用户点 X」的 `bazzWindow.close()` 链路（`mainWin.on("close")` → `bazz:ask-close` → 渲染层弹窗 → `bazz:answer-close`）。更糟的是用户一旦选「最小化到托盘」，Electron 进程**根本不退**，而更新脚本会等待主进程退出**最多 180 秒**（45 次 × 4 秒），超时即 `ERR wait-electron-timeout`、更新直接失败 —— 这弹窗不只是碍眼，它是更新失败的一条真实路径。修复：新增**专用退出通道** `bazz:quit-for-update`（`preload.cjs` 暴露 `quitForUpdate()`，`main.cjs` 直通 `isQuitting=true; app.quit()`，**不进询问链路**），`useUpdater` 改走它并保留 `close()` 兜底（老主进程无此通道时不崩）；`installer.iss` 的 `CloseApplications=yes` 改 **`no`**（原 `yes` 会让 Inno 的 Restart Manager 先发 `WM_CLOSE`，同样引出询问框，而 ScoutBackend / mihomo / runtime node 都是**无窗口进程**根本关不掉 → 必然弹「Select action」卡住安装），关闭一律交给 `[Code] PrepareToInstall` 的 `taskkill /F`。**结论：「关闭还是最小化」只服务于用户主动点 X，程序性退出一律直通。** ② **广场失败文章可删除**：台账只进不出，失败记录越堆越多。新增 `src/square_store.py::delete_records(ids)`（按 id 批删，`deleted` 计实际删除数、`missing` 计不存在的 id，**只有真删掉东西才落盘**）+ 端点 `POST /api/square/posts/delete`（`{ids:[...]}` → `{ok,deleted,missing}`，**仅操作本地台账，不调币安 API**）+ 前端失败卡片「删除」按钮（垃圾桶图标，`status !== "posted"` 才显示）与「失败」筛选下的「清空所有失败」，**两者都走 `confirmDialog` 二次确认**，清空时提示条数；新增 5 个 i18n key × 2 语言。③ **验证**：新增 `tests/test_v1535_square_delete.py` **12/12**（单元 5 + AST 6 + TestClient 端到端 1，含 401 未带令牌），**已验证能抓住旧行为**（回退 5 文件 → 0/12）；全套 9 套件回归通过；`tsc --noEmit` 退出码 0、`npm run build` 成功。④ **踩坑**：FastAPI **没有全局 `request` 对象**，按 Flask 习惯写 `request.get_json()` 会 500 `name 'request' is not defined`，正确写法是签名里 `payload: dict = Body(default_factory=dict)` |
 | **v1.5.34** | **文件查看器图片预览：后端能力早已就绪，界面这端从未接线**。① **现象**：在 Files 面板点开 `chart_24h.png`，查看器只显示「二进制文件，不可文本预览（共 33.8K）」，图片看不到。② **根因（典型「做了半截」）**：后端更早版本就加了图片原文端点 `/api/workspace/raw`（20MB 上限、扩展名白名单、`FileResponse` 直出），`api.ts` 也早有配套的 `workspaceRawBlob()` —— 但**全仓没有第二个调用点**；同时 `ChatView` 的 `fileModal` 类型声明了 `img_url?: string` 却**从未被赋值**，渲染分支 `fileModal.img_url ? <img ...>` 因此永远走不到，所有文件一律落到 `!is_text` 的「二进制不可预览」兜底。补充：图片**不能**复用文本通道 `/api/workspace/read` —— 那是文本接口（1.5MB 上限）且**含 NUL 字节即判二进制**，PNG 文件头就带 NUL，必然被挡。③ **修复**：`openFile()` 按扩展名分流（图片走 `workspaceRawBlob()` → `URL.createObjectURL()` → 写入 `img_url`，且分流必须排在 `workspaceRead` 之前）；objectURL 在**关闭 / 切换 / 卸载**三处全部 `revokeObjectURL()`；文件列表给图片加**缩略图**（`THUMB_LIMIT = 30` 限制请求数）；查看器内图片可点击打开原图 + 底部「打开原图」按钮；错误文案解包（`jget` 把整个 JSON body 塞进 `Error.message`，现在解出 `error` 字段）。④ **验证**：新增 `tests/test_v1534_image_preview.py` **7/7**，并**已验证能抓住旧行为**（临时回退 `ChatView.tsx` → **1/7**，恢复后 **7/7**；唯一「通过」的渲染顺序断言恰好印证事故本质 —— 分支写好了，只是永远走不到）。其中 `test_workspace_raw_blob_has_a_caller` 是**核心护栏**：能力存在但没人调用 = 功能不存在。另含前后端扩展名白名单**交叉校验**（AST 取后端 `_IMG_EXT_MEDIA` 键集合 vs 前端 `IMG_EXT_RE` 正则，并做真实正则匹配验证含大写/非图片/结尾锚定）。前端 `tsc --noEmit` 退出码 0、`npm run build` 成功 |
 | **v1.5.33** | **修 v1.5.32 自己引入的启动竞态**。v1.5.32 给 `_recover()` 加的「探活失败即清空端口缓存」是**无条件**的，而 `start()` 里端口是**先写、后起进程**：`_write_config()` 写好端口 → `open(LOG_PATH)` → `Popen()`，在后两步之间 `_proc` 仍是 `None`。若前端此刻正好轮询 `/api/proxies`（`status()` → `is_running()` → `_recover()`），内核尚未就绪 → 探活失败 → **把刚写好的端口清零** → 等待循环 40 次都在请求 `http://127.0.0.1:0/version` → 误报「内核启动超时」，并把 `mixed_port: 0` 写进 `state.json` —— **症状与「代理没启用」完全一致，等于把刚修好的 bug 换个入口又放回来**。修复：① 新增 `_recovered` 标记区分「落盘恢复来的端口」与「本进程 `start()` 刚写的端口」，`_recover()` **只清前者**；② `_write_config()` 写入时置 `_recovered=False`；③ `stop()` 同步归零端口缓存（此前停掉内核后 `mixed_port()` 仍返回过期端口）；④ `_revive_kernel_async()` 在线程内**重读** active 节点（启动期间用户在界面上换过节点时不会再把旧节点选回去）。测试 `tests/test_v1532_proxy_kernel_state.py` 扩到 **14/14**，并**已验证新断言能抓住旧行为**（临时回退 `src/proxy_kernel.py` → 12/14，两条 FAIL） |
@@ -170,6 +172,9 @@ verification_stop 收尾验证门、思考小件（`<thinking>` 未闭合截断�
 | `src/updater.py` | 增量自动更新（MANIFEST diff + delta + 版本守卫 + fail-closed 校验） |
 | `src/workspace.py` | 工作区路径解析（NODE_EXE / WORKSPACE / AGENTS_DIR） |
 | `frontend/src/views/*.tsx` | 12 个视图：ChatView / MarketsView / ExchangeView / WalletView / Web3SkillsView / SquarePostView / CouncilView / MemoryOverlay / SettingsView / ProxyPoolView / AdminPanels / PanicHaltModal |
+| `frontend/src/components/Shell.tsx` · `frontend/src/index.css` | **界面骨架 + 视觉系统（改导航就改这两处）**：`.app-shell` 是纵向 flex，顶部单条 `.app-topbar` = 品牌 \| `.topbar-nav`（8 项，装不下时换行不滚动）\| 工具；`index.css` 用 RGB 通道 token（`--canvas-rgb` / `--ink-rgb` / `--gold-rgb` …）表达明暗两套主题，卡片、按钮、表格、胶囊、输入框全部走这一层 |
+| `frontend/preview.html` · `frontend/preview.config.ts` · `frontend/src/preview/{main.tsx,mock.ts}` | **隔离 UI 预览**：独立 vite 入口，构建产物落 `outputs/ui-preview`（已 gitignore）。内存 fixture 覆盖约 48 个端点，fetch / XHR 全拦、CSP `connect-src 'none'`；`main.tsx` 一旦检测到 `bazzWindow` 直接抛错拒绝运行。**生产入口 `src/main.tsx` 不引入 fixture** |
+| `tests/ui_preview_check.py` | **浏览器视觉验收**（先起 `127.0.0.1:5186` 静态服务指向 `outputs/ui-preview`）：8 视图 × 明暗 × 3 档宽度 = 64 项断言，产出 25 张截图 + `verification.json` |
 | `frontend/src/i18n/locales.ts` | 双语（zh / en 两处都要加 key） |
 | `frontend/src/api.ts` · `frontend/src/lib/live.ts` | 统一 fetch（带 X-BAZZ-Token）/ 行情实时快照 diff。**注意 `api.ts` 在 `src/` 根下，不在 `src/lib/`** |
 | `desktop_app.py` `/api/workspace/raw` ↔ `api.ts` `workspaceRawBlob()` ↔ `ChatView.tsx` `openFile()` | **图片预览链路**（v1.5.34 接通）：`/raw` 是图片原文通道（20MB、扩展名白名单、`FileResponse`），与文本通道 `/read` 分离（`/read` 1.5MB 且含 NUL 即判二进制，PNG 头部就带 NUL 必被挡）。扩展名白名单**两端必须一致**，有交叉校验测试 |
@@ -199,6 +204,11 @@ cd frontend; npx tsc --noEmit; npx vite build
 .venv/Scripts/python.exe tests/test_v1534_image_preview.py  # 7/7（源码/AST + 前后端白名单交叉校验）
 .venv/Scripts/python.exe tests/test_v1535_square_delete.py  # 12/12（store 单元 + AST + TestClient 端到端含 401）
 
+# 隔离 UI 预览 + 浏览器视觉验收（改前端视觉后必跑；不连真实后端）
+cd frontend; npx vite build --config preview.config.ts       # 产物落 outputs/ui-preview
+# 另开一个终端： python -m http.server 5186 --bind 127.0.0.1 --directory outputs/ui-preview
+.venv/Scripts/python.exe tests/ui_preview_check.py           # 64 checks + 25 张截图 + verification.json
+
 # baw 代理补丁 A/B 实测（本地代理 127.0.0.1:7897 / mihomo 7899）
 $env:NODE_OPTIONS='--require="<repo>/runtime/proxy-preload.cjs"'
 runtime\node\node.exe -e "fetch('https://api.binance.com/api/v3/time').then(r=>r.json()).then(console.log)"
@@ -224,6 +234,23 @@ git -c http.proxy=http://127.0.0.1:7899 push origin main v1.5.x
   test_v1528_fixes 15/15 · test_v1529_hardening 23/23 · test_v1530_local_backend 20/20 ·
   test_v1531_prompt_fixes 14/14 · test_v1532_proxy_kernel_state 14/14 ·
   test_v1534_image_preview 7/7 · test_v1535_square_delete **12/12** ✅
+- **界面改版（v1.5.36，未发版）已通过浏览器视觉验收**：`tests/ui_preview_check.py`
+  **84 checks · 84 passed · 0 failed**，产出 25 张截图 + `verification.json`（8 视图 × 2 主题 × 4 档宽度）。
+  `tsc --noEmit` 退出码 0；`vite build --config preview.config.ts` 成功
+- **⚠️ 浏览器验收的三条硬经验**（v1.5.36 实测，都已在测试里落地）：
+  ① agent-browser CLI 的守护进程**继承父进程 stdout** → Python 用 `capture_output=True` 抓输出会在
+  **第一次调用就死锁**（表现为日志 0 字节、进程假死）；必须把 stdout/stderr 重定向到文件 +
+  `Popen.wait(timeout)` + 超时 kill。
+  ② 该 CLI 的 **`find role textbox` 定位不了普通 `<input>`**（四种参数写法全返回 Element not found），
+  且**纯图标按钮的 `aria-label` / `title` 不参与 `--name` 匹配** → 一律用 `fill <css>` / `click <css>`。
+  ③ 断言别只看「有没有报错」：真正抓到 bug 的是**几何断言** —— `.view-<id>` 是否真的挂上、
+  `scrollWidth <= innerWidth`、以及**顶栏底边 ≤ 内容顶边**（顶栏被钉死高度、内容却是两行时，
+  导航会溢出压住正文，肉眼极容易漏）
+- **⚠️ 沙箱批量删除守卫**：一轮会话内删除次数超过阈值（50）会抛 **`SystemExit`** ——
+  `except Exception` **抓不到**，会让脚本静默提前退出（表现为「Completed 0 checks / EXIT=0」）。
+  测试脚本里别做批量删除；确需清理用 `> logfile` 之外的显式手段并 `except BaseException`
+- **⚠️ 预览构建 `emptyOutDir: false`**：`outputs/ui-preview/assets` 会累积历史 hash 资源，
+  排查「改了 CSS 却没生效」时**先确认 `preview.html` 引用的 hash 是新的**
 - 上一版本文档（停留在 v1.5.3 / 表格到 v1.5.11）已按 v1.5.35 全量重写；`RELEASE_NOTES.md`
   版本顺序严格降序，且已模拟 CI 截取校验（v1.5.35 / v1.5.34 / v1.5.33 / v1.5.32 … 各**恰好命中 1 行**）
 - **⚠️ `RELEASE_NOTES.md` 的两个坑**：① `##` 标题里**不要写别的版本号** —— CI 用
