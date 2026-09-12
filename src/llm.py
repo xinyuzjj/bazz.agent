@@ -660,6 +660,8 @@ TOOLS: List[Dict[str, Any]] = [
                             "- 支持顶层链式：cmd1 && cmd2；cmd1 || cmd2；cmd1 ; cmd2\n"
                             "- 不支持：单根管道 |、重定向 >、变量替换 $、通配符 *（抛错）。要看前 N 行请用 head -n N <file>，要前 N 个匹配用 grep 然后限制或 head -n N，不要用 | head。\n"
                             "- 拒绝 rm -rf / del /S / format 等危险片段。\n"
+                            "- ⚠️ grep/find/ls/cat/head/tail/wc 的路径参数必须是**真实存在的文件或目录**（相对路径锚 workspace/）。"
+                            "不要把数字、HTTP 状态码（如报错文本里的 `401`）、URL 或错误消息片段当成路径传入。\n"
                             "可读路径例外（允许读取）：.agents/skills/<name>/SKILL.md（已装技能用法）。\n"
                             "用户要求‘跑一下/执行脚本/算一下/验证/测试/运行命令/看下目录结构’时调用。"
                             "⚠️ 不要用本工具跑已装技能的 cli.mjs——统一走 run_skill。"),

@@ -1,3 +1,44 @@
+# BAZZ.AGENT v1.5.31
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.31 更新要点（提示词侧两处缺陷：技能子命令名不副实 · 状态码被当路径）
+
+### 缺陷一：`market-data` 宣传了不存在的子命令
+`SKILL.md` 的 description 把「资金费率 / funding」列为触发词，但 CLI 的 `CMDS` 里只有
+`klines / fng / oi / longshort / liq / overview / bundle`。模型据此调用
+`run_skill market-data "funding BTCUSDT"`，只会拿到 `{"error":"未知命令 \"funding\""}`。
+资金费率当时仅作为 `bundle` 的一个字段存在 —— 为拿单个币的费率要跑完整分析包
+（90d 日K + 24h + 恐惧贪婪 + OI + 大户多空比），代价过高且易超时。
+
+**修复**
+1. 新增真正的 `funding [SYM[,SYM...]]` 子命令：给 SYM 返回 `funding_pct_8h`（每 8h 费率）
+   与 `annualized_pct`（年化）；**不给参数**则返回费率最高/最低各 10 个（谁在多付钱）
+2. 未知命令的报错补 `hint`：直接把最可能的替代写法点出来，不再只丢一个 `available` 列表
+3. `SKILL.md` 命令表 + 用法示例同步登记
+
+### 缺陷二：模型把 HTTP 状态码当成文件路径
+v1.5.30 之前技能报错文本里含 `:8080 HTTP 401: {"error":"unauthorized"}`，模型随后执行
+`grep <pattern> 401`，把状态码 `401` 当成路径传入，只得到干巴巴的「路径不存在: 401」，
+无从纠正、容易反复重试同一个错。
+
+**修复**
+1. `src/exec_sandbox.py` 新增 `_not_a_path_hint()`：对「明显不是路径」的实参补一句针对性提示
+   （裸数字/HTTP 状态码、URL、以 `-` 开头的选项），命中才追加，正常路径零噪音
+2. 接入全部 4 个路径报错点：`文件不存在` / `目录不存在`（ls）/ `路径不存在`（grep）/ `目录不存在`（find）
+3. `src/llm.py` 的 `run_command` 工具描述正面写清：路径参数必须是真实存在的文件或目录，
+   不要把数字、HTTP 状态码、URL 或错误消息片段当路径传
+
+### 验证
+- 新增 `tests/test_v1531_prompt_fixes.py`：**14/14 通过**
+  （含端到端 —— 起本机 stub 后端真跑 `funding`，覆盖单标的 / 多标的含缺号 / 无参数两端极值 / 拼错给 hint）
+- 新增通用护栏 `test_skill_md_commands_all_dispatchable`：逐技能比对 `SKILL.md` 命令表与 CLI 实际命令，
+  防止再出现「文档宣传了 CLI 没有的命令」
+- 全套回归通过：test_v1530_local_backend 20/20 · test_v1529_hardening 23/23 · test_v1528_fixes 15/15
+  · test_v150_market ✓ · test_v151_radar_track ✓
+- 同时修正 `tests/test_v1530_local_backend.py` 的模块 docstring —— 它此前把已被推翻的
+  「NO_PROXY 是根因」当作实测结论写入，会误导后来者
+
 # BAZZ.AGENT v1.5.30
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
@@ -26,9 +67,10 @@ v1.5.29 起，开启代理后 `coin-report` / `market-data` / `risk-guard` / `tr
 1. `src/exec_sandbox.py`：新增 `_ENV_ALLOW_EXACT` 精确放行 `BAZZ_AUTH_TOKEN`（应用自有回环令牌）；
    第三方凭据（API Key / Secret / 密码等）照常剥离，安全边界不变
 2. 5 个技能 CLI 的 `jget()`：逐端口错误**全部保留**并逐个列出，401 不再被掩盖
-3. `src/proxy_pool.py`：`NO_PROXY` 由 `setdefault` 改为**强制并集**（用户机器上已有该变量时
-   `setdefault` 不生效，本机地址会被代理劫持）
-4. `scripts/proxy-preload.cjs`：`EnvHttpProxyAgent` 显式传 `noProxy`，本机地址永不进代理（双保险）
+3. `src/proxy_pool.py`：`NO_PROXY` 由 `setdefault` 改为**强制并集**（属加固 —— 初判曾把它当作根因，
+   复测证明有误：用户机器上 `NO_PROXY` 在 User/Machine 级均为空，`setdefault` 本该生效，
+   代理并未劫持本机地址。保留改动是因为「用户已存在 NO_PROXY 时 setdefault 失效」仍是真实隐患）
+4. `scripts/proxy-preload.cjs`：`EnvHttpProxyAgent` 显式传 `noProxy`，本机地址永不进代理（同上，加固）
 5. `src/skills_client.py` + `src/agent_core.py`：本机后端故障**前置判定**，命中即按
    `HTTP 401` / `fetch failed` 分诊给出准确指引，不再拿代理空跑重试、不再误导用户去代理池
 

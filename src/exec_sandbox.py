@@ -216,6 +216,27 @@ def _is_blacklisted(p: str) -> bool:
     return any(part in READ_BLACKLIST for part in parts) and not _allowlist_path(p)
 
 
+def _not_a_path_hint(arg: str) -> str:
+    """v1.5.31：给「明显不是路径」的实参补一句针对性提示（命中才追加，否则空串）。
+
+    真实案例：技能报错文本里含 `:8080 HTTP 401: {"error":"unauthorized"}`，
+    模型随后执行 `grep <pattern> 401`，把状态码 401 当成文件路径传了进来，
+    只拿到干巴巴的「路径不存在: 401」，无从纠正、会反复重试同一个错。
+    """
+    a = (arg or "").strip().strip('"').strip("'")
+    if not a:
+        return ""
+    if re.fullmatch(r"\d{2,4}", a):
+        return (f"（提示：`{a}` 看起来是数字/HTTP 状态码，不是路径。命令的路径参数必须是文件或目录。"
+                "如果你在排查技能报错，错误文本里的 `HTTP 401` 是后端返回的状态码，不是文件名。）")
+    if a.lower().startswith(("http://", "https://")):
+        return (f"（提示：`{a}` 是 URL 而不是本地路径。沙箱内的 shell 命令不能直接取网络地址，"
+                "请改用行情/抓取类技能。）")
+    if a.startswith("-"):
+        return f"（提示：`{a}` 是选项而不是路径，路径参数应写在选项之后。）"
+    return ""
+
+
 def resolve_read(path: str) -> str:
     """校验可读路径，返回绝对路径。非法抛 SandboxError。
 
@@ -243,7 +264,7 @@ def resolve_read(path: str) -> str:
     if _is_blacklisted(p):
         raise SandboxError(f"路径命中黑名单目录，不可读: {path}")
     if not os.path.isfile(p):
-        raise SandboxError(f"文件不存在: {path}")
+        raise SandboxError(f"文件不存在: {path}{_not_a_path_hint(path)}")
     return p
 
 
@@ -508,7 +529,7 @@ def _w_ls(toks):
     for p in paths:
         abs_p = _cwd_path(p)
         if not os.path.isdir(abs_p):
-            raise SandboxError(f"目录不存在: {p}")
+            raise SandboxError(f"目录不存在: {p}{_not_a_path_hint(p)}")
         if _is_blacklisted(abs_p):
             raise SandboxError(f"路径命中黑名单目录: {p}")
         rel = _disp(abs_p) or "."
@@ -583,7 +604,7 @@ def _w_grep(toks):
             for fn in fnames:
                 files.append(os.path.join(root, fn))
     else:
-        raise SandboxError(f"路径不存在: {toks[2]}")
+        raise SandboxError(f"路径不存在: {toks[2]}{_not_a_path_hint(toks[2])}")
     for fp in files[:2000]:
         if _is_blacklisted(fp):
             continue
@@ -631,7 +652,7 @@ def _w_find(toks):
             raise SandboxError(f"find 不支持参数 {t}（支持 -name/-path/-maxdepth/-mindepth/-type/-not）")
     abs_p = _cwd_path(target)
     if not os.path.isdir(abs_p):
-        raise SandboxError(f"目录不存在: {target}")
+        raise SandboxError(f"目录不存在: {target}{_not_a_path_hint(target)}")
     if _is_blacklisted(abs_p):
         raise SandboxError(f"路径命中黑名单目录: {target}")
     import fnmatch

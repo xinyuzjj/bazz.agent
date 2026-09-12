@@ -1,11 +1,12 @@
-# BAZZ.AGENT 项目状态交接（v1.5.29 · 2026-09-12 更新）
+# BAZZ.AGENT 项目状态交接（v1.5.31 · 2026-09-12 更新）
 
 > 用途：开新任务/新会话前快速恢复上下文。读完即可继续开发，无需翻旧对话。
 > 仓库：`github.com/xinyuzjj/bazz.agent`
-> 当前检出路径：`C:\Users\Administrator\WorkBuddy\Worktrees\binance-agent-os-scout\main-a919d7e7`
-> 原始开发机路径：`e:\hermes_app\binance-agent-os-scout`（旧文档里的路径，勿再照抄）
+> **主开发目录：`E:\hermes_app\binance-agent-os-scout`（`main` 主工作树，改动请落在这里）**
+> 链接工作树：`C:\Users\Administrator\WorkBuddy\Worktrees\binance-agent-os-scout\main-a919d7e7`
+> （分支 `workbuddy/main-a919d7e7`，同一仓库同一提交 —— 在此改动**不会**影响主目录，注意别改错地方）
 >
-> ⚠️ 上一版本文档停留在 v1.5.3 / 表格到 v1.5.11，与代码实际差 18 个版本。**本文档已按 v1.5.29 全量校准。**
+> ⚠️ 上一版本文档停留在 v1.5.3 / 表格到 v1.5.11，与代码实际差 18 个版本。**本文档已按 v1.5.31 全量校准。**
 
 ---
 
@@ -13,18 +14,18 @@
 
 - **形态**：Windows 桌面端（Electron 壳）+ FastAPI Python 后端 + TS/Vite 前端；同一套代码也能纯浏览器跑
 - **定位**：币安 AI 交易终端 —— Agent 对话、行情（现货/合约/股票化代币）、交易方案卡、CEX 连接、Agentic Wallet、广场发文、Skills Hub、多 Bot 群聊、x402 支付
-- **当前版本**：**v1.5.29**（`package.json` 与最新 git tag 一致）
-- **规模**：后端 `src/` 32 个 py 模块 + `desktop_app.py`（**130 个 API 端点**）；前端 12 个视图 / 40 个文件；4 个离线回归测试套件
+- **当前版本**：**v1.5.31**（`package.json` 与最新 git tag 一致）
+- **规模**：后端 `src/` 32 个 py 模块 + `desktop_app.py`（**130 个 API 端点**）；前端 12 个视图 / 40 个文件；6 个离线回归测试套件
 - **工作区**：安装目录 `<安装根>/workspace`（state.db / proxies.json / 附件 / 日志 / spill / 复盘 / square_rich）；只读盘回退 `%APPDATA%\BAZZ.AGENT\workspace`
 - **预置资产**：`.agents/skills/` 官方技能包 + `.agents/bots/` 5 个 Bot 人设（default-assistant / trend-hunter / liquidity-hunter / onchain-fox / risk-sentinel）
 
 ---
 
-## 二、近期发布版本（v1.5.12 → v1.5.29）
+## 二、近期发布版本（v1.5.12 → v1.5.31）
 
 | 版本 | 核心内容 |
 |---|---|
-| **v1.5.30** | 技能全线 401 根因修复（本机回环令牌被沙箱误删）：① **根因两层叠加**——(a) v1.5.29 的 F06 沙箱环境清洗按**子串**匹配，`BAZZ_AUTH_TOKEN` 含 `TOKEN`/`AUTH` 被当凭据剥离；但它其实是**应用自己的本机回环令牌**（Electron 每次启动 `crypto.randomBytes(24)` 生成，仅用于访问 127.0.0.1 自身后端），技能必须携带才能过 `/api/*` 鉴权 → 一律 401（v1.5.28 及更早继承完整 `os.environ`，无此问题）；(b) 技能 CLI 端口回退用单个 `lastErr`，8080 的 **401 被 8081 的连接错误覆盖**，抛出「本地后端不可达: fetch failed」，把鉴权问题伪装成连通性问题；② **修复**——`exec_sandbox` 新增 `_ENV_ALLOW_EXACT` 精确放行 `BAZZ_AUTH_TOKEN`（第三方凭据照常剥离，安全边界不变）；5 个技能 CLI（coin-report/market-data/portfolio-review/risk-guard/track-monitor）的 `jget()` 逐端口错误全部保留；`proxy_pool._ensure_no_proxy()` 把 NO_PROXY 由 `setdefault` 改**强制并集**；`proxy-preload.cjs` 显式传 `noProxy`；`skills_client`/`agent_core` 本机后端故障前置判定并按 401/连通性分诊。测试 `tests/test_v1530_local_backend.py` 20/20；**`test_v1529_hardening.py` 的 F06 断言已修正**（原断言要求 `BAZZ_AUTH_TOKEN` 必须被剥离，正是它把回归固化成了预期行为）→ 23/23 |
+| **v1.5.31** | 提示词侧两处缺陷：① **`market-data` 宣传了不存在的子命令**——`SKILL.md` 的 description 把「资金费率 / funding」列为触发词，但 CLI 的 `CMDS` 只有 klines/fng/oi/longshort/liq/overview/bundle，模型调用 `market-data "funding BTCUSDT"` 只得 `{"error":"未知命令 \"funding\""}`；资金费率当时仅作为 `bundle` 的一个字段存在，为拿单币费率要跑完整分析包（90d 日K + 24h + FNG + OI + 多空比）代价过高。→ 新增真正的 `funding [SYM[,SYM...]]` 子命令（返回 `funding_pct_8h` 每 8h 费率 + `annualized_pct` 年化；无参数则返回费率最高/最低各 10 个），未知命令报错补 `hint` 指出最可能的替代写法，`SKILL.md` 命令表与用法示例同步登记。② **模型把 HTTP 状态码当文件路径**——技能报错文本含 `:8080 HTTP 401: {"error":"unauthorized"}`，模型随后执行 `grep <pattern> 401`，把状态码当路径传入，只得到干巴巴的「路径不存在: 401」无从纠正。→ `exec_sandbox` 新增 `_not_a_path_hint()`（识别裸数字/HTTP 状态码、URL、`-` 开头选项，命中才追加、正常路径零噪音），接入全部 4 个路径报错点（`文件不存在`/ls `目录不存在`/grep `路径不存在`/find `目录不存在`）；`llm.py` 的 `run_command` 工具描述正面写清「不要把数字、HTTP 状态码、URL 或错误消息片段当路径传」。测试 `tests/test_v1531_prompt_fixes.py` **14/14**（含端到端：起本机 stub 后端真跑 funding），并新增通用护栏 `test_skill_md_commands_all_dispatchable`（逐技能比对 SKILL.md 命令表与 CLI 实际命令，防止再出现同类问题）；同时修正 `test_v1530_local_backend.py` 的模块 docstring（此前把已被推翻的「NO_PROXY 是根因」当实测结论写入） || **v1.5.30** | 技能全线 401 根因修复（本机回环令牌被沙箱误删）：① **根因两层叠加**——(a) v1.5.29 的 F06 沙箱环境清洗按**子串**匹配，`BAZZ_AUTH_TOKEN` 含 `TOKEN`/`AUTH` 被当凭据剥离；但它其实是**应用自己的本机回环令牌**（Electron 每次启动 `crypto.randomBytes(24)` 生成，仅用于访问 127.0.0.1 自身后端），技能必须携带才能过 `/api/*` 鉴权 → 一律 401（v1.5.28 及更早继承完整 `os.environ`，无此问题）；(b) 技能 CLI 端口回退用单个 `lastErr`，8080 的 **401 被 8081 的连接错误覆盖**，抛出「本地后端不可达: fetch failed」，把鉴权问题伪装成连通性问题；② **修复**——`exec_sandbox` 新增 `_ENV_ALLOW_EXACT` 精确放行 `BAZZ_AUTH_TOKEN`（第三方凭据照常剥离，安全边界不变）；5 个技能 CLI（coin-report/market-data/portfolio-review/risk-guard/track-monitor）的 `jget()` 逐端口错误全部保留；`proxy_pool._ensure_no_proxy()` 把 NO_PROXY 由 `setdefault` 改**强制并集**；`proxy-preload.cjs` 显式传 `noProxy`；`skills_client`/`agent_core` 本机后端故障前置判定并按 401/连通性分诊。测试 `tests/test_v1530_local_backend.py` 20/20；**`test_v1529_hardening.py` 的 F06 断言已修正**（原断言要求 `BAZZ_AUTH_TOKEN` 必须被剥离，正是它把回归固化成了预期行为）→ 23/23 |
 | **v1.5.29** | 审查缺陷修复（授权边界·密钥防护·沙箱加固·供应链锁定）11 项 + 性能 3 项：① **F03** 下单方案资金语义失真——现货通道此前按 margin×leverage 算量（高杠杆请求变超额现货买单）、止损恒 97%/止盈恒 108% 却宣称「最大亏损=margin×10%」；现现货直接拒绝杠杆/做空语义、数量按 margin/price 真实口径、删除虚假承诺文案并明示「止损止盈仅为到价提醒」；② **F05** 插件命令与 MCP 网关（可触达账户级真实下单）绕过审批——现与沙箱同标准，未确认一律流审批卡，「信任并执行」按 `mcp:<server>.<tool>` / `plugin:<pid>` 粒度加白；③ **F09** 并行 tool_calls 整批执行后才查审批 + 线程池异常整批重放（重复下单/重复写文件）——现审批是调度屏障，遇首个需审批工具立即停流，per-call 异常兜底为错误结果、彻底删除重放路径；④ **F07** 会话快照恢复跨服务密钥错配（A 的端点 + B 的密钥）——现 provider 一致才继承当前 key，不一致置空安全失败；⑤ **F06** 沙箱逃逸——子进程环境剥离凭据类变量（**⚠️ 该条过宽，误伤 BAZZ_AUTH_TOKEN，已在 v1.5.30 修正**），读/写/wrapper 三类路径统一 realpath 校验，符号链接越界一律拒绝；⑥ **F11** 前端 auto_exec 请求失败 fail-open（未知状态当已开启）→ 改 fail-closed；⑦ **F12** 调度器整份覆盖任务状态致并发丢任务 → 新增 `state.update_cron_job()` RLock 内读-改-写；⑧ **F14** 禁用插件仍可被调用 → `list_command_schemas()` 不注入 + `exec_command()` 双重校验 enabled；⑨ **F15** API Secret / LLM Key / MCP Token 明文入 SQLite → 新增 `src/secrets.py`（Windows DPAPI，ctypes+crypt32 零新依赖；非 Windows 降级显式标 `plain:`；旧明文兼容并自动迁移）；⑩ **F16** 供应链可变引用（`@latest`/main 分支）→ 锁 `@binance/agentic-wallet@1.10.0` + `undici@6.21.1` 集中常量并防回滚，技能包取消后台静默升级只留手动入口；⑪ **F17** `last_persona_conv` 重复定义覆盖正确实现（丢 group/room 排除）→ 删除重复版本。**性能**：5.1 scanner `_dedupe_fetch()` in-flight 扇出去重（K 线/资金费率/OI 历史三处接入，30s 超时兜底）；5.2 订单轮询改「先执行再 sleep」消除启动延迟；5.3 前端三条 NDJSON 流补 res.ok、逐 delta await rAF 改缓冲+每帧批量 flush、会话切换竞态用请求代号+AbortController 双隔离、live.ts 快照 diff 合并保留未变币引用、vite dev 代理补 `ws: true`。测试 `tests/test_v1529_hardening.py` 23/23 |
 | **v1.5.28** | 审查缺陷修复·交易链路 6 项 P1/P2（第三方源码工程审查报告，提交 944ca16）：① **F02** 钱包已成交/待确认被误报「下单失败」（`place_report()` 只认 CEX 的 `status=="ok"`，钱包 `TRADE_FINISHED/TRADE_PENDING` 全落 error 分支 → 误报失败+跟踪跳过+诱导重复下单）→ 统一归一 `TRADE_FINISHED→FILLED` / `TRADE_PENDING→PENDING`（待查证不自动重试），保留原始状态与回执；② **F10** MCP 调用成功被显示失败（`_run_mcp_call` 用 `res.get("ok")`，而 `call_tool()` 成功返回 `{"status":"ok"}`）→ 两种契约兼容；③ **F04** 成交后止损止盈提醒静默（`_CLOSED` 含 FILLED → 成交即停监控，「未成交有提醒、真成交反而静默」）→ 拆两组终态，查单轮询仍含 FILLED、提醒监控改用 `_CLOSED_FOR_ALERTS`；④ **F01** 更新完整性校验 100% 失效（资产名转小写后与全大写常量比，永不相等 → 校验形同虚设）→ 统一小写比较 + **fail-closed**（官方整包拿不到校验和一律拒绝安装）；⑤ **F08** 强制兜底工具名变布尔值（`forced = forced_cand and (...)` 得 `True`，分派器字符串操作抛 TypeError）→ 条件表达式显式保留工具名；⑥ **F13** 妖币雷达日报必然 TypeError（`_run_meme_scan()` 误传 `limit=8`，真实签名是 `force/top_n/min_qv`，且把 `dict{coins:[...]}` 当 list 迭代）→ 按真实契约调用。测试 `tests/test_v1528_fixes.py` 15/15 |
 | **v1.5.27** | 全局应用内弹窗（告别系统原生白框）：新增 `ConfirmDialog` 深色玻璃卡片（遮罩模糊+淡入缩放，危险操作自动红主题，Esc/Enter/点遮罩，记住选择自绘勾选框，i18n `dialog.*`）；**替换 11 处 `window.confirm`**（ChatView ×5 删会话/房间/Agent/文件/踢成员、ProxyPoolView、AdminPanels ×2 删 Cron/MCP、MemoryOverlay ×2）；点 X 的「最小化到托盘/退出」询问也从 Electron 原生 dialog 改为应用内弹窗（IPC 双向 ask-close→answer-close，页面未就绪 1.5s 兜底隐藏到托盘） |
@@ -79,8 +80,13 @@
 11. **密钥加密**：`src/secrets.py` 用 Windows DPAPI（ctypes 调 crypt32，零新依赖）加密 settings 里的
     llm / BINANCE_API_KEY / BINANCE_API_SECRET / W3 密钥 / mcp_servers / mcp_token:*；
     非 Windows 自动降级并显式标 `plain:` 前缀；旧明文可读，下次保存自动迁移为密文。
-12. **沙箱加固**（v1.5.29）：白名单解释器子进程环境剥离一切凭据类变量（保留代理池/NODE_OPTIONS/PATH 运行必需项）；
-    读/写/wrapper 三类路径解析统一 realpath 校验，符号链接解析后越界一律拒绝。
+12. **沙箱加固**（v1.5.29，v1.5.30 修正）：白名单解释器子进程环境剥离**第三方**凭据类变量
+    （保留代理池/NODE_OPTIONS/PATH 运行必需项）。**⚠️ 注意例外**：`_ENV_ALLOW_EXACT` 精确放行
+    `BAZZ_AUTH_TOKEN` —— 它是应用自己的本机回环令牌（Electron 每次启动随机生成，仅访问 127.0.0.1 自身后端），
+    不是第三方凭据；v1.5.29 的按子串匹配曾把它一起剥离，导致技能全线 401（v1.5.30 修复）。
+    新增第三方凭据类变量时**不要**往 `_ENV_ALLOW_EXACT` 里加。
+    读/写/wrapper 三类路径解析统一 realpath 校验，符号链接解析后越界一律拒绝；
+    路径报错对「明显不是路径」的实参（裸数字/状态码/URL/选项）附针对性提示（v1.5.31）。
 13. **审批是调度屏障**（v1.5.29）：一批 tool_calls 遇到首个 `needs_approval` 工具执行后**立即停流等用户**，
     其后工具一律不执行；per-call 异常兜底为错误结果，**严禁整批重放**（会重复下单/重复写文件）。
 14. **供应链锁版本**：`@binance/agentic-wallet@1.10.0`、`undici@6.21.1` 集中常量管理并防回滚；
@@ -175,28 +181,41 @@ python -m py_compile desktop_app.py src/xxx.py
 # 前端类型 + 构建
 cd frontend; npx tsc --noEmit; npx vite build
 
-# 离线回归测试（纯标准库可直接跑；test_v150/v151 需 requests）
-python tests/test_v150_market.py
-python tests/test_v151_radar_track.py
-python tests/test_v1528_fixes.py      # 15/15
-python tests/test_v1529_hardening.py  # 23/23
+# 离线回归测试（6 个套件；用主目录自带 .venv 跑最省事）
+.venv/Scripts/python.exe tests/test_v150_market.py          # ✓ 全部通过（需 requests）
+.venv/Scripts/python.exe tests/test_v151_radar_track.py     # ✓ 全部通过（需 requests）
+.venv/Scripts/python.exe tests/test_v1528_fixes.py          # 15/15
+.venv/Scripts/python.exe tests/test_v1529_hardening.py      # 23/23
+.venv/Scripts/python.exe tests/test_v1530_local_backend.py  # 20/20
+.venv/Scripts/python.exe tests/test_v1531_prompt_fixes.py   # 14/14（含本机 stub 后端端到端）
 
-# baw 代理补丁 A/B 实测（本地代理 127.0.0.1:7897）
+# baw 代理补丁 A/B 实测（本地代理 127.0.0.1:7897 / mihomo 7899）
 $env:NODE_OPTIONS='--require="<repo>/runtime/proxy-preload.cjs"'
 runtime\node\node.exe -e "fetch('https://api.binance.com/api/v3/time').then(r=>r.json()).then(console.log)"
 
-# 发版
-git -c http.proxy=http://127.0.0.1:7897 push origin main v1.5.x
+# 发版（push 必须走代理，沙箱自带的 55773 连不上 GitHub）
+git -c http.proxy=http://127.0.0.1:7899 push origin main v1.5.x
 ```
 
-**本次实测环境（2026-09-12）**：本检出目录**无 `.venv`**；四个套件用隔离 venv
-（`~/.workbuddy-ai/binaries/python/envs/default`，仅装 `requests`）跑通。
+**环境说明**：`E:\hermes_app\binance-agent-os-scout` 自带 `.venv`（Python 3.11.15，含 `requests`），
+上述命令可直接跑；链接工作树那份没有 `.venv`，需自建或用 `~/.workbuddy-ai/binaries/python/envs/default`。
 
 ---
 
 ## 七、本次核验结论（2026-09-12）
 
-- 工作区 **git 干净**，无未提交改动；HEAD = `e32d762`（2026-09-11）；最新 tag = `v1.5.29`，与 `package.json` 一致 ✅
-- 4 个离线回归套件**全部通过**：test_v150_market ✓ · test_v151_radar_track ✓ · test_v1528_fixes 15/15 · test_v1529_hardening 23/23 ✅
-- 上一版本文档（停留在 v1.5.3 / 表格到 v1.5.11）已按 v1.5.29 全量重写；`RELEASE_NOTES.md` 版本顺序已整理
-- 遗留：本检出无 `.venv`，跑含 `requests` 的测试需先建环境（见 §六）
+- **主开发目录已确认为 `E:\hermes_app\binance-agent-os-scout`**（`main` 主工作树）；
+  `C:\...\Worktrees\main-a919d7e7` 是链接工作树（分支 `workbuddy/main-a919d7e7`）。
+  此前改动曾误落在链接工作树上 —— 已全部迁移回主目录，两边 `git diff | git hash-object` 哈希一致 ✅
+- **v1.5.30**（HEAD `3f25d5b`）已提交、打 tag 并推送，CI `release-setup` 已触发；
+  **v1.5.31** 的改动已完成待提交（见 §二 表格首行）
+- 6 个离线回归套件**全部通过**：test_v150_market ✓ · test_v151_radar_track ✓ ·
+  test_v1528_fixes 15/15 · test_v1529_hardening 23/23 · test_v1530_local_backend 20/20 ·
+  test_v1531_prompt_fixes 14/14 ✅
+- 上一版本文档（停留在 v1.5.3 / 表格到 v1.5.11）已按 v1.5.31 全量重写；`RELEASE_NOTES.md`
+  版本顺序已整理为严格降序，且已模拟 CI 截取校验
+- **⚠️ 打包版注意**：安装目录（如 `F:\1\BAZZ.AGENT`）的 Python 代码编译进
+  `resources/scout-bundle/ScoutBackend/ScoutBackend.exe`，`_internal` 内无 `.py` 明文 ——
+  **源码改动对已安装版本无效，必须重新构建发版**；只有 `.agents/skills/**/cli.mjs` 是明文
+- 遗留（非本次范围）：紧急熔断目前只是前端本地状态、后端无路由；`place_oco_order()` 无调用方；
+  无撤单接口、无 trades 台账 —— 交易闭环尚缺保护单/撤单/盈亏统计

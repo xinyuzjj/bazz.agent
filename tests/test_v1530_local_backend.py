@@ -5,12 +5,19 @@
       + "[auto-proxy] 首次网络失败，已自动启用代理 … 重试（仍失败）"
       用户据此以为代理没配好，反复折腾代理池仍无解。
 
-根因（实测确认，死代理探针）：
-  proxy-preload.cjs 给 Node 子进程装 undici EnvHttpProxyAgent，
-  它只认 NO_PROXY；而 NO_PROXY 在用户机器上可能缺失或为空串 →
-  连 http://127.0.0.1:8080 的请求也被送进代理 → 技能取不到本机后端数据。
-  实测对照：无 NO_PROXY / NO_PROXY 空串 / NO_PROXY 不含本机 → 一律 HTTP 502；
-  修复后三种情况全部 200 绕过。
+根因（实测确认）：
+  1) 主因 —— v1.5.29 F06 的沙箱环境清洗按子串（TOKEN/SECRET/AUTH/...）剥离凭据，
+     把应用自有的本机回环令牌 BAZZ_AUTH_TOKEN 一并删掉 → 技能子进程访问
+     127.0.0.1:8080/api/* 一律 HTTP 401。
+     证据：直连探测 8080 返回 HTTP 401（不是连不上）；8081 未监听；
+           git log -S 确认 _ENV_DENY_SUBSTR 由 v1.5.29(e32d762) 引入，
+           而 v1.5.28 的 subprocess.run 不传 env、继承完整环境 → 属新引入的回归。
+  2) 帮凶 —— CLI 的端口回退只保留最后一条错误（lastErr），把 8080 的 401
+     覆盖成 8081 的连接失败，于是真因被伪装成「不可达」。
+
+  ⚠️ 曾一度把 NO_PROXY 判为主因（据此改了 proxy_pool / proxy-preload.cjs）。
+     复测证明该判断有误：用户机器上 NO_PROXY 在 User/Machine 级均为空，
+     setdefault 本该生效，代理并未劫持本机地址。相关改动保留为加固，但不是根因。
 
 本文件离线运行：AST 抽函数 + 桩环境，不联网、不启进程、不写 state.db。
 运行：python tests/test_v1530_local_backend.py
