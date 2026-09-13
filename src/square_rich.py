@@ -298,14 +298,13 @@ def draw_cover(stat: dict, path: str) -> str:
     # —— SMC 区域标记（OB / FVG / OTE 半透明色带，画在蜡烛下层） —— #
     def _band(blo, bhi, col, lab, alpha=0.10):
         by0, by1 = py(bhi), py(blo)
-        if by1 - by0 < 2:
-            by1 = by0 + 2
+        if by1 - by0 < 10:          # 最小可视高度：窄区间也要能看出是「框」
+            by1 = by0 + 10
         by0, by1 = max(by0, y0), min(by1, y1)
         if by1 <= by0:
             return
-        dr.rectangle([x0, by0, x1, by1], fill=_blend(BG, col, alpha))
-        _dashed(dr, x0, by0, x1, _blend(col, BG, 0.5))
-        _dashed(dr, x0, by1, x1, _blend(col, BG, 0.5))
+        dr.rectangle([x0, by0, x1, by1], fill=_blend(BG, col, alpha),
+                     outline=_blend(col, TXT, 0.2), width=1)
         ly = by0 + 4 if by0 > y0 + 22 else by1 - 18
         dr.text((x0 + 8, ly), lab, font=_font(12, True), fill=_blend(col, TXT, 0.35))
 
