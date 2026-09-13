@@ -97,9 +97,11 @@ def _assert_sizing_consistent(line: str, require_anchor: bool = False):
         m2 = re.search(r"名义降到 ≈\s*([\d,.]+)U", line)
         assert m2, f"偏重但没给降名义建议：{line}"
         n2 = _num(m2.group(1))
-        expect_n2 = RISK_U / (dist / 100)
+        # 期望值从「亏损 ÷ 名义」反推真实距离（避开行内百分数的显示舍入）
+        real_d = loss / (CAPITAL * LEVERAGE)
+        expect_n2 = RISK_U / real_d
         assert abs(n2 - expect_n2) < 2, f"建议名义不是 10U÷距离（期望 ≈{expect_n2:.0f}U）：{line}"
-        assert abs(n2 * dist / 100 - RISK_U) < 1.2, f"建议名义打止损仍不 ≈10U：{line}"
+        assert abs(n2 * real_d - RISK_U) < 1.2, f"建议名义打止损仍不 ≈10U：{line}"
         assert "止损位不动" in line, f"降名义建议不得动摇结构止损：{line}"
     else:
         assert loss <= RISK_U + 0.1, f"亏损 {loss}U 超本金 10% 却没标「偏重」：{line}"
@@ -121,19 +123,20 @@ def test_demo_headline_and_light_loss():
 
 
 def test_structural_stop_reports_loss_honestly():
-    """用户素材（空单）：OB 上沿 78,542 进、止损 78,934.71（上沿上方 0.5%）→ 10x 亏 ≈5U。
-    用户官方计算 4.7U 是数量步进取整（0.0127→0.012 BTC），理论值 5.0U。"""
+    """用户定版（v1.5.47c）：空头卖在 OB 下沿（第一触点保证成交）。
+    BTC 素材：OB 77,867.5 ~ 78,542，进价 77,867.5，止损 78,934.71（上沿上方 0.5%）
+    → 距离 1.4%，10x 亏 ≈13.7U → 如实报数 + 降名义建议，止损位不动。"""
     anchor = "空头 OB 上沿 78,542.00 上方 0.5% 缓冲，结构失效即离场"
-    line = _mod()._size_line(78542.0, 78934.71, "short", anchor)
+    line = _mod()._size_line(77867.5, 78934.71, "short", anchor)
     assert anchor in line, f"结构锚位说明丢失：{line}"
-    assert "距入场 0.5%" in line, line
-    assert "打止损亏 ≈ 5.0U" in line, line
-    assert "偏重" not in line, "贴结构止损（0.5%）不该触发降名义建议"
+    assert "距入场 1.4%" in line, line
+    assert "打止损亏 ≈ 13.7U" in line, line
+    assert "偏重" in line and "止损位不动" in line, line
     _assert_sizing_consistent(line, require_anchor=True)
 
 
 def test_wide_entry_reports_honestly_and_advises():
-    """宽止损场景（挂现价、摆动低点远）：如实报数 + 降名义建议，止损位不动。"""
+    """宽止损场景：如实报数 + 降名义建议，止损位不动。"""
     line = _mod()._size_line(0.12175, 0.1149, "long", "近 10 根摆动低点下方 1% 缓冲，摆动结构失效即离场")
     assert "偏重" in line and "止损位不动" in line, line
     _assert_sizing_consistent(line, require_anchor=True)
@@ -153,7 +156,7 @@ def _k(closes, lows, highs, n=120):
 
 
 def test_ob_stop_anchored_to_structure_and_distance_from_entry():
-    """OB 限价接：多在 OB 下沿进（贴止损那条沿），距离 = 沿到止损 ≈0.5%。"""
+    """OB 限价接（用户定版）：多头买在 OB 上沿（第一触点保证成交），止损锚下沿下方。"""
     sr = _mod()
     stat = {"symbol": "TESTUSDT",
             "k90": _k([0.12, 0.125], [0.10, 0.11], [0.14, 0.135], 90),
@@ -165,12 +168,12 @@ def test_ob_stop_anchored_to_structure_and_distance_from_entry():
     assert lv, "plan_levels 不应返回空"
     assert abs(lv["stop"] - 0.1155 * 0.995) < 1e-9, f"止损没锚在 OB 下沿下方：{lv['stop']}"
     assert lv["anchor"] and "OB 下沿" in lv["anchor"], f"缺结构锚位说明：{lv.get('anchor')}"
-    assert abs(lv["entry_px"] - 0.1155) < 1e-9, \
-        f"多头入场参考价应是 OB 下沿（贴止损那条沿），实际 {lv.get('entry_px')}"
+    assert abs(lv["entry_px"] - 0.128) < 1e-9, \
+        f"多头入场参考价应是 OB 上沿（第一触点保证成交），实际 {lv.get('entry_px')}"
+    assert "进价 0.128——" in lv["entry"], f"入场文案必须标明进入价格：{lv['entry']}"
     dist_entry = abs(lv["entry_px"] - lv["stop"]) / lv["entry_px"] * 100
     dist_price = abs(lv["price"] - lv["stop"]) / lv["price"] * 100
     assert dist_entry < dist_price, f"入场价距离({dist_entry:.1f}%)应小于现价距离({dist_price:.1f}%)"
-    assert dist_entry < 1.0, f"贴结构入场距离应 ≈0.5%，实际 {dist_entry:.2f}%"
     plan = sr._plan(stat, "long", smc)
     sizing = [l for l in plan if l.startswith("· 仓位算法：")][0]
     _assert_sizing_consistent(sizing, require_anchor=True)
@@ -182,8 +185,8 @@ def test_ob_stop_anchored_to_structure_and_distance_from_entry():
     assert re.search(r"盈亏比 ≈ [\d.]+", tp), f"止盈行缺盈亏比：{tp}"
 
 
-def test_short_ob_entry_uses_upper_edge():
-    """空头 OB：入场参考价 = OB 上沿（用户实测：在 78,542 买入做空），止损贴上沿上方。"""
+def test_short_ob_entry_uses_lower_edge():
+    """空头 OB：卖在 OB 下沿（第一触点保证成交），止损锚上沿上方，入场文案标明进价。"""
     sr = _mod()
     stat = {"symbol": "TESTUSDT",
             "k90": _k([0.12, 0.125], [0.10, 0.11], [0.14, 0.135], 90),
@@ -192,10 +195,11 @@ def test_short_ob_entry_uses_upper_edge():
             "funding_rate": 0.00004}
     smc = {"ob": {"low": 0.128, "high": 0.1332}, "sl_v": [0.10]}
     lv = sr._plan_levels(stat, "short", smc)
-    assert abs(lv["entry_px"] - 0.1332) < 1e-9, \
-        f"空头入场参考价应是 OB 上沿，实际 {lv.get('entry_px')}"
+    assert abs(lv["entry_px"] - 0.128) < 1e-9, \
+        f"空头入场参考价应是 OB 下沿（第一触点保证成交），实际 {lv.get('entry_px')}"
     assert abs(lv["stop"] - 0.1332 * 1.005) < 1e-9, f"止损没锚在 OB 上沿上方：{lv['stop']}"
     assert "OB 上沿" in (lv["anchor"] or ""), f"缺结构锚位说明：{lv.get('anchor')}"
+    assert "进价 0.128——" in lv["entry"], f"入场文案必须标明进入价格：{lv['entry']}"
 
 
 # ---------------- 3. 判据必须能拒绝旧文案 ----------------
