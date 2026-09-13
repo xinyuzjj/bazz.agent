@@ -678,6 +678,59 @@ def _size_line(entry: float, stop: float, direction: str, anchor: str = "") -> s
     return txt + "。"
 
 
+def _pick_tp(stat: dict, smc: dict, entry_px: float, stop: float, direction: str):
+    """止盈目标（v1.5.49 定版，用户指示：瞄准 SMC 流动性区域——摆动点/FVG/OB 块）：
+    ① 首选 SMC 摆动点（前高/前低 = 裸露流动性池）；
+    ② 太近（RR<1.5）→ 换其他流动性目标：FVG 缺口（价格对缺口有回补引力，取缺口中位）、
+       对侧 OB 块边缘（若在止盈方向上）、近 30 根极值 → 90日极值，取第一个 RR≥1.5 的，
+       标签如实标注；
+    ③ 全不达标取最远目标，RR 如实回报，由 _plan 决定「小仓/劝退」话术。
+    返回 (价, 标签, rr)；数据不足返回 None。"""
+    k4 = stat.get("k4h") or {}
+    k90 = stat.get("k90") or {}
+    liq: list = []
+    for g in (smc.get("fvg") or []):
+        try:
+            mid = (g["lo"] + g["hi"]) / 2
+        except (KeyError, TypeError):
+            continue
+        if direction == "long" and mid > entry_px:
+            liq.append((mid, "FVG 缺口回补"))
+        elif direction == "short" and mid < entry_px:
+            liq.append((mid, "FVG 缺口回补"))
+    ob = smc.get("ob") or {}
+    if direction == "long" and ob.get("low") and ob["low"] > entry_px:
+        liq.append((ob["low"], "上方 OB 块"))
+    elif direction == "short" and ob.get("high") and ob["high"] < entry_px:
+        liq.append((ob["high"], "下方 OB 块"))
+    if direction == "long":
+        cands = ([(v, "4h 前高/摆动高点") for v in reversed((smc or {}).get("sh_v") or [])]
+                 + liq
+                 + ([(max(k4["highs"][-30:]), "近 30 根 4h 高点") if k4.get("highs") else None])
+                 + ([(max(k90["highs"]), "90日高点") if k90.get("highs") else None]))
+        ok = [(v, t) for v, t in cands if v and v > entry_px]
+        risk = entry_px - stop
+    else:
+        cands = ([(v, "4h 前低/摆动低点") for v in reversed((smc or {}).get("sl_v") or [])]
+                 + liq
+                 + ([(min(k4["lows"]), "近 30 根 4h 低点") if k4.get("lows") else None])
+                 + ([(min(k90["lows"]), "90日低点") if k90.get("lows") else None]))
+        ok = [(v, t) for v, t in cands if v and v < entry_px]
+        risk = stop - entry_px
+    if risk <= 0 or not ok:
+        return None
+    seen, uniq = set(), []
+    for v, t in ok:
+        if v not in seen:            # 去重保序（近 → 远）
+            seen.add(v)
+            uniq.append((v, t))
+    for v, t in uniq:
+        if abs(v - entry_px) / risk >= 1.5:
+            return v, t, abs(v - entry_px) / risk
+    v, t = max(uniq, key=lambda vt: abs(vt[0] - entry_px))  # 全不达标：取最远目标，RR 如实上报
+    return v, t, abs(v - entry_px) / risk
+
+
 def _plan_levels(stat: dict, bias: str, smc: dict = None) -> dict:
     """算出「入场 / 止损 / 止盈」三级点位，**供 _plan() 与反向剧本共用**。
 
@@ -727,8 +780,9 @@ def _plan_levels(stat: dict, bias: str, smc: dict = None) -> dict:
             lv["stop"] = r10_lo * 0.99
             lv["entry_px"] = price
             lv["anchor"] = "近 10 根摆动低点下方 1% 缓冲，摆动结构失效即离场"
-        lv["tp1"] = smc["sh_v"][-1] if smc.get("sh_v") else max(k["highs"][-30:])
-        lv["tp_txt"] = "4h 前高/摆动高点"
+        got = _pick_tp(stat, smc, lv["entry_px"], lv["stop"], "long")
+        if got:
+            lv["tp1"], lv["tp_txt"], lv["rr"] = got
     elif bias == "short":
         if ob_hi and ob_hi > price:
             lv["entry"] = (f"· 入场：优先挂 {_fmt(ob_lo)} ~ {_fmt(ob_hi)} 的空头 OB 区反弹接"
@@ -741,8 +795,9 @@ def _plan_levels(stat: dict, bias: str, smc: dict = None) -> dict:
             lv["stop"] = r10_hi * 1.01
             lv["entry_px"] = price
             lv["anchor"] = "近 10 根摆动高点上方 1% 缓冲，摆动结构失效即离场"
-        lv["tp1"] = smc["sl_v"][-1] if smc.get("sl_v") else min(k["lows"][-30:])
-        lv["tp_txt"] = "4h 前低/摆动低点"
+        got = _pick_tp(stat, smc, lv["entry_px"], lv["stop"], "short")
+        if got:
+            lv["tp1"], lv["tp_txt"], lv["rr"] = got
     return lv
 
 
@@ -753,17 +808,14 @@ def _plan(stat: dict, bias: str, smc: dict = None) -> list:
     if not lv:
         return ["· 数据不足，给不出靠谱点位，宁可错过不做没把握的。"]
     if bias in ("long", "short"):
-        # 止盈目标保持 SMC 原设计（4h 摆动点 = 第一流动性目标，先减半、破位续持有）；
-        # v1.5.49 只改「呈现诚实」：RR 从入场参考价如实算，<1 = 结构质量差（目标贴着
-        # 入场、止损却远）→ 如实劝退，不再摆出一副能做的样子（用户质问「盈亏比 0.3
-        # 是认真的吗」）
-        risk = abs((lv.get("entry_px") or lv["price"]) - lv["stop"])
-        rew = abs(lv["tp1"] - (lv.get("entry_px") or lv["price"])) if lv.get("tp1") else 0
-        rr = (rew / risk) if (risk > 0 and lv.get("tp1")) else None
+        # 止盈（v1.5.49 定版）：首选 SMC 摆动点，太近（RR<1.5）自动换更远的流动性目标
+        # （近 30 根极值 → 90日极值）；仍不达标则如实标注小仓/劝退（用户质问「盈亏比
+        # 0.3 是认真的吗」）—— 绝不摆出一副能做的样子
+        rr = lv.get("rr")
         if rr is not None and rr < 1.0:
             return [lv["entry"],
-                    f"· 止盈：SMC 第一目标 {_fmt(lv['tp1'])}（{lv['tp_txt']}）离入场太近，"
-                    f"盈亏比 ≈ {rr:.1f} —— **这笔结构质量不够，放弃**；等价格离摆动点更远、"
+                    f"· 止盈：最近的结构目标 {_fmt(lv['tp1'])}（{lv['tp_txt']}）离入场太近，"
+                    f"盈亏比 ≈ {rr:.1f} —— **这笔结构质量不够，放弃**；等价格离目标位更远、"
                     "或入场更贴近止损再排计划"]
         rr_txt = f"，盈亏比 ≈ {rr:.1f}" if rr is not None else ""
         note = "（盈亏比一般，只试小仓）" if rr is not None and rr < 1.5 else ""

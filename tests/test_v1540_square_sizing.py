@@ -202,27 +202,42 @@ def test_short_ob_entry_uses_lower_edge():
     assert "进价 0.128——" in lv["entry"], f"入场文案必须标明进入价格：{lv['entry']}"
 
 
-# ---------------- 2b. 止盈诚实呈现（v1.5.49：SMC 目标不变，RR<1 劝退） ----------------
+# ---------------- 2b. 止盈（v1.5.49 定版：SMC 摆动点优先，太近换其他止盈方法） ----------------
 
-def test_tp_stays_smc_swing_target():
-    """止盈目标必须仍是 SMC 原设计：多头 = 最近摆动高点（sh_v[-1]），不许换远目标凑 RR。"""
+def test_tp_prefers_smc_swing_target():
+    """SMC 摆动点 RR 达标（≥1.5）→ 直接用它，不换。"""
     sr = _mod()
     stat = {"symbol": "TESTUSDT",
             "k90": _k([0.12, 0.125], [0.10, 0.11], [0.30, 0.135], 90),
             "k4h": _k([0.125, 0.1332], [0.1155, 0.12], [0.1332, 0.14]),
             "c24": [0.13, 0.1332], "change_pct": 1.0, "market": "spot"}
     smc = {"ob": {"low": 0.1155, "high": 0.128}, "sh_v": [0.14, 0.162]}
-    plan = sr._plan(stat, "long", smc)
-    tp = [l for l in plan if l.startswith("· 止盈：")][0]
-    assert "0.162" in tp and "4h 前高/摆动高点" in tp, \
-        f"止盈目标没锚在最近摆动高点（SMC 原设计）：{tp}"
+    lv = sr._plan_levels(stat, "long", smc)
+    assert abs(lv["tp1"] - 0.162) < 1e-9 and lv["tp_txt"] == "4h 前高/摆动高点", \
+        f"摆动点 RR 达标却没优先用：{lv['tp1']} {lv['tp_txt']}"
+
+
+def test_tp_falls_back_to_deeper_liquidity_when_swing_too_close():
+    """用户指示：SMC 摆动点太近（RR<1.5）→ 换其他止盈方法（更远的流动性目标），标签如实。"""
+    sr = _mod()
+    # 摆动高点 0.132 距进价 0.128 仅 4 点（RR≈0.3）→ 应换 90日高点 0.30（RR≈13）
+    stat = {"symbol": "TESTUSDT",
+            "k90": _k([0.12, 0.125], [0.10, 0.11], [0.30, 0.135], 90),
+            "k4h": _k([0.125, 0.1332], [0.1155, 0.12], [0.1332, 0.14]),
+            "c24": [0.13, 0.1332], "change_pct": 1.0, "market": "spot"}
+    smc = {"ob": {"low": 0.1155, "high": 0.128}, "sh_v": [0.132]}
+    lv = sr._plan_levels(stat, "long", smc)
+    assert abs(lv["tp1"] - 0.30) < 1e-9, f"摆动点太近却没换更远目标：{lv['tp1']}"
+    assert lv["tp_txt"] == "90日高点", f"换方法后标签未如实标注：{lv['tp_txt']}"
+    assert lv["rr"] >= 1.5, f"换目标后 RR 仍不达标：{lv['rr']}"
+    tp = [l for l in sr._plan(stat, "long", smc) if l.startswith("· 止盈：")][0]
+    assert "90日高点" in tp and "放弃" not in tp, tp
 
 
 def test_tp_rr_below_one_gives_up():
-    """用户质问的场景：目标贴着入场（RR≈0.3）→ 必须如实劝退，不再给仓位算法。"""
+    """所有止盈方法都凑不出 RR≥1 → 如实劝退，不再给仓位算法。"""
     sr = _mod()
-    # 多头：OB 0.1155~0.128，进价 0.128，止损 0.1149（风险 13.1 点）；摆动高点 0.132
-    # 仅高 4 点 → RR ≈ 0.3
+    # 进价 0.128、止损 0.1149（风险 0.0131）；30 根高点/90日高点都只有 0.14（RR≈0.9）
     stat = {"symbol": "TESTUSDT",
             "k90": _k([0.12, 0.125], [0.10, 0.11], [0.14, 0.135], 90),
             "k4h": _k([0.125, 0.1332], [0.1155, 0.12], [0.1332, 0.14]),
@@ -230,7 +245,7 @@ def test_tp_rr_below_one_gives_up():
     smc = {"ob": {"low": 0.1155, "high": 0.128}, "sh_v": [0.132]}
     plan = sr._plan(stat, "long", smc)
     joined = "\n".join(plan)
-    assert "盈亏比 ≈ 0.3" in joined, f"RR 未如实标出：{joined}"
+    assert "盈亏比 ≈ 0.9" in joined, f"RR 未如实标出：{joined}"
     assert "放弃" in joined, f"RR<1 未劝退：{joined}"
     assert not [l for l in plan if l.startswith("· 仓位算法：")], \
         f"劝退的单不该再给仓位算法：{joined}"
@@ -240,7 +255,7 @@ def test_tp_rr_between_one_and_half_notes_small():
     """1.0 ≤ RR < 1.5：保留计划但标注「只试小仓」。"""
     sr = _mod()
     # 进价 0.128、止损 0.1155*0.995（风险 ≈0.0131）；摆动高点 0.147（回报 0.019）
-    # → RR ≈ 1.45（显示 ≈1.5 但 <1.5 阈值）→ 标「只试小仓」
+    # → RR ≈ 1.45（<1.5 阈值）→ 标「只试小仓」
     stat = {"symbol": "TESTUSDT",
             "k90": _k([0.12, 0.125], [0.10, 0.11], [0.14, 0.135], 90),
             "k4h": _k([0.125, 0.1332], [0.1155, 0.12], [0.1332, 0.14]),
