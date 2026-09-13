@@ -193,8 +193,29 @@ def _xaxis_label(ts_ms: int) -> str:
         return ""
 
 
+def _blend(c1, c2, t):
+    """颜色插值：t=0 → c1，t=1 → c2。"""
+    return tuple(int(round(a + (b - a) * t)) for a, b in zip(c1, c2))
+
+
+def _vgrad(dr, x0, y0, x1, y1, top, bottom):
+    """纵向渐变填充（逐行画，零依赖）。"""
+    h = max(int(y1 - y0), 1)
+    for i in range(h):
+        dr.line([x0, y0 + i, x1, y0 + i], fill=_blend(top, bottom, i / h))
+
+
+def _dashed(dr, x0, y, x1, fill, width=1, dash=7, gap=6):
+    """水平虚线。"""
+    x = x0
+    while x < x1:
+        dr.line([x, y, min(x + dash, x1), y], fill=fill, width=width)
+        x += dash + gap
+
+
 def _draw_header(dr, W, sym, market, price, chg, sub_right=""):
     dr.rectangle([0, 0, W, 84], fill=PANEL)
+    dr.rectangle([0, 0, W, 3], fill=ACCENT)   # 顶部金色描边
     dr.text((20, 14), f"{sym}", font=_font(30, True), fill=TXT)
     tag = "币安U本位永续" if market == "futures" else "币安现货"
     bw = dr.textlength(tag, font=_font(15))
@@ -216,15 +237,17 @@ def _draw_header(dr, W, sym, market, price, chg, sub_right=""):
 
 
 def _draw_footer(dr, W, H, chips):
-    """底部信息条：[(label, value, color), ...] 均分排布。"""
-    y = H - 76
-    dr.rectangle([0, y - 12, W, H], fill=PANEL)
+    """底部信息卡：[(label, value, color), ...] 圆角卡片均分排布。"""
+    y = H - 92
+    dr.rectangle([0, y - 16, W, H], fill=PANEL)
     n = len(chips)
     seg = W / max(n, 1)
     for i, (lab, val, color) in enumerate(chips):
-        x = seg * i + 18
-        dr.text((x, y + 2), lab, font=_font(13), fill=SUB)
-        dr.text((x, y + 26), val, font=_font(17, True), fill=color or TXT)
+        x = seg * i + 12
+        dr.rounded_rectangle([x, y - 2, x + seg - 24, y + 58], radius=10,
+                             fill=(23, 28, 35), outline=GRID, width=1)
+        dr.text((x + 14, y + 8), lab, font=_font(13), fill=SUB)
+        dr.text((x + 14, y + 31), val, font=_font(17, True), fill=color or TXT)
 
 
 def draw_cover(stat: dict, path: str) -> str:
@@ -239,6 +262,7 @@ def draw_cover(stat: dict, path: str) -> str:
     lbl = stat.get("k90_label") or "90日"
     img = Image.new("RGB", (W, H), BG)
     dr = ImageDraw.Draw(img)
+    _vgrad(dr, 0, 0, W, H, (15, 20, 27), BG)   # 主区微渐变，避免死黑底
 
     price = c[-1]
     chg = stat.get("change_pct")
@@ -260,35 +284,42 @@ def draw_cover(stat: dict, path: str) -> str:
     def py(p):
         return y1 - (p - lo_p) / (hi_p - lo_p) * (y1 - y0)
 
-    # 横向网格 + 价格轴
+    # 横向网格（虚线）+ 价格轴；日期锚点处补竖向淡网格
+    date_idx = [i for i in (0, n // 3, 2 * n // 3, n - 1) if 0 <= i < len(t)]
     for i in range(5):
         gy = y0 + (y1 - y0) * i / 4
-        dr.line([x0, gy, x1, gy], fill=GRID, width=1)
+        _dashed(dr, x0, gy, x1, GRID)
         gp = hi_p - (hi_p - lo_p) * i / 4
         dr.text((x1 + 10, gy - 8), _fmt(gp), font=_font(13), fill=SUB)
+    for idx in date_idx:
+        vx = x0 + step * idx + step / 2
+        dr.line([vx, y0, vx, y1], fill=_blend(GRID, BG, 0.45), width=1)
 
-    # 区间高/低虚线标注（降级周期时标注实际覆盖范围）
+    # 区间高/低虚线标注（降级周期时标注实际覆盖范围），胶囊标签保证可读
     imax, imin = h.index(max(h)), l.index(min(l))
     for idx, val, col, lab in ((imax, h[imax], UP, f"{lbl} 高 {_fmt(h[imax])}"),
                                (imin, l[imin], DOWN, f"{lbl} 低 {_fmt(l[imin])}")):
         cx = x0 + step * idx + step / 2
-        dr.line([x0, py(val), x1, py(val)], fill=col, width=1)
+        _dashed(dr, x0, py(val), x1, _blend(col, BG, 0.35))
         lw = dr.textlength(lab, font=_font(13))
         lx = min(max(cx - lw / 2, x0), x1 - lw - 8)
-        dr.text((lx, py(val) - 20 if idx == imax else py(val) + 6), lab, font=_font(13), fill=col)
+        ly = py(val) - 26 if idx == imax else py(val) + 6
+        dr.rounded_rectangle([lx - 7, ly - 4, lx + lw + 7, ly + 20], radius=6,
+                             fill=(20, 25, 31), outline=_blend(col, BG, 0.2), width=1)
+        dr.text((lx, ly), lab, font=_font(13), fill=col)
 
     for i in range(n):
         cx = x0 + step * i + step / 2
         up = c[i] >= o[i]
         col = UP if up else DOWN
-        dr.line([cx, py(h[i]), cx, py(l[i])], fill=col, width=1)
+        dr.line([cx, py(h[i]), cx, py(l[i])], fill=_blend(col, BG, 0.3), width=1)  # 影线收暗一层，实体更立体
         top, bot = py(max(o[i], c[i])), py(min(o[i], c[i]))
         if bot - top < 1.2:
             bot = top + 1.2
         dr.rectangle([cx - bw / 2, top, cx + bw / 2, bot], fill=col)
 
-    # 现价标记（右侧轴）
-    dr.line([x0, py(price), x1 + 4, py(price)], fill=ACCENT, width=1)
+    # 现价标记（右侧轴，虚线更轻）
+    _dashed(dr, x0, py(price), x1, ACCENT)
     tag = _fmt(price)
     tw = dr.textlength(tag, font=_font(13, True)) + 12
     dr.rounded_rectangle([x1 + 6, py(price) - 10, x1 + 6 + tw, py(price) + 10], radius=4, fill=ACCENT)
@@ -307,9 +338,9 @@ def draw_cover(stat: dict, path: str) -> str:
     for i in range(n):
         cx = x0 + step * i + step / 2
         vh = (v[i] / vmax) * (vy1 - vy0)
-        col = UP if c[i] >= o[i] else DOWN
+        col = _blend(UP if c[i] >= o[i] else DOWN, BG, 0.45)   # 量柱收暗一档，衬托价格区
         dr.rectangle([cx - bw / 2, vy1 - vh, cx + bw / 2, vy1], fill=col)
-    dr.text((x1 - 64, vy0 + 2), "成交量", font=_font(12), fill=SUB)
+    dr.text((x0 + 4, vy0 + 2), "成交量", font=_font(12), fill=SUB)
 
     # —— 底部信息条 —— #
     chips = []
@@ -340,6 +371,7 @@ def draw_24h(stat: dict, path: str) -> str:
         raise RuntimeError("24h 数据不足，无法出图")
     img = Image.new("RGB", (W, H), BG)
     dr = ImageDraw.Draw(img)
+    _vgrad(dr, 0, 0, W, H, (15, 20, 27), BG)
     price = cl[-1]
     chg = _pct(price, cl[0])
     _draw_header(dr, W, stat["symbol"], stat["market"], price, chg, sub_right="近 24 小时 · 1h 收盘")
@@ -359,23 +391,39 @@ def draw_24h(stat: dict, path: str) -> str:
 
     for i in range(5):
         gy = y0 + (y1 - y0) * i / 4
-        dr.line([x0, gy, x1, gy], fill=GRID, width=1)
+        _dashed(dr, x0, gy, x1, GRID)
         gp = hi_p - (hi_p - lo_p) * i / 4
         dr.text((x1 + 10, gy - 8), _fmt(gp), font=_font(13), fill=SUB)
 
     col = UP if cl[-1] >= cl[0] else DOWN
     pts = [(px(i), py(cl[i])) for i in range(n)]
-    dr.polygon([(x0, y1)] + pts + [(x1, y1)], fill=(col[0] // 7 + 8, col[1] // 7 + 8, col[2] // 7 + 8))
-    dr.line(pts, fill=col, width=3, joint="curve")
+    # 面积填充：纵向渐变渐隐（贴线最亮 → 底部没入背景），mask 贴多边形，零依赖
+    gh = max(int(y1 - y0), 1)
+    grad = Image.new("RGB", (W, gh))
+    gd = ImageDraw.Draw(grad)
+    for i in range(gh):
+        gd.line([0, i, W, i], fill=_blend(BG, col, 0.32 * (1 - i / gh)))
+    mask = Image.new("L", (W, gh), 0)
+    ImageDraw.Draw(mask).polygon(
+        [(px(i), py(cl[i]) - y0) for i in range(n)] + [(x1, gh), (x0, gh)], fill=255)
+    img.paste(grad, (0, int(y0)), mask)
+    # 折线三层描边：外圈辉光 → 中层过渡 → 亮芯
+    dr.line(pts, fill=_blend(col, BG, 0.55), width=9, joint="curve")
+    dr.line(pts, fill=_blend(col, BG, 0.25), width=5, joint="curve")
+    dr.line(pts, fill=col, width=2, joint="curve")
 
     imax, imin = cl.index(hi), cl.index(lo)
-    for idx, val, lab, dy in ((imax, hi, f"高 {_fmt(hi)}", -22), (imin, lo, f"低 {_fmt(lo)}", 8)):
+    for idx, val, lab, dy in ((imax, hi, f"高 {_fmt(hi)}", -26), (imin, lo, f"低 {_fmt(lo)}", 10)):
         cx = px(idx)
+        dr.ellipse([cx - 8, py(val) - 8, cx + 8, py(val) + 8], fill=_blend(col, BG, 0.55))
         dr.ellipse([cx - 4, py(val) - 4, cx + 4, py(val) + 4], fill=col)
         lw = dr.textlength(lab, font=_font(13))
-        dr.text((min(max(cx - lw / 2, x0), x1 - lw), py(val) + dy), lab, font=_font(13), fill=col)
+        lx = min(max(cx - lw / 2, x0), x1 - lw)
+        dr.rounded_rectangle([lx - 7, py(val) + dy - 4, lx + lw + 7, py(val) + dy + 20], radius=6,
+                             fill=(20, 25, 31), outline=_blend(col, BG, 0.2), width=1)
+        dr.text((lx, py(val) + dy), lab, font=_font(13), fill=col)
 
-    dr.line([x0, py(price), x1 + 4, py(price)], fill=ACCENT, width=1)
+    _dashed(dr, x0, py(price), x1, ACCENT)
     tag = _fmt(price)
     tw = dr.textlength(tag, font=_font(13, True)) + 12
     dr.rounded_rectangle([x1 + 6, py(price) - 10, x1 + 6 + tw, py(price) + 10], radius=4, fill=ACCENT)
