@@ -266,6 +266,47 @@ def test_news_sentiment_and_ms_helpers():
     assert scanner._news_ms("2026-09-12T19:00:00") > 1.7e12, "ISO 字符串要能解析"
 
 
+# ---------------- v1.5.47c：标题池（多一点、灵活一点） ----------------
+
+def _facts_and_smc():
+    sr = _mod()
+    f = sr._facts(_stat())
+    return f, f["smc"]
+
+
+def test_title_pool_is_big_and_random():
+    """标题池要够大且随机：同一行情连抽 40 次至少出现 5 种不同标题。"""
+    f, smc = _facts_and_smc()
+    sr = _mod()
+    seen = {sr._pick_title(f, smc, f["bias"]) for _ in range(40)}
+    assert len(seen) >= 5, f"40 次抽样只有 {len(seen)} 种标题，池子太小或不随机"
+    for t in seen:
+        assert "ETH" in t, f"标题必须带币种：{t}"
+
+
+def test_event_title_hits_structure():
+    """有结构事件（空头 OB 压顶）时，事件标题必须进入候选且带具体细节。"""
+    f, _ = _facts_and_smc()
+    sr = _mod()
+    smc2 = dict(f["smc"])
+    smc2["ob"] = {"low": f["price"] * 1.01, "high": f["price"] * 1.03}
+    smc2["sweep"] = "bearish"
+    got = {sr._pick_title(f, smc2, "short") for _ in range(60)}
+    assert any("空头 OB" in t for t in got), f"事件标题未进入候选：{got}"
+    assert any("假突破" in t for t in got), f"扫荡事件标题未进入候选：{got}"
+
+
+def test_title_never_leaks_other_symbol():
+    """所有 bias 的标题模板都只能带当前币种（防张冠李戴）。"""
+    f, smc = _facts_and_smc()
+    sr = _mod()
+    for bias in ("long", "short", "neutral"):
+        for _ in range(10):
+            t = sr._pick_title(f, smc, bias)
+            assert "BTC" not in t, f"标题串币了：{t}"
+            assert t.strip(), "空标题"
+
+
 def main():
     tests = [(k, v) for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

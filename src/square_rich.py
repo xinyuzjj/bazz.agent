@@ -1129,18 +1129,90 @@ def _split_view(view: list) -> dict:
     return out
 
 
+def _pick_title(f: dict, smc: dict, bias: str) -> str:
+    """标题池（v1.5.47c，用户要求：标题多一点、灵活一点）。
+
+    选择顺序：结构事件标题（前低扫荡 / 假突破 / OTE / OB 压顶·托底）命中时以 60% 概率
+    优先选用 —— 事件标题带具体细节，天然比泛标题抓人；其余从方向大池随机抽，
+    保证同一币种连发多篇不重样。所有模板都自带 {base}，不会张冠李戴。
+    """
+    base = f["base"]
+    chg = f.get("chg24")
+    chg_txt = f"24h {chg:+.1f}%，" if chg is not None else ""
+
+    events: list = []
+    sweep = smc.get("sweep")
+    if sweep == "bullish":
+        events += [f"{base}：4 小时前低被扫又收回，这个细节值得注意",
+                   f"{base} 刚演了一出「假摔」，我记下了",
+                   f"{base}：插针那一下，把止损扫得干干净净"]
+    if sweep == "bearish":
+        events += [f"{base}：4 小时假突破之后一地鸡毛，先别接",
+                   f"{base} 冲高那一下，把追多的全套在山顶",
+                   f"{base}：假突破的真面目，4 小时图看得最清楚"]
+    if smc.get("ote") == "inside" and bias == "long":
+        events += [f"{base}：4 小时回踩进 OTE 窗口，我盯上了",
+                   f"{base} 踩进黄金坑附近了，就差一个确认"]
+    ob = smc.get("ob")
+    if ob and ob.get("low") is not None and ob.get("high") is not None:
+        if bias == "long" and ob["low"] < f["price"]:
+            events += [f"{base}：下方留了个多头 OB，我把单挂那儿了",
+                       f"{base}：4 小时多头 OB 没破，这块铁板还有效"]
+        elif bias == "short" and ob["high"] > f["price"]:
+            events += [f"{base}：头顶压着个空头 OB，反弹我就动",
+                       f"{base}：上方那块空头 OB，是我等的信号"]
+
+    pool = {
+        "long": [
+            f"{base}：4 小时结构在转多，说说我的打算",
+            f"{base} 我盯了大半天，还是想等那个位置",
+            f"{base} 现在还能追吗？我把该问的问了一遍",
+            f"{base}：偏多，但别追现价",
+            f"{base} 回调不是恐慌，是给没上车的人留门",
+            f"{base}：折价区里我只想做一件事——挂单等",
+            f"{base} {chg_txt}位置比方向更值得聊",
+            f"{base}：多头剧本我已经写好，就差行情配合",
+            f"{base} 这一波谁在接？我用 4 小时结构推一遍",
+            f"{base}：与其猜底，不如把止损位先想好",
+            f"{base} 跌下来我反而来精神，原因在这",
+            f"{base}：等了很久的区域出现了，计划照旧",
+        ],
+        "short": [
+            f"{base}：反弹一个比一个矮，空头还没放手",
+            f"{base} 今天这波我没接，理由写在这",
+            f"{base} 还能空吗？几个关键问题拆开说",
+            f"{base}：偏空，等反弹再挂",
+            f"{base}：冲高别追，那是给空单送流动性",
+            f"{base} {chg_txt}反弹的成色我打了问号",
+            f"{base}：空头剧本写好了，等它自己走上来",
+            f"{base} 这位置做多的人，止损打算放哪？",
+            f"{base}：与其抄在半山腰，不如等结构说话",
+            f"{base} 涨不动了？4 小时给了一个提示",
+            f"{base}：我的空单计划，和它被打脸的条件",
+            f"{base}：现在喊多的人不少，我偏要泼盆冷水",
+        ],
+        "neutral": [
+            f"{base}：多空信号在打架，先别急着下场",
+            f"{base} 今天纯看戏，没等到想下手的点",
+            f"{base} 该不该等？我把犹豫的点列出来",
+            f"{base}：没方向，先空着等",
+            f"{base} 这个位置，空仓也是一种操作",
+            f"{base}：方向不明的时候，纪律最值钱",
+            f"{base} {chg_txt}多空都在等一个信号",
+            f"{base}：我看不懂它想干嘛，所以我不动",
+            f"{base} 在区间里晃悠，两头的价都记一下",
+            f"{base}：不动手的日子，把计划先写好",
+        ],
+    }[bias]
+    if events and random.random() < 0.6:
+        return random.choice(events)
+    return random.choice(pool)
+
+
 def _style_review(f: dict, stat: dict) -> tuple:
     """冷静复盘体：事实 / 情绪面 / 观点 / 计划 分栏陈述（原版风格）。"""
     base, bias, smc = f["base"], f["bias"], f["smc"]
-    title = {"long": f"{base}：4 小时结构在转多，说说我的打算",
-             "short": f"{base}：反弹一个比一个矮，空头还没放手",
-             "neutral": f"{base}：多空信号在打架，先别急着下场"}[bias]
-    if smc.get("sweep") == "bullish":
-        title = f"{base}：4 小时前低被扫又收回，这个细节值得注意"
-    elif smc.get("sweep") == "bearish":
-        title = f"{base}：4 小时假突破之后一地鸡毛，先别接"
-    elif smc.get("ote") == "inside" and bias == "long":
-        title = f"{base}：4 小时回踩进 OTE 窗口，我盯上了"
+    title = _pick_title(f, smc, bias)
 
     L = [_quote(f), "", f["human"], ""]
     mb = "；".join(f["market_bits"])
@@ -1161,9 +1233,7 @@ def _style_review(f: dict, stat: dict) -> tuple:
 def _style_diary(f: dict, stat: dict) -> tuple:
     """交易员日记体：第一人称、一句一行、有盯盘的时间感。"""
     base, bias = f["base"], f["bias"]
-    title = {"long": f"{base} 我盯了大半天，还是想等那个位置",
-             "short": f"{base} 今天这波我没接，理由写在这",
-             "neutral": f"{base} 今天纯看戏，没等到想下手的点"}[bias]
+    title = _pick_title(f, f["smc"], bias)
     head = f"今天{_time_of_day()}一直在看 ${base}。现价 {_fmt(f['price'])} USDT"
     if f["chg24"] is not None:
         head += f"，24h {f['chg24']:+.2f}%"
@@ -1184,9 +1254,7 @@ def _style_diary(f: dict, stat: dict) -> tuple:
 def _style_qa(f: dict, stat: dict) -> tuple:
     """自问自答体：把读者会问的问题一个个摆出来回答。"""
     base, bias = f["base"], f["bias"]
-    title = {"long": f"{base} 现在还能追吗？我把该问的问了一遍",
-             "short": f"{base} 还能空吗？几个关键问题拆开说",
-             "neutral": f"{base} 该不该等？我把犹豫的点列出来"}[bias]
+    title = _pick_title(f, f["smc"], bias)
     v = _split_view(f["view"])
     L = [_quote(f), ""]
 
@@ -1217,9 +1285,7 @@ def _style_blunt(f: dict, stat: dict) -> tuple:
     base, bias = f["base"], f["bias"]
     concl = {"long": "偏多，但不追现价。", "short": "偏空，等反弹挂单，不追空。",
              "neutral": "没方向，空着等。"}[bias]
-    title = {"long": f"{base}：偏多，但别追现价",
-             "short": f"{base}：偏空，等反弹再挂",
-             "neutral": f"{base}：没方向，先空着等"}[bias]
+    title = _pick_title(f, f["smc"], bias)
     L = [f"${base} {_fmt(f['price'])}"
          + (f"（24h {f['chg24']:+.2f}%）" if f["chg24"] is not None else "") + "。",
          "",
