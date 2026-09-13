@@ -1,6 +1,30 @@
-# BAZZ.AGENT v1.5.47
+# BAZZ.AGENT v1.5.48
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.48 更新要点（代币化股票出稿修复：市场自动纠偏，spot/futures 双向兜底）
+
+**用户实测**：SNDK（SanDisk 代币化股票）广场发文失败——「square-rich-post 需要 K 线数据
+生成封面图，但 SNDKUSDT 无 K 线数据」。
+
+### 根因
+
+- SNDK **不在币安现货市场**：现货 `/api/v3/klines?symbol=SNDKUSDT` 返回 **400**；
+- 但它在 **U 本位合约（fapi）有完整永续 K 线**（实测 90 根 1d、24h ticker 正常）；
+- 发文链路把代币化股票当 `spot` 处理 → 1d/4h/1h 三档降级全在打现货 API → 全 400 →
+  误报「无 K 线数据」。数据一直在，只是查错了市场。
+
+### 修复：`_collect` 市场自动纠偏
+
+- 请求市场 **1d+4h 都不可用、而另一市场 1d 可用** → 整体切换市场再继续出稿；
+- 与既有 RAYUSDT 场景（合约平线→回退现货）正交互补，**双向都通**；
+- 切换后 `fallback` 记录 `market→futures/spot`，费率/OI/多空比等衍生品维度照常带上。
+- 真实行情验证：`SNDKUSDT` 传 `spot` → 自动切 `futures`，90 根 1d 正常返回。
+
+### 回归
+
+- `test_v1545_kline_fallback.py` 扩到 **11/11**（新增 spot→futures 切换、futures→spot
+  切换、另一市场平线不误切三用例）；styles 17/17、sizing 11/11、invalidation 10/10 全绿。
 
 ## 🆕 v1.5.47 更新要点（SMC 止损定版 + 富媒体标题池重写）
 
