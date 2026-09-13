@@ -24,17 +24,18 @@ def _bars(n, price=100.0):
 
 
 def _install_scanner(data: dict, calls: list):
-    """data: interval -> klines 表；缺失 interval 返回空表。"""
+    """data: interval（或 (market, interval)）-> klines 表；缺失返回空表。"""
     fake = types.ModuleType("scanner")
 
     def klines_ohlcv(sym, interval="1d", limit=90, market="futures"):
-        calls.append(interval)
-        return data.get(interval) or {"opens": [], "highs": [], "lows": [],
-                                      "closes": [], "vols": [], "times": []}
+        calls.append((market, interval))
+        k = data.get((market, interval)) or data.get(interval) \
+            or {"opens": [], "highs": [], "lows": [], "closes": [], "vols": [], "times": []}
+        return k
 
     fake.klines_ohlcv = klines_ohlcv
     fake.klines_closes = lambda sym, interval="1h", limit=24, market="futures": \
-        (data.get(interval) or {}).get("closes", [])
+        (data.get((market, interval)) or data.get(interval) or {}).get("closes", [])
     fake.fear_greed_index = lambda: {"value": 50, "classification": "Neutral"}
     fake.futures_open_interest = lambda syms, workers=8: []
     sys.modules["scanner"] = fake
@@ -50,7 +51,8 @@ def _collect_with(data: dict):
 def test_90d_ok_no_fallback():
     d, calls = _collect_with({"1d": _bars(90), "4h": _bars(120), "1h": _bars(25)})
     assert d["k90_label"] == "90日", "90d 数据充足时不应降级"
-    assert calls[:2] == ["1d", "4h"], f"取数顺序异常: {calls}"
+    assert calls[:2] == [("spot", "1d"), ("spot", "4h")], f"取数顺序异常: {calls}"
+    assert d["market"] == "spot", "数据可用时不应切换市场"
 
 
 def test_fallback_to_4h():
@@ -65,8 +67,40 @@ def test_fallback_to_1h():
     d, calls = _collect_with({"1d": _bars(2), "4h": _bars(0), "1h": _bars(720)})
     assert len(d["k90"]["closes"]) == 720, "未切换到 1h 数据"
     assert d["k90_label"] == "近30日·1h", f"label 未跟随降级: {d['k90_label']}"
-    assert calls == ["1d", "4h", "1h", "1h", "4h", "1h"][:len(calls)] or set(calls) >= {"1d", "4h", "1h"}, \
+    tried = {(m, i) for m, i in calls}
+    assert {("spot", "1d"), ("spot", "4h"), ("spot", "1h")} <= tried, \
         f"降级链未按 1d→4h→1h 顺序尝试: {calls}"
+
+
+# ---------------- v1.5.48：市场自动纠偏（SNDKUSDT 代币化股票 spot 400 → fapi 可用） ----------------
+
+def test_market_autoswitch_spot_to_futures():
+    """请求 spot 全空、futures 1d 可用 → 整体切到 futures（SNDKUSDT 场景）。"""
+    d, _ = _collect_with({("futures", "1d"): _bars(90), ("futures", "4h"): _bars(120),
+                          ("futures", "1h"): _bars(25)})
+    assert d["market"] == "futures", "另一市场可用时未切换市场"
+    assert len(d["k90"]["closes"]) == 90, "切换后未取到 futures 1d 数据"
+    assert "market→futures" in (d.get("fallback") or ""), f"fallback 未记录切换: {d.get('fallback')}"
+
+
+def test_market_autoswitch_requires_other_usable():
+    """另一市场也是平线占位 → 不切换（RAY 场景：futures 平线先回退 spot，spot 也空则保持空，不回切）。"""
+    flat = _bars(90)
+    for key in ("opens", "highs", "lows", "closes"):
+        flat[key] = [100.0] * 90
+    d, _ = _collect_with({"1d": flat, ("futures", "1d"): flat, ("futures", "4h"): _bars(120)})
+    assert d["market"] == "spot", "futures 平线应先走既有回退到 spot"
+    assert not d["k90"]["closes"] or not square_rich._k_usable(d["k90"]), "不应回切到平线 futures"
+
+
+def test_market_autoswitch_futures_to_spot():
+    """请求 futures 全空、spot 可用 → 切到 spot。"""
+    _install_scanner({("spot", "1d"): _bars(90), ("spot", "4h"): _bars(120),
+                      ("spot", "1h"): _bars(25)}, [])
+    d = square_rich._collect("TESTUSDT", "futures")
+    assert d["market"] == "spot", "futures 全空时应切到 spot"
+    assert len(d["k90"]["closes"]) == 90
+    assert "market→spot" in (d.get("fallback") or "")
 
 
 def test_flat_1d_falls_back():

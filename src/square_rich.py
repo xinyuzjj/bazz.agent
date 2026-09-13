@@ -125,6 +125,19 @@ def _collect(sym: str, market: str) -> dict:
         d["c24"] = klines_closes(sym, "1h", 25, "spot")
         d["market"] = "spot"
         d["fallback"] = "futures_flat→spot"
+    # v1.5.48（用户实测：SNDKUSDT 传 spot 全链路 400 → 报「无 K 线数据」）：
+    # 代币化股票等标的不在现货市场（spot /api/v3/klines 返回 400），但 fapi 有完整永续
+    # K 线。请求市场 1d 与 4h 都不可用、而另一市场 1d 可用时 → 整体切换市场再继续走
+    # 周期降级链；反向（futures 平线→spot）已由上面分支处理。
+    other = "spot" if d["market"] == "futures" else "futures"
+    if not _k_usable(d["k90"]) and not _k_usable(d["k4h"]):
+        k90o = klines_ohlcv(sym, "1d", 90, other)
+        if _k_usable(k90o):
+            d["k90"] = k90o
+            d["k4h"] = klines_ohlcv(sym, "4h", 120, other)
+            d["c24"] = klines_closes(sym, "1h", 25, other)
+            d["market"] = other
+            d["fallback"] = (d.get("fallback") + "+" if d.get("fallback") else "") + f"market→{other}"
     # v1.5.45（用户实测：90 日 K 线数据不足出稿失败）：1d 不可用（新上市不足 90d /
     # 上游失败 / 平线占位）→ 4h×540（≈90 日）→ 1h×720（≈30 日），保证出稿；
     # 降级后 k90_label 标注实际周期，图上的「90d 高/低」「90日区间」等文案跟着换。
