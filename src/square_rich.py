@@ -116,12 +116,12 @@ def _collect(sym: str, market: str) -> dict:
     from scanner import klines_ohlcv, klines_closes, fear_greed_index, futures_open_interest
     d = {"symbol": sym, "market": market}
     d["k90"] = klines_ohlcv(sym, "1d", 90, market)
-    d["k4h"] = klines_ohlcv(sym, "4h", 120, market)   # SMC 主分析周期：4 小时
+    d["k4h"] = klines_ohlcv(sym, "4h", 84, market)   # SMC 主分析周期：4 小时
     d["c24"] = klines_closes(sym, "1h", 25, market)
     if market == "futures" and (_flat(d["k90"]) or _flat({"closes": d["c24"]})):
         # 合约盘占位脏数据（如 RAYUSDT SETTLING）：回退现货真实行情，衍生品维度自动省略
         d["k90"] = klines_ohlcv(sym, "1d", 90, "spot")
-        d["k4h"] = klines_ohlcv(sym, "4h", 120, "spot")
+        d["k4h"] = klines_ohlcv(sym, "4h", 84, "spot")
         d["c24"] = klines_closes(sym, "1h", 25, "spot")
         d["market"] = "spot"
         d["fallback"] = "futures_flat→spot"
@@ -134,7 +134,7 @@ def _collect(sym: str, market: str) -> dict:
         k90o = klines_ohlcv(sym, "1d", 90, other)
         if _k_usable(k90o):
             d["k90"] = k90o
-            d["k4h"] = klines_ohlcv(sym, "4h", 120, other)
+            d["k4h"] = klines_ohlcv(sym, "4h", 84, other)
             d["c24"] = klines_closes(sym, "1h", 25, other)
             d["market"] = other
             d["fallback"] = (d.get("fallback") + "+" if d.get("fallback") else "") + f"market→{other}"
@@ -213,6 +213,21 @@ def _dashed(dr, x0, y, x1, fill, width=1, dash=7, gap=6):
         x += dash + gap
 
 
+def _dashed_rect(dr, x0, y0, x1, y1, fill, width=1, dash=6, gap=5):
+    """虚线矩形框（四条边都点线，用于「潜在/条件成立」的结构区）。"""
+    # 上下水平边
+    _dashed(dr, x0, y0, x1, fill, width, dash, gap)
+    _dashed(dr, x0, y1, x1, fill, width, dash, gap)
+    # 左右垂直边（竖直方向逐段点线）
+    def _v(x):
+        yy = y0
+        while yy < y1:
+            dr.line([x, yy, x, min(yy + dash, y1)], fill=fill, width=width)
+            yy += dash + gap
+    _v(x0)
+    _v(x1)
+
+
 def _draw_header(dr, W, sym, market, price, chg, sub_right=""):
     dr.rectangle([0, 0, W, 84], fill=PANEL)
     dr.rectangle([0, 0, W, 3], fill=ACCENT)   # 顶部金色描边
@@ -263,7 +278,8 @@ def draw_cover(stat: dict, path: str, kkey: str = "k90", smc_zones: bool = False
     if len(c) < 5:
         raise RuntimeError("K 线数据不足（1d/4h/1h 均无可用数据），无法出图")
     # v1.5.45：降级周期时图上「90d 高/低」「90日区间」等文案跟随实际周期
-    lbl = (stat.get("k90_label") or "90日") if kkey == "k90" else "近20日·4h"
+    lbl = (stat.get("k90_label") or "90日") if kkey == "k90" \
+        else f"近{max(1, round(len(c) * 4 / 24))}日·4h"   # 4h 图标签按实际根数动态算
     img = Image.new("RGB", (W, H), BG)
     dr = ImageDraw.Draw(img)
     _vgrad(dr, 0, 0, W, H, (15, 20, 27), BG)   # 主区微渐变，避免死黑底
@@ -299,33 +315,131 @@ def draw_cover(stat: dict, path: str, kkey: str = "k90", smc_zones: bool = False
         vx = x0 + step * idx + step / 2
         dr.line([vx, y0, vx, y1], fill=_blend(GRID, BG, 0.45), width=1)
 
-    # —— SMC 区域标记（OB / FVG / OTE 矩形区间框，仅 4h 结构图，画在蜡烛下层） —— #
-    def _band(blo, bhi, col, lab, alpha=0.10):
+    # —— SMC 区域标记（OB / FVG / OTE 矩形框，仅 4h 结构图，画在蜡烛下层） —— #
+    # 框只画在结构出现的那段 K 上，不横跨整屏（用户指定）
+    def _band(blo, bhi, col, lab, alpha=0.10, bx0=None, bx1=None, dashed=False):
         by0, by1 = py(bhi), py(blo)
         if by1 - by0 < 10:          # 最小可视高度：窄区间也要能看出是「框」
             by1 = by0 + 10
         by0, by1 = max(by0, y0), min(by1, y1)
         if by1 <= by0:
             return
-        dr.rectangle([x0, by0, x1, by1], fill=_blend(BG, col, alpha),
-                     outline=_blend(col, TXT, 0.2), width=1)
-        ly = by0 + 4 if by0 > y0 + 22 else by1 - 18
-        dr.text((x0 + 8, ly), lab, font=_font(12, True), fill=_blend(col, TXT, 0.35))
+        bx0 = x0 if bx0 is None else max(bx0, x0)
+        bx1 = x1 if bx1 is None else min(bx1, x1)
+        if bx1 - bx0 < 3:
+            return
+        if dashed:                  # 潜在区：虚线框，底填充更淡
+            _dashed_rect(dr, bx0, by0, bx1, by1, _blend(col, TXT, 0.45), width=1)
+        else:
+            dr.rectangle([bx0, by0, bx1, by1], fill=_blend(BG, col, alpha),
+                         outline=_blend(col, TXT, 0.2), width=1)
+        # 文字统一放右侧边栏（用户定版：不和 K 线混在一起），标签跟区间 y 居中
+        fnt = _font(11, True)
+        tw = dr.textlength(lab, font=fnt)
+        ty = min(max((by0 + by1) / 2 - 8, y0), y1 - 16)
+        # 避让右侧现价金胶囊（胶囊占 py(price)±10）：向「远离现价」的方向挪，
+        # 挪完重新夹紧（旧写法朝现价方向挪，标签正好被胶囊盖住）
+        pty = py(price)
+        if abs(ty + 8 - pty) < 22:
+            ty = pty + 14 if ty + 8 >= pty else pty - 30
+            ty = min(max(ty, y0), y1 - 16)
+        dr.rounded_rectangle([x1 + 6, ty, x1 + 8 + tw, ty + 16], radius=3,
+                             fill=_blend(BG, col, 0.18),
+                             outline=_blend(col, TXT, 0.35), width=1)
+        dr.text((x1 + 7, ty + 2), lab, font=fnt, fill=_blend(col, TXT, 0.5))
 
     k4 = stat.get("k4h") or {}
     if smc_zones and _k_usable(k4):
-        for d, col, lab in (("bullish", UP, "多头 OB"), ("bearish", DOWN, "空头 OB")):
+        def _kx(i):                  # 第 i 根 K 的 x 范围
+            cx = x0 + step * i + step / 2
+            return max(x0, cx - step / 2 - 1), min(x1, cx + step / 2 + 1)
+
+        # 大趋势优先（用户指定：先判断大趋势，再看趋势内部的情况）：
+        # 用日线结构定方向，主画「顺大趋势」的 OB / FVG / OTE；日线方向不明才两者都画。
+        # 反向 CHoCH OB 成立前提（用户定版 v1.5.58）：只有当价格实体收盘跌破了
+        # 结构最低点（空头OB）／实体收盘升破结构最高点（多头OB）才成立——
+        # 回调途中逐个跌破小低点形成的反向 OB 不算，不画。
+        trend = _htf_trend(stat).get("trend") or "mixed"
+        smc_ov = _smc(stat)
+        opp = {"bullish": "bearish", "bearish": "bullish"}.get(trend)
+        # 标签带级别（用户定版：分清大趋势/小趋势）——顺日线大趋势的标「顺势」，
+        # 反向小结构标「CHoCH」；日线方向不明时两侧都只是 4h 级别结构，标「4h」
+        ob_dirs = {"bullish": [("bullish", UP, "顺势 多头OB")],
+                   "bearish": [("bearish", DOWN, "顺势 空头OB")]}.get(
+            trend, [("bullish", UP, "4h 多头OB"), ("bearish", DOWN, "4h 空头OB")])
+        closes4 = k4.get("closes") or []
+        # 反向 OB 分两态（用户定版 v1.5.58）：
+        #   · 已实体破结构最低/最高点 → 成立，实线框标「CHoCH 空头OB / CHoCH 多头OB」；
+        #   · 尚未破结构最低/最高点 → 潜在做空/做多点，虚线框标「跌破后的空头ob位 / 升破后的多头ob位」，
+        #     供价格若跌破后参考（用户指定：也要显示，作跌破后的做空点）
+        rev_info = None
+        if opp and _find_ob(k4, opp):
+            if opp == "bearish":
+                ext4 = min(k4.get("lows") or [0])          # 4h 结构最低点
+                broke4 = any(cl < ext4 for cl in closes4)  # 实体收盘跌破最低点
+            else:
+                ext4 = max(k4.get("highs") or [0])         # 4h 结构最高点
+                broke4 = any(cl > ext4 for cl in closes4)  # 实体收盘升破最高点
+            if broke4:
+                ob_dirs.append((opp, DOWN if opp == "bearish" else UP,
+                                f"CHoCH {'空头' if opp == 'bearish' else '多头'}OB"))
+            else:
+                rev_info = (opp, DOWN if opp == "bearish" else UP,
+                            f"{'跌破后' if opp == 'bearish' else '升破后'}的"
+                            f"{'空头' if opp == 'bearish' else '多头'}ob位", True)
+        zones = []
+        for d, col, lab in ob_dirs:
             ob = _find_ob(k4, d)
-            if ob:
-                _band(ob["low"], ob["high"], col, lab, alpha=0.12)
+            if ob and ob.get("i") is not None:
+                zones.append([ob["low"], ob["high"], col, lab, _kx(ob["i"])[0], False])
+        # 反向未成立的潜在 OB：也画（虚线框），且不与同向 OB 重叠（保住顺趋势主区）
+        if rev_info:
+            ob = _find_ob(k4, rev_info[0])
+            if ob and ob.get("i") is not None:
+                zones.append([ob["low"], ob["high"], rev_info[1], rev_info[2],
+                              _kx(ob["i"])[0], True])
+        # 同向 OB 价格区间相邻/重叠时只留更贴近现价的一个（异向并存不强去重）
+        if len(zones) == 2 and zones[0][2] == zones[1][2]:
+            (a_lo, a_hi, _, _, _, _), (b_lo, b_hi, _, _, _, _) = zones
+            tol = price * 0.005
+            if a_lo - tol <= b_hi and b_lo - tol <= a_hi:
+                zones = [min(zones, key=lambda z: abs((z[0] + z[1]) / 2 - price))]
+        for z_lo, z_hi, col, lab, zx0, dashed in zones:
+            _band(z_lo, z_hi, col, lab, alpha=0.12, bx0=zx0, bx1=x1, dashed=dashed)
+        # FVG：只画顺大趋势方向的缺口（多头趋势=现价下方需求缺口，空头镜像），
+        # 从缺口形成那组 K 起向右延伸
         gaps = sorted((_find_fvg(k4) or []),
                       key=lambda g: abs((g["lo"] + g["hi"]) / 2 - price))
-        for g in gaps[:3]:
-            col = UP if (g["lo"] + g["hi"]) / 2 < price else DOWN
-            _band(g["lo"], g["hi"], col, "FVG", alpha=0.08)
-        smc_ov = _smc(stat)
-        if smc_ov.get("ote_lo") is not None and smc_ov.get("ote_hi") is not None:
-            _band(smc_ov["ote_lo"], smc_ov["ote_hi"], ACCENT, "OTE", alpha=0.09)
+        drawn = 0
+        for g in gaps:
+            if drawn >= 3:
+                break
+            below = (g["lo"] + g["hi"]) / 2 < price
+            if trend == "bullish" and not below:
+                continue
+            if trend == "bearish" and below:
+                continue
+            col = UP if below else DOWN
+            fx0 = _kx(max(0, g["i"] - 2))[0] if g.get("i") is not None else None
+            if fx0 is None:
+                continue
+            _band(g["lo"], g["hi"], col, "4h FVG", alpha=0.09, bx0=fx0, bx1=x1)
+            drawn += 1
+        # OTE：画最近一段腿的回撤窗口（窗口方向=最后一腿方向——回调打破小结构时，
+        # 它就是用户要的「改变出来的」反向 OTE；主升是最后一腿时则是顺趋势 OTE）
+        if smc_ov.get("ote_lo") is not None and smc_ov.get("ote_i0") is not None \
+                and smc_ov.get("ote_dir"):
+            ox0 = _kx(min(smc_ov["ote_i0"], smc_ov["ote_i1"]))[0]
+            _band(smc_ov["ote_lo"], smc_ov["ote_hi"], ACCENT, "4h OTE", alpha=0.09,
+                  bx0=ox0, bx1=x1)
+        # 大趋势标签（用户定版：看图先看级别）——左上角标明日线大趋势方向
+        tname = {"bullish": "多头", "bearish": "空头"}.get(trend, "方向不明")
+        tcol = {"bullish": UP, "bearish": DOWN}.get(trend, SUB)
+        tlab = f"大趋势·日线 {tname}"
+        tw2 = dr.textlength(tlab, font=_font(12, True))
+        dr.rounded_rectangle([x0 + 8, y0 + 8, x0 + 22 + tw2, y0 + 28], radius=5,
+                             fill=(20, 25, 31), outline=_blend(tcol, BG, 0.35), width=1)
+        dr.text((x0 + 15, y0 + 12), tlab, font=_font(12, True), fill=_blend(tcol, TXT, 0.25))
 
     # 区间高/低虚线标注（降级周期时标注实际覆盖范围），胶囊标签保证可读
     imax, imin = h.index(max(h)), l.index(min(l))
@@ -488,7 +602,7 @@ def _ma(closes: list, n: int):
 
 def _smc(stat: dict) -> dict:
     """轻量 SMC（Smart Money Concepts）分析 — 主周期 4 小时。
-    摆动结构 / BOS・CHoCH / 流动性扫荡 / 折价溢价区 / OTE（斐波那契 0.62-0.705 最优入场区）。
+    摆动结构 / BOS・CHoCH / 流动性扫荡 / 折价溢价区 / OTE（斐波那契 0.62-0.79 最优入场区，中间值 0.702）。
     纯规则判定，输出供人话叙述。"""
     k = stat.get("k4h") or stat.get("k90") or {}
     h, l, c = k.get("highs") or [], k.get("lows") or [], k.get("closes") or []
@@ -562,89 +676,201 @@ def _smc(stat: dict) -> dict:
                        "equilibrium": "正好卡在区间中轴附近"}[out["zone"]]
     out["pos"] = pos
 
-    # OTE（Optimal Trade Entry）：最近一段摆动腿的斐波那契 0.618-0.705 回撤窗口；
-    # 无可用腿时退化为全区间口径
+    # OTE（Optimal Trade Entry）：最近一段摆动腿的斐波那契 0.62-0.79 回撤窗口；
+    # 一般用中间值 0.702 作为入场参考位（用户定版 v1.5.59）。无可用腿时退化为全区间口径。
+    OTE_LO, OTE_HI, OTE_ENTRY = 0.62, 0.79, 0.702
     leg_dir, leg_a, leg_b = "up", lo, hi
+    leg_i = (0, len(c) - 1)          # 腿的 K 线索引锚点（OTE 框画在这段腿上）
     if sh and sl and sh[-1] != sl[-1]:
         if sl[-1] < sh[-1]:          # 低点在前、高点在后 → 上升腿
             leg_dir, leg_a, leg_b = "up", sl_v[-1], sh_v[-1]
+            leg_i = (sl[-1], sh[-1])
         else:                        # 高点在前、低点在后 → 下降腿
             leg_dir, leg_a, leg_b = "down", sh_v[-1], sl_v[-1]
+            leg_i = (sh[-1], sl[-1])
     rng_leg = leg_b - leg_a
-    if rng_leg > 0:
+    seg = f"这段腿的 {OTE_LO}-{OTE_HI}（中间值 {OTE_ENTRY}）"
+    if rng_leg:                     # 下跌腿 rng<0 同样有效（v1.5.57 修复：>0 会漏掉全部空头 OTE）
         if leg_dir == "up":
-            ote_lo, ote_hi = leg_b - rng_leg * 0.705, leg_b - rng_leg * 0.618
+            ote_lo, ote_hi = leg_b - rng_leg * OTE_HI, leg_b - rng_leg * OTE_LO
+            ote_entry = leg_b - rng_leg * OTE_ENTRY
             out["ote_dir"] = "up"
             if ote_lo <= price <= ote_hi:
                 out["ote"] = "inside"
-                out["ote_txt"] = f"价恰好在 OTE 多头窗口（{_fmt(ote_lo)}~{_fmt(ote_hi)}，{_fmt(leg_a)}→{_fmt(leg_b)} 这段腿的 0.618-0.705 回撤），盈亏比最优"
+                out["ote_txt"] = f"价恰好在 OTE 多头窗口（{_fmt(ote_lo)}~{_fmt(ote_hi)}，中间值 {_fmt(ote_entry)}；{_fmt(leg_a)}→{_fmt(leg_b)} {seg}回撤），盈亏比最优"
             elif price < ote_lo:
                 out["ote"] = "below"
                 out["ote_txt"] = f"价已跌穿 OTE 下沿 {_fmt(ote_lo)}，这段腿的多头窗口失守"
             else:
                 out["ote"] = "above"
-                out["ote_txt"] = f"价还在 OTE 上沿 {_fmt(ote_hi)} 上方，等回踩到 {_fmt(ote_lo)}~{_fmt(ote_hi)} 再接更划算"
+                out["ote_txt"] = f"价还在 OTE 上沿 {_fmt(ote_hi)} 上方，等回踩到 {_fmt(ote_lo)}~{_fmt(ote_hi)}（中间值 {_fmt(ote_entry)}）再接更划算"
         else:
-            ote_lo, ote_hi = leg_a + rng_leg * 0.618, leg_a + rng_leg * 0.705
+            # 下降腿回撤：从终点低点 leg_b 向上返 0.62~0.79 的腿长
+            #（v1.5.57 修复：旧式 leg_a + rng*… 是从起点高点往下算，rng<0 时窗口倒置且位置全错）
+            ote_lo, ote_hi = leg_b - rng_leg * OTE_LO, leg_b - rng_leg * OTE_HI
+            ote_entry = leg_b - rng_leg * OTE_ENTRY
             out["ote_dir"] = "down"
             if ote_lo <= price <= ote_hi:
                 out["ote"] = "inside"
-                out["ote_txt"] = f"价正回抽到空头 OTE 窗口（{_fmt(ote_lo)}~{_fmt(ote_hi)}，{_fmt(leg_b)}→{_fmt(leg_a)} 这段腿的 0.618-0.705 反抽位），做空的盈亏比最优"
+                out["ote_txt"] = f"价正回抽到空头 OTE 窗口（{_fmt(ote_lo)}~{_fmt(ote_hi)}，中间值 {_fmt(ote_entry)}；{_fmt(leg_b)}→{_fmt(leg_a)} {seg}反抽位），做空的盈亏比最优"
             elif price > ote_hi:
                 out["ote"] = "above"
                 out["ote_txt"] = f"价已升破空头 OTE 上沿 {_fmt(ote_hi)}，这段腿的空头窗口失守"
             else:
                 out["ote"] = "below"
-                out["ote_txt"] = f"价还在空头 OTE 下沿 {_fmt(ote_lo)} 下方，等反抽到 {_fmt(ote_lo)}~{_fmt(ote_hi)} 再空更划算"
-        out["ote_lo"], out["ote_hi"] = ote_lo, ote_hi
+                out["ote_txt"] = f"价还在空头 OTE 下沿 {_fmt(ote_lo)} 下方，等反抽到 {_fmt(ote_lo)}~{_fmt(ote_hi)}（中间值 {_fmt(ote_entry)}）再空更划算"
+        out["ote_lo"], out["ote_hi"], out["ote_entry"] = ote_lo, ote_hi, ote_entry
+        out["ote_i0"], out["ote_i1"] = leg_i
     out["fvg"] = _find_fvg(k)
     return out
 
 
+def _htf_trend(stat: dict) -> dict:
+    """日线大趋势判定（用户定版 v1.5.58：趋势延续优先，锚=最近显著摆动点，实体破锚才翻转）。
+    用户口径（BTC 2026-09 实例 + 手绘图定版）：只要没有实体 K 线收盘跌破最近显著低点
+    （如 76,165）就还在上涨趋势中——
+      · 影线捅破不算（09-11 插到 76,000 收在 77,191，仍是多头）；
+      · 中途形成的摆动高点不翻转趋势（09-03 高点 82,282 未收破也不改多头）；
+      · 被新锚取代的旧低点破位无效（09-10 实体跌破已过时的旧低 76,853，但最新锚是
+        09-02 的 76,152，未破 → 仍多头）；
+      · 镜像同理：空头锚 = 最近显著高点，实体升破才翻多。
+    实现：单遍状态机（摆动点确认滞后 K=3 根，与 _smc 分形一致）——
+      多头状态锚跟随最近已确认摆动低点，实体收盘破当前锚 → 翻空头（锚改挂最近摆动
+      高点）；空头镜像；初始方向由第一次原始 BOS（实体收盘越过最近已确认摆动点）确定。
+    返回 {"trend", "anchor", "txt"}；无数据返回 {}。"""
+    k = stat.get("k90") or {}
+    o, h, l, c = (k.get(x) or [] for x in ("opens", "highs", "lows", "closes"))
+    if len(c) < 30 or len(o) != len(c) or len(h) != len(c) or len(l) != len(c):
+        return {}
+    smc = _smc({"k4h": k})
+    sl, sh = smc.get("sl") or [], smc.get("sh") or []
+    if not sl and not sh:
+        return {"trend": smc.get("structure") or "mixed", "anchor": None,
+                "txt": smc.get("structure_txt") or ""}
+    n, K = len(c), 3
+    state, anchor, aj = None, None, -1          # aj = 锚所在 K（形成时刻）
+    for t in range(n):
+        if state is None:
+            # 初始方向：第一次原始 BOS（实体收盘越过最近已确认摆动点）
+            lj = max((j for j in sl if j + K <= t), default=None)
+            hj = max((j for j in sh if j + K <= t), default=None)
+            if hj is not None and c[t] > h[hj]:
+                state = 'bull'
+            elif lj is not None and c[t] < l[lj]:
+                state = 'bear'
+            continue
+        # 锚跟随最近「已确认」的反向显著摆动点（多头挂低点、空头挂高点）——
+        # 新锚成形即取代旧锚，旧锚此后被破不算破位（用户手绘图定版）
+        pool = [j for j in (sl if state == 'bull' else sh) if j + K <= t]
+        j = max(pool, default=None)
+        if j is not None:
+            anchor, aj = (l[j] if state == 'bull' else h[j]), j
+        # 实体收盘破当前锚（影线不算）→ 趋势翻转，锚改挂反向摆动点
+        if anchor is not None and t > aj:
+            if state == 'bull' and c[t] < anchor:
+                state, anchor, aj = 'bear', None, -1
+            elif state == 'bear' and c[t] > anchor:
+                state, anchor, aj = 'bull', None, -1
+    if state is None:
+        return {"trend": smc.get("structure") or "mixed", "anchor": None,
+                "txt": smc.get("structure_txt") or ""}
+    if state == 'bull':
+        txt = (f"大趋势是多头，锚在 {_fmt(anchor)}——实体收盘跌破锚之前，"
+               "回调只算上涨中的调整（影线捅破不算）") if anchor is not None \
+            else "大趋势偏多头（尚无已确认摆动低点作锚）"
+        return {"trend": "bullish", "anchor": anchor, "txt": txt}
+    txt = (f"大趋势是空头，锚在 {_fmt(anchor)}——实体收盘升破锚之前，"
+           "反弹只算下跌中的调整（影线捅破不算）") if anchor is not None \
+        else "大趋势偏空头（尚无已确认摆动高点作锚）"
+    return {"trend": "bearish", "anchor": anchor, "txt": txt}
+
+
 def _find_ob(k: dict, direction: str) -> dict:
-    """找最近的订单块（OB）：结构方向上的最后一根 opposing K 线（被后续同向走势确认）。
-    bullish：最后一根「前阴后阳」的阳线（需求区）；bearish：最后一根「前阳后阴」的阴线（供给区）。"""
+    """找最近一个「有结构意义」的订单块（OB）——v1.5.57 重写（用户反馈：整体 OB 不对）。
+
+    旧版只看「前阴后阳 + 现价在上方」，震荡区随手命中杂毛 K，画出的块没意义。
+    新版三重条件，宁缺毋滥（找不到返回 {}，不画噪音区）：
+      ① 破构确认：OB 必须是某段突破摆动点（BOS）推动浪的起点——
+         bullish：某摆动高点被后续收盘升破，从破位 K 往回找这段上涨前的最后一根阴线；
+         bearish 镜像（摆动低点被收盘跌破，往回找最后一根阳线）；
+         打破一律以实体收盘为准，影线捅破不算（用户定版）；
+      ② 未失效：形成之后没有被收盘价完全回吃（bullish：收盘跌破块下沿即失效；bearish 镜像）；
+      ③ 只认真破构（用户定版：没有打破结构不算 OB）：OB 必须直接发动破构浪
+         （OB 到破位 K ≤ 8 根），被破的摆动点用 K=4 显著分形（小抖动不算结构）；
+         按 BOS 从新到旧逐个验证，最多回看 4 次破构。
+    返回 {"dir", "low", "high", "i", "txt"}。"""
     h, l, c, o = k.get("highs") or [], k.get("lows") or [], k.get("closes") or [], k.get("opens") or []
-    if len(c) < 5 or len(o) != len(c):
+    if len(c) < 15 or len(o) != len(c) or len(h) != len(c) or len(l) != len(c):
         return {}
     n = len(c)
-    for i in range(n - 2, max(n - 41, 0), -1):   # 往前扫 40 根
-        try:
-            if direction == "bullish":
-                if c[i] > o[i] and c[i - 1] < o[i - 1] and c[-1] > c[i]:
-                    return {"dir": "bull", "low": l[i], "high": h[i],
-                            "txt": f"多头订单块（OB）在 {_fmt(l[i])}~{_fmt(h[i])}，回踩这里是需求接力位"}
-            else:
-                if c[i] < o[i] and c[i - 1] > o[i - 1] and c[-1] < c[i]:
-                    return {"dir": "bear", "low": l[i], "high": h[i],
-                            "txt": f"空头订单块（OB）在 {_fmt(l[i])}~{_fmt(h[i])}，反弹到这里是供给压制位"}
-        except IndexError:
-            break
+    K = 4                                     # 分形强度：摆动点要显著，小抖动不算结构
+    scan_from = max(K, n - 150)               # 结构只在近段找（150 根 ≈ 25 日/4h）
+    if direction == "bullish":
+        sw = [i for i in range(scan_from, n - K) if h[i] == max(h[i - K:i + K + 1])]
+    else:
+        sw = [i for i in range(scan_from, n - K) if l[i] == min(l[i - K:i + K + 1])]
+    breaks, seen_m = [], set()                # (破位K m, 摆动点 j)——没有破构事件就没有 OB
+    for j in sw:
+        rng = range(j + 1, n)
+        m = next((t for t in rng if (c[t] > h[j] if direction == "bullish" else c[t] < l[j])), None)
+        if m is not None and m not in seen_m:
+            seen_m.add(m)
+            breaks.append((m, j))
+    for m, j in reversed(breaks[-4:]):        # 最近的破构优先
+        # 浪的真正起点（用户定版：OB 锚在起点极值，不是跌势中段的小反抽）：
+        # bearish 取 j..m 段最高点，bullish 取最低点；OB = 起点极值处/前最后一根反向 K
+        seg = range(j, m + 1)
+        io = (max(seg, key=lambda t: h[t]) if direction == "bearish"
+              else min(seg, key=lambda t: l[t]))
+        rng2 = range(io, max(j - 1, scan_from - 1), -1)
+        i = next((t for t in rng2 if (c[t] < o[t] if direction == "bullish" else c[t] > o[t])), None)
+        if i is None or io - i > 3:           # OB 必须紧贴浪起点
+            continue
+        z_lo, z_hi = l[i], h[i]
+        tail = range(m + 1, n)
+        bad = any(c[t] < z_lo for t in tail) if direction == "bullish" \
+            else any(c[t] > z_hi for t in tail)
+        if bad:
+            continue
+        if direction == "bullish":
+            txt = f"多头订单块（OB）在 {_fmt(z_lo)}~{_fmt(z_hi)}，{m - j + 1} 根 K 的上推动浪从这里起步（破构确认、未失效），回踩接需求"
+        else:
+            txt = f"空头订单块（OB）在 {_fmt(z_lo)}~{_fmt(z_hi)}，{m - j + 1} 根 K 的下破浪从这里起步（破构确认、未失效），反抽接供给"
+        return {"dir": "bull" if direction == "bullish" else "bear",
+                "low": z_lo, "high": z_hi, "i": i, "txt": txt}
     return {}
 
 
 def _find_fvg(k: dict) -> list:
     """找未回补的 FVG（Fair Value Gap 公允价值缺口）：三根 K 中 1/3 根影线不重叠的跳区。
-    回补判定：价格越过缺口中点才算填掉（影线探进去只是部分回补，仍算有效）。
-    各留一个最近的：现价下方未回补多头 FVG（支撑/回补目标）、上方未回补空头 FVG（阻力/回补目标）。"""
-    h, l = k.get("highs") or [], k.get("lows") or []
-    if len(h) < 8 or len(l) != len(h):
+    宽度过滤（v1.5.57 修复「FVG 画错」）：缺口高度 < 现价 0.2% 的视为噪声跳空，不画不报——
+    否则一条十几点的发丝缝被最小可视高度撑成大框，真正的深缺口反被挤掉。
+    回补判定（用户定版）：价格触及缺口即算回补——影线碰到也算（bull：后续最低价 ≤ 缺口
+    上沿；bear：后续最高价 ≥ 缺口下沿），缺口被碰过就销掉，不再画。
+    各留一个最近的：现价下方多头 FVG（支撑）、上方空头 FVG（阻力）。"""
+    h, l, c = k.get("highs") or [], k.get("lows") or [], k.get("closes") or []
+    if len(h) < 8 or len(l) != len(h) or len(c) != len(h):
         return []
     n = len(h)
+    min_h = (c[-1] or 0) * 0.002          # 噪声跳空过滤：宽度 ≥ 现价 0.2%
     bull = bear = None
-    for i in range(n - 1, max(n - 42, 1), -1):
+    for i in range(n - 1, max(n - 80, 1), -1):
         if bull is None and l[i] > h[i - 2]:
             lo_, hi_ = h[i - 2], l[i]
-            if i < n - 1 and min(l[i + 1:]) <= (lo_ + hi_) / 2:
-                pass                      # 已回补过半：跳过这条，继续往旧找
+            if hi_ - lo_ < min_h:
+                pass                      # 发丝缝：噪声，不画
+            elif i < n - 1 and min(l[i + 1:]) <= hi_:
+                pass                      # 价格触及缺口（影线也算）：即算回补，往旧找
             else:
-                bull = {"lo": lo_, "hi": hi_}
+                bull = {"lo": lo_, "hi": hi_, "i": i}
         if bear is None and h[i] < l[i - 2]:
             lo_, hi_ = h[i], l[i - 2]
-            if i < n - 1 and max(h[i + 1:]) >= (lo_ + hi_) / 2:
+            if hi_ - lo_ < min_h:
+                pass
+            elif i < n - 1 and max(h[i + 1:]) >= lo_:
                 pass
             else:
-                bear = {"lo": lo_, "hi": hi_}
+                bear = {"lo": lo_, "hi": hi_, "i": i}
         if bull is not None and bear is not None:
             break
     return [g for g in (bull, bear) if g]
@@ -658,15 +884,27 @@ def _bias(stat: dict) -> tuple:
         return "neutral", ["数据长度不足，方向判断保持观望。"], {}
     smc = _smc(stat)
     score, why = 0, []
+    # 大小趋势分级（用户定版：先分清哪些是大趋势、哪些是小趋势）——
+    # 日线大趋势用「趋势延续优先」口径（_htf_trend），权重 3；4h 小结构权重 1。
+    ht = _htf_trend(stat)
+    hst = ht.get("trend")
+    if hst == "bullish":
+        score += 3
+        why.append("日线大趋势：" + ht.get("txt", "多头结构"))
+    elif hst == "bearish":
+        score -= 3
+        why.append("日线大趋势：" + ht.get("txt", "空头结构"))
+    elif hst:
+        why.append("日线大趋势：" + (ht.get("txt") or "方向不明") + "，只算上下都有限的震荡")
     st = smc.get("structure")
     if st == "bullish":
-        score += 2
-        why.append(smc["structure_txt"])
+        score += 1
+        why.append("4h 小趋势：" + smc["structure_txt"])
     elif st == "bearish":
-        score -= 2
-        why.append(smc["structure_txt"])
+        score -= 1
+        why.append("4h 小趋势：" + smc["structure_txt"])
     else:
-        why.append(smc.get("structure_txt", "结构方向不明"))
+        why.append("4h 小趋势：结构方向不明")
     if smc.get("bos") == "bullish":
         score += 1
         why.append(smc["bos_txt"])
@@ -856,10 +1094,11 @@ def _plan_levels(stat: dict, bias: str, smc: dict = None) -> dict:
             lv["entry_px"] = ob_hi
             lv["anchor"] = f"多头 OB 下沿 {_fmt(ob_lo)} 下方 0.5% 缓冲，结构失效即离场"
         elif smc.get("ote_dir") == "up" and ote_lo is not None and ote_lo < price:
-            lv["entry"] = (f"· 入场：等回踩 OTE 窗口 {_fmt(ote_lo)} ~ {_fmt(ote_hi)}（斐波那契 0.618-0.705）分批接"
-                           f"（进价 {_fmt(ote_hi)}——上沿第一触点）")
+            ote_e = smc.get("ote_entry") or ote_hi
+            lv["entry"] = (f"· 入场：等回踩 OTE 窗口 {_fmt(ote_lo)} ~ {_fmt(ote_hi)}（斐波那契 0.62-0.79）分批接"
+                           f"（参考中间值进价 {_fmt(ote_e)}——取 0.702 位）")
             lv["stop"] = ote_lo * 0.99
-            lv["entry_px"] = ote_hi
+            lv["entry_px"] = ote_e
             lv["anchor"] = f"OTE 窗口下沿 {_fmt(ote_lo)} 下方 1% 缓冲，结构失效即离场"
         else:
             lv["entry"] = (f"· 入场：现价 {_fmt(price)} 附近轻仓试，"
@@ -906,7 +1145,17 @@ def _plan(stat: dict, bias: str, smc: dict = None) -> list:
                     "或入场更贴近止损再排计划"]
         rr_txt = f"，盈亏比 ≈ {rr:.1f}" if rr is not None else ""
         note = "（盈亏比一般，只试小仓）" if rr is not None and rr < 1.5 else ""
-        return [lv["entry"],
+        # 4h OTE 参考（用户定版 v1.5.59）：无论入场走 OB 还是 OTE，都要把 4h OTE 介绍清楚，
+        # 范围 0.62~0.79（斐波那契最优入场），一般用中间值 0.702 作入场位
+        ote_ref = ""
+        ol, oh, oe, od = ((smc or {}).get(x) for x in ("ote_lo", "ote_hi", "ote_entry", "ote_dir"))
+        if ol is not None and oh is not None:
+            side = "多头" if od == "up" else "空头"
+            ote_ref = (f"· 4h OTE 参考：最优入场区间取 0.62~0.79 斐波那契回撤（中间值 0.702 作入场），"
+                       f"当前{side} OTE 窗口 {_fmt(ol)}~{_fmt(oh)}（中间值 {_fmt(oe)}）——"
+                       f"{'回踩' if od == 'up' else '反抽'}到这附近再待命，盈亏比更优")
+        head = [ote_ref] if ote_ref else []
+        return head + [lv["entry"],
                 f"· 止盈：第一目标 {_fmt(lv['tp1'])}（{lv['tp_txt']}{rr_txt}）先减半{note}，破位续持有看日线级别空间",
                 _size_line(lv["entry_px"] or lv["price"], lv["stop"], bias, lv.get("anchor", ""))]
     return ["· 观望为主：多空信号打架时，不进场就是最好的仓位。",
@@ -1024,6 +1273,13 @@ def _human_story(stat: dict, smc: dict) -> str:
     else:
         p.append(f"这{span}基本就是 {_fmt(lo)} 到 {_fmt(hi)} 之间来回，目前 {chg90:+.0f}%，谈不上单边。")
     if smc:
+        # 大小趋势分级（用户定版）：先讲日线大趋势（趋势延续优先口径），再讲 4h 小趋势
+        ht = _htf_trend(stat)
+        hst = ht.get("trend")
+        if hst in ("bullish", "bearish") and ht.get("txt"):
+            p.append(f"先把级别分清楚：日线{ht['txt']}。")
+        elif hst:
+            p.append("先把级别分清楚：日线大趋势暂时没有方向，高点和低点在打架，属于区间市。")
         if smc.get("structure") == "bearish":
             p.append("拉 4 小时结构看，它一直处在「反弹一个比一个矮、下探一个比一个深」的节奏里，筹码在往下换手。")
         elif smc.get("structure") == "bullish":
@@ -1150,6 +1406,10 @@ def _view_story(stat: dict, bias: str, smc: dict) -> list:
 
     ote, ote_dir = smc.get("ote"), smc.get("ote_dir")
     olo, ohi = smc.get("ote_lo"), smc.get("ote_hi")
+    # 4h OTE 概念介绍（用户定版 v1.5.59）：先讲清楚 OTE 是什么、范围与入场取位
+    if olo is not None and ohi is not None:
+        oe = smc.get("ote_entry") or ohi
+        p.append(f"再看 4 小时的 OTE：Optimal Trade Entry（最优入场区），取这段腿斐波那契 0.62~0.79 的回撤窗口为黄金区间，一般用中间值 0.702 作入场位（当前窗口 {_fmt(olo)}~{_fmt(ohi)}，中间值约 {_fmt(oe)}）")
     if ote == "inside" and ote_dir == "up":
         p.append(f"价格正落在最近上涨腿的 OTE 窗口（{_fmt(olo)}~{_fmt(ohi)}）里，这是顺势做多的黄金回撤区")
     elif ote == "above" and ote_dir == "up":
@@ -1310,7 +1570,7 @@ def _pick_title(f: dict, smc: dict, bias: str) -> str:
                    f"{base} 的假突破刚收完门票，下一幕才是重点",
                    f"{base}：假突破之后一地鸡毛，先别接"]
     if smc.get("ote") == "inside" and bias == "long":
-        events += [f"{base}：0.618 的位置到了，这单我这么排",
+        events += [f"{base}：OTE 0.702 中间值到了，这单我这么排",
                    f"{base} 踩进黄金坑？先看完这 3 个条件再说"]
     ob = smc.get("ob")
     if ob and ob.get("low") is not None and ob.get("high") is not None:

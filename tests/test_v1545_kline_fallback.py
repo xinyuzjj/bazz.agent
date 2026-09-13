@@ -184,6 +184,159 @@ def test_draw_cover_4h_requires_k4h():
         pass
 
 
+def test_4h_chart_htf_trend_first():
+    """用户定版（v1.5.57→v1.5.58）：先判断大趋势（日线「趋势延续优先」口径），4h 图
+    只画顺大趋势的结构；框从结构 K 起向右延伸，不横跨整屏、也不止框一根 K。
+    反向 CHoCH OB 只在 4h 自身趋势已实体翻向（跌破结构最低点／升破最高点）时才画。
+    源码护栏。"""
+    src = (ROOT / "src" / "square_rich.py").read_text(encoding="utf-8-sig")
+    blk = src[src.index("def draw_cover("):src.index("def draw_cover_4h(")]
+    assert "大趋势优先" in blk, "SMC 标记缺「大趋势优先」逻辑"
+    assert "_htf_trend(stat)" in blk, "大趋势未走 _htf_trend（趋势延续优先口径）"
+    assert 'bx1=x1' in blk, "框未从结构 K 向右延伸"
+    assert "CHoCH" in blk, "顺趋势时缺小结构 CHoCH 反向 OB/OTE 标记逻辑"
+    assert "实体收盘跌破最低点" in blk and "broke4" in blk, \
+        "反向 OB 未按实体破结构最低/最高点区分态（用户定版：没实体破最低点不成立）"
+    assert "跌破后" in blk and "_dashed_rect" in blk, \
+        "未成立的反向 OB 缺失线框「跌破后的空头ob位」（用户指定：作跌破后做空点虚线标出）"
+
+
+# ---------------- v1.5.57：日线大趋势「趋势延续优先」（用户定版：实体破位才翻转） ----------------
+
+def _daily(bars):
+    return {"opens": [b[0] for b in bars], "highs": [b[1] for b in bars],
+            "lows": [b[2] for b in bars], "closes": [b[3] for b in bars],
+            "vols": [1.0] * len(bars), "times": list(range(len(bars)))}
+
+
+def _uptrend_bars():
+    """上涨→深回调出显著低点（最低价 90）→止跌回升：影线 94.5 捅破但未实体破锚。
+    尾巴用单调上升段，避免平段制造假摆动点。"""
+    bars = [(100, 102, 99, 101)] * 15
+    bars += [(101, 110, 100.5, 108)] * 5              # 拉升（摆动高点 110）
+    bars += [(108, 109, 90, 95)]                      # 深回调：摆动低点，最低价 90
+    bars += [(95, 96, 94.5, 95.5)]                    # 影线 94.5 < 锚 90？否——收盘 95.5 未破
+    bars += [(102 + i, 104 + i, 101 + i, 103 + i) for i in range(10)]
+    return bars
+
+
+def test_htf_trend_bullish_anchor_unbroken():
+    """用户口径（v1.5.58）：无实体收盘跌破最近显著低点的最低价 → 大趋势仍是多头，
+    影线捅破不算、高点走低只算调整；锚 = 摆动低点最低价（BTC 实例 76,165=wick）。"""
+    ht = square_rich._htf_trend({"k90": _daily(_uptrend_bars())})
+    assert ht["trend"] == "bullish", ht
+    assert abs(ht["anchor"] - 90.0) < 1e-9, f"锚不是摆动低点最低价：{ht}"
+    assert "回调" in ht["txt"], ht
+
+
+def test_htf_trend_flips_on_body_close():
+    """实体 K 收盘跌破锚（最低价 90）→ 上涨趋势失效，判空头。"""
+    bars = _uptrend_bars()[:-2] + [(103, 104, 89, 89.5), (89.5, 90, 88, 88.5)]
+    ht = square_rich._htf_trend({"k90": _daily(bars)})
+    assert ht["trend"] == "bearish", ht
+    assert "空头" in ht["txt"], ht
+
+
+def test_htf_trend_recent_high_does_not_flip():
+    """用户纠正（BTC 2026-09 实例）：上涨回调出新低点后再反弹出更高高点，最近显著
+    事件虽是摆动高点，但只要锚（最近显著低点最低价）未被实体收盘跌破，大趋势仍是
+    多头——旧版按「最近显著事件」定方向会误判空头。"""
+    bars = [(100, 102, 99, 101)] * 15
+    bars += [(101, 110, 100.5, 108)] * 5              # 拉升，高点 110
+    bars += [(108, 109, 90, 95)]                      # 深回调：摆动低点，最低价 90
+    bars += [(95, 96, 94.5, 95.5)]                    # 止跌
+    bars += [(96, 112, 95, 111)]                      # 强反弹：摆动高点（最近显著事件=高点）
+    bars += [(110 + i * 0.5, 111.5 + i * 0.5, 100 + i * 0.5, 101 + i * 0.5)
+             for i in range(7)]                       # 回调企稳缓升：实体全在 112 下方，锚 90 未破
+    ht = square_rich._htf_trend({"k90": _daily(bars)})
+    assert ht["trend"] == "bullish", ht
+    assert abs(ht["anchor"] - 90.0) < 1e-9, f"锚不是最近显著低点最低价：{ht}"
+
+
+def test_htf_trend_wick_through_anchor_not_flip():
+    """影线捅破锚（最低价 90）但实体收盘在锚上方 → 仍是多头（影线不算）。"""
+    bars = _uptrend_bars()[:-1] + [(101, 102, 89, 100)]
+    ht = square_rich._htf_trend({"k90": _daily(bars)})
+    assert ht["trend"] == "bullish", ht
+
+
+def test_htf_trend_bearish_mirror():
+    """镜像（用户口径 v1.5.58）：下跌→反弹出显著高点（最高价 110）→阴跌，但锚未被
+    实体收盘升破 → 大趋势仍是空头；影线捅破不算；锚 = 摆动高点最高价。"""
+    bars = [(100, 98, 101, 99)] * 15                  # 平段（摆动低 99 / 高 101）
+    bars += [(99, 90, 99.5, 92)] * 5                  # 下跌（摆动低点 90）
+    bars += [(92, 110, 91, 105)]                      # 强反弹：摆动高点，最高价 110
+    bars += [(105, 105.5, 104, 104.5)]                # 影线 105.5 < 锚 110，实体未破
+    bars += [(98 - i, 96 - i, 99 - i, 97 - i) for i in range(10)]   # 阴跌，未实体升破 110
+    ht = square_rich._htf_trend({"k90": _daily(bars)})
+    assert ht["trend"] == "bearish", ht
+    assert abs(ht["anchor"] - 110.0) < 1e-9, f"锚不是摆动高点最高价：{ht}"
+    assert "反弹" in ht["txt"], ht
+
+
+def test_htf_trend_bearish_flips_on_body_close():
+    """镜像翻转：实体 K 收盘升破锚（最高价 110）→ 下跌趋势失效，判多头。"""
+    bars = [(100, 98, 101, 99)] * 15
+    bars += [(99, 90, 99.5, 92)] * 5
+    bars += [(92, 110, 91, 105)]
+    bars += [(105, 105.5, 104, 104.5)]
+    bars += [(98 - i, 96 - i, 99 - i, 97 - i) for i in range(7)]
+    bars += [(96, 111, 95, 110.5), (110.5, 112, 110, 111.5)]        # 实体收盘升破 110
+    ht = square_rich._htf_trend({"k90": _daily(bars)})
+    assert ht["trend"] == "bullish", ht
+    assert "多头" in ht["txt"], ht
+
+
+# ---------------- v1.5.57：OTE 窗口数学（下降腿窗口曾倒置且位置全错） ----------------
+
+def _leg_k(down: bool):
+    """构造一条明确的摆动腿：down=True 高点100@20→低点78@50（下降腿），False 镜像上升腿。"""
+    n = 60
+    h, l, c = [], [], []
+    for i in range(n):
+        if down:
+            v = (90 + 10 * i / 20 if i <= 20 else
+                 100 - 22 * (i - 20) / 30 if i <= 50 else
+                 78 + 4 * (i - 50) / 9)
+        else:
+            v = (90 - 12 * i / 20 if i <= 20 else
+                 78 + 22 * (i - 20) / 30 if i <= 50 else
+                 100 - 4 * (i - 50) / 9)
+        h.append(v)
+        l.append(v - 1)
+        c.append(v)
+    if down:
+        l[50] = 78.0          # 摆动低点值（腿终点）
+    else:
+        l[20] = 78.0          # 摆动低点值（腿起点）
+    return {"opens": c[:], "highs": h, "lows": l, "closes": c}
+
+
+def test_ote_down_leg_window_upside_from_low():
+    """下降腿 100→78：窗口必须从终点低点向上返 0.62~0.79×22 = 91.64~95.38（用户定版 v1.5.59），
+    且 ote_lo < ote_hi（旧版从起点高点往下算 → 窗口倒置位置全错）；中间值 0.702×22=93.44。"""
+    smc = square_rich._smc({"k4h": _leg_k(down=True)})
+    assert smc.get("ote_dir") == "down", smc.get("ote_dir")
+    lo, hi = smc["ote_lo"], smc["ote_hi"]
+    assert abs(lo - (78 + 22 * 0.62)) < 0.3, f"ote_lo={lo}"
+    assert abs(hi - (78 + 22 * 0.79)) < 0.3, f"ote_hi={hi}"
+    assert lo < hi, f"窗口倒置：{lo} > {hi}"
+    assert abs(smc.get("ote_entry") - (78 + 22 * 0.702)) < 0.3, f"ote_entry={smc.get('ote_entry')}"
+
+
+def test_ote_up_leg_window_below_swing_high():
+    """上升腿 78→100：窗口 = 终点高点向下回撤 0.62~0.79×腿长（高点为分形取点，非整数，
+    容差 0.8）；中间值 0.702 落在窗口中部。"""
+    smc = square_rich._smc({"k4h": _leg_k(down=False)})
+    assert smc.get("ote_dir") == "up", smc.get("ote_dir")
+    lo, hi = smc["ote_lo"], smc["ote_hi"]
+    assert abs(lo - (100 - 22 * 0.79)) < 0.8, f"ote_lo={lo}"
+    assert abs(hi - (100 - 22 * 0.62)) < 0.8, f"ote_hi={hi}"
+    assert lo < hi, f"窗口倒置：{lo} > {hi}"
+    assert abs(smc.get("ote_entry") - (100 - 22 * 0.702)) < 0.8, f"ote_entry={smc.get('ote_entry')}"
+    assert lo < smc["ote_entry"] < hi, "中间值 0.702 必须落在 OTE 窗口内"
+
+
 # ---------------- runner ----------------
 
 def main():
