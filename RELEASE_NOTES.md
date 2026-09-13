@@ -1,6 +1,20 @@
-# BAZZ.AGENT v1.5.55
+# BAZZ.AGENT v1.5.56
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.56 更新要点（日线封面不标 SMC，4h 结构图单独标记）
+
+**用户要求**：日线图不需要标记 SMC，另生成一张 4 小时图标记出来。
+
+- `draw_cover` 增加 `kkey` / `smc_zones` 参数：日线封面（默认）**不画** SMC 标记；
+- 新增 [draw_cover_4h](src/square_rich.py)：4h 蜡烛 + 多头/空头 OB（红绿矩形框）、
+  FVG（最近 3 条）、OTE 窗口，矩形区间框只出现在这张图上；
+- compose 产物新增 `chart_4h.png`，短贴发布自动附图（cover + 24h + 4h，共 3 张）；
+- 4h 图高/低胶囊与信息卡文案标「近20日·4h」（120 根 4h ≈ 20 日），不与日线混淆；
+- k4h 不可用时静默跳过该图，不影响出稿。
+
+回归 fallback 14/14（新增 3 例：日线默认无标记护栏 / 4h 图出图 / 缺 k4h 报错）、
+styles 17/17、sizing 16/16 全绿。真实 BTC 实测：日线净版 + 4h 图 OB/FVG/OTE 框位清晰。
 
 ## 🆕 v1.5.55 更新要点（封面图叠加 SMC 区域标记：OB / FVG / OTE 矩形区间框，主图放大、量区压小）
 

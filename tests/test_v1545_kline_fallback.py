@@ -151,6 +151,39 @@ def test_draw_cover_rejects_empty_with_clear_error():
         assert "1d/4h/1h" in str(e), f"错误文案未说明降级链: {e}"
 
 
+# ---------------- v1.5.55：日线封面不标 SMC，4h 结构图单独标记 ----------------
+
+def test_daily_cover_defaults_no_smc():
+    """用户指定：日线图不需要标记 SMC。draw_cover 默认参数必须无标记。"""
+    import inspect
+    sig = inspect.signature(square_rich.draw_cover)
+    assert sig.parameters["smc_zones"].default is False, "日线封面默认不得标 SMC"
+    assert sig.parameters["kkey"].default == "k90", "日线封面默认取 k90"
+
+
+def test_draw_cover_4h_renders_with_zones():
+    """draw_cover_4h：k4h 可用 → 出图成功。"""
+    import os, tempfile
+    stat = {"symbol": "TESTUSDT", "market": "futures",
+            "k90": _bars(90), "k4h": _bars(120), "c24": _bars(30)["closes"],
+            "k90_label": "90日"}
+    out = tempfile.mkdtemp(prefix="bazz_t_")
+    p = square_rich.draw_cover_4h(stat, os.path.join(out, "c4h.png"))
+    assert os.path.isfile(p) and os.path.getsize(p) > 10_000, "4h 结构图未生成"
+
+
+def test_draw_cover_4h_requires_k4h():
+    """k4h 不可用 → 明确报错（compose 侧已 try/except 兜底跳过该图）。"""
+    import os, tempfile
+    stat = {"symbol": "TESTUSDT", "market": "futures", "k90": _bars(90),
+            "c24": _bars(30)["closes"], "k90_label": "90日"}
+    try:
+        square_rich.draw_cover_4h(stat, os.path.join(tempfile.mkdtemp(), "x.png"))
+        raise AssertionError("无 k4h 未拒绝出图")
+    except RuntimeError:
+        pass
+
+
 # ---------------- runner ----------------
 
 def main():

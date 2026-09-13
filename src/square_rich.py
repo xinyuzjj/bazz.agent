@@ -250,16 +250,20 @@ def _draw_footer(dr, W, H, chips):
         dr.text((x + 14, y + 31), val, font=_font(17, True), fill=color or TXT)
 
 
-def draw_cover(stat: dict, path: str) -> str:
-    """封面主图 1280x720：90d 蜡烛 + 成交量 + 关键位标注 + 底部信息条。"""
+def draw_cover(stat: dict, path: str, kkey: str = "k90", smc_zones: bool = False) -> str:
+    """主图 1280x720：蜡烛 + 成交量 + 关键位标注 + 底部信息条。
+
+    kkey="k90"（默认）= 日线封面；kkey="k4h" + smc_zones=True = 4h 结构图
+    （叠加 OB/FVG/OTE 矩形区间框）。日线封面不标 SMC（用户指定：日线不标，
+    另出一张 4h 图标记）。"""
     W, H = 1280, 720
-    k = stat.get("k90") or {}
+    k = stat.get(kkey) or {}
     o, h, l, c, v, t = (k.get("opens") or [], k.get("highs") or [], k.get("lows") or [],
                         k.get("closes") or [], k.get("vols") or [], k.get("times") or [])
     if len(c) < 5:
         raise RuntimeError("K 线数据不足（1d/4h/1h 均无可用数据），无法出图")
     # v1.5.45：降级周期时图上「90d 高/低」「90日区间」等文案跟随实际周期
-    lbl = stat.get("k90_label") or "90日"
+    lbl = (stat.get("k90_label") or "90日") if kkey == "k90" else "近20日·4h"
     img = Image.new("RGB", (W, H), BG)
     dr = ImageDraw.Draw(img)
     _vgrad(dr, 0, 0, W, H, (15, 20, 27), BG)   # 主区微渐变，避免死黑底
@@ -295,7 +299,7 @@ def draw_cover(stat: dict, path: str) -> str:
         vx = x0 + step * idx + step / 2
         dr.line([vx, y0, vx, y1], fill=_blend(GRID, BG, 0.45), width=1)
 
-    # —— SMC 区域标记（OB / FVG / OTE 半透明色带，画在蜡烛下层） —— #
+    # —— SMC 区域标记（OB / FVG / OTE 矩形区间框，仅 4h 结构图，画在蜡烛下层） —— #
     def _band(blo, bhi, col, lab, alpha=0.10):
         by0, by1 = py(bhi), py(blo)
         if by1 - by0 < 10:          # 最小可视高度：窄区间也要能看出是「框」
@@ -309,7 +313,7 @@ def draw_cover(stat: dict, path: str) -> str:
         dr.text((x0 + 8, ly), lab, font=_font(12, True), fill=_blend(col, TXT, 0.35))
 
     k4 = stat.get("k4h") or {}
-    if _k_usable(k4):
+    if smc_zones and _k_usable(k4):
         for d, col, lab in (("bullish", UP, "多头 OB"), ("bearish", DOWN, "空头 OB")):
             ob = _find_ob(k4, d)
             if ob:
@@ -389,6 +393,13 @@ def draw_cover(stat: dict, path: str) -> str:
 
     img.save(path, "PNG")
     return path
+
+
+def draw_cover_4h(stat: dict, path: str) -> str:
+    """4h 结构图：4h 蜡烛 + SMC 矩形区间框（多头/空头 OB、FVG、OTE）。
+
+    与日线封面同版式；SMC 标记只出现在这张图上（用户指定）。"""
+    return draw_cover(stat, path, kkey="k4h", smc_zones=True)
 
 
 def draw_24h(stat: dict, path: str) -> str:
@@ -1543,6 +1554,12 @@ def compose(symbol: str, market: str = "futures", style: str = None) -> dict:
         extra = draw_24h(stat, os.path.join(out_dir, "chart_24h.png"))
     except Exception:
         extra = ""
+    # v1.5.55：4h 结构图（SMC 矩形区间框只标在这张，日线封面不标）
+    try:
+        chart_4h = draw_cover_4h(stat, os.path.join(out_dir, "chart_4h.png")) \
+            if _k_usable(stat.get("k4h")) else ""
+    except Exception:
+        chart_4h = ""
 
     art = _article_full(stat, style)
     title, body, tags = art["title"], art["body"], art["tags"]
@@ -1571,5 +1588,6 @@ def compose(symbol: str, market: str = "futures", style: str = None) -> dict:
                   f, ensure_ascii=False, indent=1)
 
     return {"ok": True, "dir": out_dir, "title_file": title_f, "text_file": text_f,
-            "cover": cover, "extra_chart": extra, "tags": tags, "stats": stats,
+            "cover": cover, "extra_chart": extra, "chart_4h": chart_4h,
+            "tags": tags, "stats": stats,
             "style": art["style"], "style_label": art["style_label"]}
