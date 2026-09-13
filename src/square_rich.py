@@ -626,47 +626,43 @@ def _bias(stat: dict) -> tuple:
     return bias, why, smc
 
 
-# 仓位举例口径（v1.5.46 重设计）：本金 = 保证金；**开单名义由单笔风险预算 ÷ 止损距离反推**，
-# 杠杆 = 名义 ÷ 本金（封顶 10x）。止损贴结构时自然接近「100U 本金、10x、名义 1000U」；
-# 止损宽时自动缩名义，打止损永远只亏 ≈ 本金 10% —— 不再出现「亏 137% 再建议降到 1x」。
+# 仓位举例口径（v1.5.47 回归用户口径）：本金 = 保证金，10x 杠杆 → 名义 1000U。
+# **止损只由 SMC 结构决定**（OB 下沿/OTE 下沿/摆动低点下方缓冲 = 结构失效位），
+# 不用风险预算去反推止损或仓位；打止损亏多少按结构止损**如实报数**，
+# 偏重（> 本金 10%）时附一句「把名义降到多少」的稳妥建议，仅供参考。
 _CAPITAL_U = 100          # 举例本金（U）= 保证金
-_LEVERAGE = 10            # 举例杠杆上限
-_RISK_TARGET_U = 10       # 单笔风险预算（U）= 本金的 10%
+_LEVERAGE = 10            # 举例杠杆
+_RISK_TARGET_U = 10       # 本金的 10%：只用来判断「偏重」，不参与定止损/定仓位
 
 
-def _size_line(entry: float, stop: float, direction: str) -> str:
-    """仓位算法（SMC 风险口径，v1.546 重设计）。
+def _size_line(entry: float, stop: float, direction: str, anchor: str = "") -> str:
+    """仓位算法（v1.5.47 回归用户口径 + SMC 结构止损）。
 
-    修复记录（2026-09-13，用户实测）：旧实现两个硬伤 ——
-      ① 止损距离用**现价**算：计划明明是「挂 OB 区 0.1155~0.128 限价接」，却按现价
-         0.1332 算出止损距离 13.7%；真按计划在 OB 区进场，距离只有约 5%；
-      ② 名义写死 本金×10x = 1000U，跟止损距离完全无关 → 打止损亏 ≈ 137U（本金 137%），
-         末尾只好建议「降到 1x」—— 把整单推翻，等于没设计。
-    现在按 SMC 的正确顺序：**先定结构位（入场/止损），再按风险预算反推仓位**：
-      距离 = |入场 - 止损| / 入场（从入场价算，不是现价）；
-      名义 = 单笔风险 10U ÷ 距离；杠杆 = 名义 ÷ 本金，封顶 10x；
-      止损贴结构（≈1%）时杠杆自然贴近 10x/1000U 的演示口径；止损宽时名义自动缩小，
-      打止损恒亏 ≈10U。距离宽到连 1x 都装不下风险预算（>10%）→ 如实建议放弃这笔。
+    修复记录：
+      · 2026-09-12（v1.5.40）：从「单笔只亏 5U」反推名义再除 10 得保证金，数字互相打架；
+      · 2026-09-13（v1.5.46）：距离改从入场价算（正确，保留），但把口径改成了
+        「按单笔风险 10U 反推名义」→ 止损被风险预算绑架、永远「恒亏 ≈10U」——
+        用户纠正：**止损必须按 SMC 结构失效位设置，风险预算不能反推止损**；
+      · v1.5.47：止损只看结构（锚位文案由 _plan_levels 传入），仓位回归
+        「本金 = 保证金，10x → 名义 1000U」演示口径；打止损亏损如实报数，
+        超过本金 10% 时附「降名义」建议（可选参考，不改变止损位）。
     """
     dist = abs(entry - stop) / entry * 100
     if dist < 0.5:
         dist = 0.5
     d = dist / 100
     side = "做多" if direction == "long" else "做空"
-    head = (f"· 仓位算法：入场 {_fmt(entry)}、止损 {_fmt(stop)}（距离 {dist:.1f}%）；"
-            f"按单笔风险 = 本金 10%（{_RISK_TARGET_U:.0f}U）反推 → ")
-    notional = _RISK_TARGET_U / d
-    lev = notional / _CAPITAL_U
-    if lev < 1:
-        # 风险预算装不下：止损距离比「1x 亏 10%」还宽，SMC 的答案是不做这笔
-        return head + (f"{side}这笔放弃 —— 止损距离 {dist:.1f}% 宽到连 1x 都要亏 "
-                       f"{_CAPITAL_U * d:.0f}U（本金的 {d * 100:.0f}%），等更贴近结构位的入场再上。")
-    if lev > _LEVERAGE:
-        lev = float(_LEVERAGE)
-        notional = _CAPITAL_U * lev
-    loss = notional * d
-    return head + (f"{side}开单名义 ≈ {notional:.0f}U（保证金 {_CAPITAL_U:.0f}U，约 {lev:.1f}x），"
-                   f"打止损亏 ≈ {loss:.1f}U。")
+    notional = _CAPITAL_U * _LEVERAGE                    # 开单名义 = 本金 × 杠杆
+    loss = notional * d                                  # 打到结构止损的亏损（如实）
+    anchor_txt = f"{anchor}，距入场 {dist:.1f}%）" if anchor else f"距入场 {dist:.1f}%）"
+    txt = (f"· 仓位算法：{_CAPITAL_U}U 本金 = {_CAPITAL_U}U 保证金，{_LEVERAGE}x 杠杆 → "
+           f"{side}开单名义 ≈ {notional:.0f}U；止损 {_fmt(stop)}（{anchor_txt}，"
+           f"打止损亏 ≈ {loss:.1f}U")
+    if loss > _RISK_TARGET_U:                            # 超过本金 10% → 给降名义建议（可选）
+        n2 = _RISK_TARGET_U / d
+        txt += (f"（占本金 {loss / _CAPITAL_U * 100:.0f}%，偏重；想稳一点把名义降到 ≈{n2:.0f}U，"
+                f"单笔亏损回到本金 10% 左右，止损位不动）")
+    return txt + "。"
 
 
 def _plan_levels(stat: dict, bias: str, smc: dict = None) -> dict:
@@ -694,7 +690,9 @@ def _plan_levels(stat: dict, bias: str, smc: dict = None) -> dict:
           "entry": None, "stop": None, "tp1": None, "tp_txt": "",
           # entry_px：计算止损距离/盈亏比用的**入场参考价**（挂区间限价时取区中位），
           # v1.5.46 起 _size_line 从入场价算距离，不再用现价
-          "entry_px": None}
+          "entry_px": None,
+          # anchor：止损的 SMC 结构锚位说明（v1.5.47）——止损只看结构失效位
+          "anchor": ""}
 
     if bias == "long":
         if ob_lo and ob_hi and ob_lo < price:
@@ -702,15 +700,18 @@ def _plan_levels(stat: dict, bias: str, smc: dict = None) -> dict:
                            f"现价 {_fmt(price)} 直接追的盈亏比一般")
             lv["stop"] = ob_lo * 0.995
             lv["entry_px"] = (ob_lo + ob_hi) / 2
+            lv["anchor"] = f"多头 OB 下沿 {_fmt(ob_lo)} 下方 0.5% 缓冲，结构失效即离场"
         elif smc.get("ote_dir") == "up" and ote_lo is not None and ote_lo < price:
             lv["entry"] = f"· 入场：等回踩 OTE 窗口 {_fmt(ote_lo)} ~ {_fmt(ote_hi)}（斐波那契 0.618-0.705）分批接"
             lv["stop"] = ote_lo * 0.99
             lv["entry_px"] = (ote_lo + ote_hi) / 2
+            lv["anchor"] = f"OTE 窗口下沿 {_fmt(ote_lo)} 下方 1% 缓冲，结构失效即离场"
         else:
             lv["entry"] = (f"· 入场：现价 {_fmt(price)} 附近轻仓试，"
                            f"或等 4h 回踩 {_fmt(r10_lo*0.995)}（近 10 根低点下方）确认支撑")
             lv["stop"] = r10_lo * 0.99
             lv["entry_px"] = price
+            lv["anchor"] = "近 10 根摆动低点下方 1% 缓冲，摆动结构失效即离场"
         lv["tp1"] = smc["sh_v"][-1] if smc.get("sh_v") else max(k["highs"][-30:])
         lv["tp_txt"] = "4h 前高/摆动高点"
     elif bias == "short":
@@ -718,18 +719,20 @@ def _plan_levels(stat: dict, bias: str, smc: dict = None) -> dict:
             lv["entry"] = f"· 入场：优先挂 {_fmt(ob_lo)} ~ {_fmt(ob_hi)} 的空头 OB 区反弹接（限价），不追空"
             lv["stop"] = ob_hi * 1.005
             lv["entry_px"] = (ob_lo + ob_hi) / 2
+            lv["anchor"] = f"空头 OB 上沿 {_fmt(ob_hi)} 上方 0.5% 缓冲，结构失效即离场"
         else:
             lv["entry"] = f"· 入场：反弹到 {_fmt(r10_hi*1.005)}（近 10 根高点上方）再空，不追空"
             lv["stop"] = r10_hi * 1.01
             lv["entry_px"] = price
+            lv["anchor"] = "近 10 根摆动高点上方 1% 缓冲，摆动结构失效即离场"
         lv["tp1"] = smc["sl_v"][-1] if smc.get("sl_v") else min(k["lows"][-30:])
         lv["tp_txt"] = "4h 前低/摆动低点"
     return lv
 
 
 def _plan(stat: dict, bias: str, smc: dict = None) -> list:
-    """仓位/点位方案（SMC 风险口径：止损锚结构失效位，单笔风险 ≤ 本金 10%，
-    仓位由风险预算 ÷ 止损距离反推）。点位基于 4h SMC：OB/OTE/摆动点。"""
+    """仓位/点位方案（v1.5.47：止损只由 SMC 结构失效位决定；仓位口径
+    本金 = 保证金、10x → 名义 1000U，打止损亏损如实报数）。点位基于 4h SMC：OB/OTE/摆动点。"""
     lv = _plan_levels(stat, bias, smc)
     if not lv:
         return ["· 数据不足，给不出靠谱点位，宁可错过不做没把握的。"]
@@ -743,7 +746,7 @@ def _plan(stat: dict, bias: str, smc: dict = None) -> list:
                 rr = f"，盈亏比 ≈ {rew / risk:.1f}"
         return [lv["entry"],
                 f"· 止盈：第一目标 {_fmt(lv['tp1'])}（{lv['tp_txt']}{rr}）先减半，破位续持有看日线级别空间",
-                _size_line(lv["entry_px"] or lv["price"], lv["stop"], bias)]
+                _size_line(lv["entry_px"] or lv["price"], lv["stop"], bias, lv.get("anchor", ""))]
     return ["· 观望为主：多空信号打架时，不进场就是最好的仓位。",
             f"· 若非要动：向上突破 {_fmt(lv['r10_hi']*1.01)} 小仓跟多 / 跌破 {_fmt(lv['r10_lo']*0.99)} 小仓跟空，"
             "严格止损；仓位照「本金 = 保证金、开单名义 = 本金 × 杠杆」算，方向没走出来之前别上满。"]
@@ -1145,7 +1148,7 @@ def _style_review(f: dict, stat: dict) -> tuple:
         L += [_news_sentence(f["news"]), ""]
     L.append("我的看法（4 小时 SMC 视角，技术面推测不构成建议）：")
     L += [f"· {w.rstrip('。')}。" for w in f["view"]]
-    L += ["", "真要动手的话，我是这么安排的（100U 本金、单笔风险压在本金 10%，SMC 风险口径，仅演示算法）："]
+    L += ["", "真要动手的话，我是这么安排的（100U 本金、10x 杠杆举例；止损只看 SMC 结构失效位，仅演示算法）："]
     L += f["plan"]
     L.append(f["invalid"])
     L += ["", "仓位比观点重要，活着比赚钱重要。以上全是个人思路，不构成投资建议，DYOR。"]
@@ -1200,7 +1203,7 @@ def _style_qa(f: dict, stat: dict) -> tuple:
     qa("合约和情绪面呢？", (mb + "。") if mb else "这块今天没什么可说的，略过。")
     if f["news"]:
         qa("消息面在说什么？", _news_sentence(f["news"]))
-    qa("那具体怎么下手？", "（100U 本金、单笔风险压在本金 10%，SMC 风险口径，仅演示算法）\n" + "\n".join(f["plan"]))
+    qa("那具体怎么下手？", "（100U 本金、10x 杠杆举例；止损只看 SMC 结构失效位，仅演示算法）\n" + "\n".join(f["plan"]))
     qa("什么情况算你看错了？", f["invalid"])
     L += ["问完了。不构成投资建议，DYOR。"]
     return title, L + _footer(base)
@@ -1231,7 +1234,7 @@ def _style_blunt(f: dict, stat: dict) -> tuple:
         L += ["", f"盘外：{mb}。"]
     if f["news"]:
         L += ["", "消息：" + _news_sentence(f["news"])]
-    L += ["", "方案（100U 本金、单笔风险压在本金 10%，SMC 风险口径，仅演示算法）："]
+    L += ["", "方案（100U 本金、10x 杠杆举例；止损只看 SMC 结构失效位，仅演示算法）："]
     L += f["plan"]
     L.append(f["invalid"])
     L += ["", "不构成投资建议。"]

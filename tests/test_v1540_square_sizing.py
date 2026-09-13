@@ -1,29 +1,19 @@
-"""v1.5.46 回归测试：仓位算法按 SMC 止盈止损设计（风险预算反推仓位）。
+"""v1.5.47 回归测试：止损只按 SMC 结构失效位设置，仓位回归用户演示口径。
 
-用户现场（2026-09-13，承接 v1.5.40 口径）
+用户现场（2026-09-13，两轮反馈叠加）
 --------------------------------------------------
-用户贴回新一版「仓位算法」并指出「止损不对，没有按照 SMC 的止盈止损来设计」：
+① v1.5.46 之前：挂 OB 限价接却按现价算止损距离 13.7%、名义写死 1000U → 亏 137%；
+② v1.5.46 改成了「按单笔风险 10U 反推名义」→ 止损被风险预算绑架、
+   变成「打止损恒亏 ≈10U」。用户明确纠正：**止损不要恒亏 10U，
+   一定要按 SMC 的止损来设置**（结构失效位定止损，风险预算不许反推）。
 
-```
-· 入场：优先挂 0.1155 ~ 0.128 的多头 OB 区回踩接（限价），现价 0.1332 直接追的盈亏比一般
-· 仓位算法：100U 本金 = 100U 保证金，10x 杠杆 → 做多开单名义 ≈ 1000U；
-  止损位 0.1149（距离 13.7%），打止损亏 ≈ 137.2U（占本金 137%，偏重；
-  想稳一点把杠杆降到 1x，名义 ≈ 100U、亏 ≈ 13.7U）
-```
-
-两层硬伤：
-
-  ① **止损距离用现价算**：计划明明是挂 OB 区限价接（0.1155~0.128），
-     却按现价 0.1332 算出 13.7% 距离——真按计划进场距离只有约 5%；
-  ② **名义写死 本金×10x**，与止损距离无关 → 亏 137% 再建议「降到 1x」，
-     把整单推翻，等于没按 SMC 设计。
-
-SMC 正确顺序：**先定结构位（入场 = OB 区中位、止损 = OB 下沿下方缓冲），
-再按单笔风险预算（本金 10% = 10U）反推仓位**：
-距离从入场价算；名义 = 10U ÷ 距离；杠杆 = 名义 ÷ 本金，封顶 10x；
-止损贴结构（≈1%）时自然贴近「10x / 1000U」演示口径，止损宽时名义自动缩小，
-打止损恒亏 ≈10U；距离宽到连 1x 都装不下（>10%）→ 如实建议放弃这笔。
-止盈行给出盈亏比（也是从入场价算）。
+v1.5.47 最终口径：
+  · 止损 = SMC 结构失效位（多头 OB 下沿 / OTE 下沿 / 摆动低点下方缓冲；空头镜像），
+    锚位说明（anchor）随行输出，风险预算不参与定止损；
+  · 止损距离从**入场参考价**算（OB/OTE 区限价取区中位）——v1.5.46 的正确修复保留；
+  · 仓位 = 「100U 本金 = 100U 保证金，10x 杠杆 → 名义 1000U」演示口径；
+  · 打止损亏损按结构止损**如实报数**（1000U × 距离），超过本金 10% 时附
+    「把名义降到 ≈NU」的稳妥建议（仅供参考，止损位不动）。
 
 离线运行：纯函数测试，不联网、不写盘。
 运行：python tests/test_v1540_square_sizing.py
@@ -39,8 +29,8 @@ sys.path.insert(0, str(ROOT / "src"))
 SRC_PATH = ROOT / "src" / "square_rich.py"
 
 CAPITAL = 100          # 举例本金 = 保证金
-LEVERAGE = 10          # 杠杆上限
-RISK_U = 10            # 单笔风险预算 = 本金 10%
+LEVERAGE = 10          # 举例杠杆
+RISK_U = 10            # 本金 10%：只用于「偏重」判断与降名义建议
 
 # 用户贴出来的那行原文（错的）。留着当「判据必须能拒绝它」的标尺。
 LEGACY_SIZING_LINE = (
@@ -76,70 +66,76 @@ def _size_src() -> str:
 
 # ---------------- 判据：交给它一行「仓位算法」，不合格就抛 ----------------
 
-def _assert_sizing_consistent(line: str):
-    """SMC 风险口径判据：读者拿行内数字必须能复算，且亏损被压在风险预算内。"""
+def _assert_sizing_consistent(line: str, require_anchor: bool = False):
+    """v1.5.47 判据：演示口径 + 结构止损 + 如实报数 + 可选降名义建议。"""
     assert "仓位算法" in line, f"这行不是仓位算法：{line}"
-    m = re.search(r"入场 ([\d,.]+)、止损 ([\d,.]+)（距离 ([\d.]+)%）", line)
-    assert m, f"缺「入场/止损/距离」结构位三元组：{line}"
-    entry, stop, dist = _num(m.group(1)), _num(m.group(2)), float(m.group(3))
-    # ① 距离必须从入场价算（不是现价）——复算对得上
-    assert abs(abs(entry - stop) / entry * 100 - dist) < 0.15, \
-        f"距离不是从入场价算的：{line}"
-
-    if "放弃" in line:
-        # 止损宽到连 1x 都装不下风险预算 → 不给仓位，且必须说明原因
-        assert dist > 10, f"未超 10% 却建议放弃：{line}"
-        assert "名义 ≈" not in line, f"放弃的仓位不该再给名义：{line}"
-        return
-
-    m2 = re.search(r"名义 ≈ ([\d,.]+)U（保证金 (\d+)U，约 ([\d.]+)x），打止损亏 ≈ ([\d.]+)U", line)
-    assert m2, f"缺「名义/保证金/杠杆/亏损」四元组：{line}"
-    notional, margin, lev, loss = _num(m2.group(1)), _num(m2.group(2)), float(m2.group(3)), float(m2.group(4))
-    # ② 风险预算反推：名义 ≈ 10U ÷ 距离（距离用入场/止损价复算，封顶 1000U）
-    dist_recalc = abs(entry - stop) / entry * 100
-    expect = min(RISK_U / (dist_recalc / 100), CAPITAL * LEVERAGE)
-    assert abs(notional - expect) < 1.5, f"名义不是 风险预算÷距离（期望 ≈{expect:.0f}U）：{line}"
-    assert margin == CAPITAL, f"保证金不是本金 {CAPITAL}U：{line}"
-    assert lev <= LEVERAGE + 1e-9, f"杠杆超过上限 {LEVERAGE}x：{line}"
-    assert abs(lev - notional / CAPITAL) < 0.11, f"杠杆 ≠ 名义÷本金：{line}"
-    # ③ 打止损亏损被压在本金 10% 内（封顶时更小）
-    assert loss <= RISK_U + 0.6, f"打止损亏 {loss}U，没压在风险预算内：{line}"
-    assert abs(loss - notional * dist / 100) < 0.8, f"亏损与 名义×距离 对不上：{line}"
-    # ④ 文案卫生：旧口径的措辞不许回来
+    # ① 演示口径：本金 = 保证金，10x → 名义 1000U（不许被风险预算绑架）
+    assert f"{CAPITAL}U 本金 = {CAPITAL}U 保证金，{LEVERAGE}x 杠杆" in line, f"演示口径丢失：{line}"
+    m_notional = re.search(r"开单名义 ≈ ([\d,.]+)U；", line)
+    assert m_notional, f"缺开单名义：{line}"
+    assert _num(m_notional.group(1)) == CAPITAL * LEVERAGE, f"名义 ≠ 本金×杠杆：{line}"
+    # ② 结构止损 + 距离：止损价后必须带说明，距离如实（贪婪匹配最后一个「，距入场」，
+    #    兼容锚位说明本身含逗号的情况；无锚位时兜底「（距入场 N%）」）
+    m = re.search(r"止损 ([\d,.]+)（(.*)，距入场 ([\d.]+)%）", line)
+    if m:
+        stop, anchor, dist = _num(m.group(1)), m.group(2).strip(), float(m.group(3))
+    else:
+        m = re.search(r"止损 ([\d,.]+)（距入场 ([\d.]+)%）", line)
+        assert m, f"缺「止损（锚位说明，距入场 N%）」结构：{line}"
+        stop, anchor, dist = _num(m.group(1)), "", float(m.group(2))
+    if require_anchor:
+        assert anchor and ("失效" in anchor or "摆动" in anchor), \
+            f"止损缺 SMC 结构锚位说明：{anchor!r}"
+    # ③ 亏损如实：打止损亏 = 名义 × 距离（结构止损是多少就报多少，不凑数）
+    m_loss = re.search(r"打止损亏 ≈ ([\d,.]+)U", line)
+    assert m_loss, f"缺打止损亏损：{line}"
+    loss = _num(m_loss.group(1))
+    assert abs(loss - CAPITAL * LEVERAGE * dist / 100) < 0.8, \
+        f"亏损与 名义×距离 对不上：{line}"
+    # ④ 偏重时：降名义建议必须让亏损回到本金 10% 左右，且止损位不动
+    if "偏重" in line:
+        m2 = re.search(r"名义降到 ≈\s*([\d,.]+)U", line)
+        assert m2, f"偏重但没给降名义建议：{line}"
+        n2 = _num(m2.group(1))
+        expect_n2 = RISK_U / (dist / 100)
+        assert abs(n2 - expect_n2) < 2, f"建议名义不是 10U÷距离（期望 ≈{expect_n2:.0f}U）：{line}"
+        assert abs(n2 * dist / 100 - RISK_U) < 1.2, f"建议名义打止损仍不 ≈10U：{line}"
+        assert "止损位不动" in line, f"降名义建议不得动摇结构止损：{line}"
+    else:
+        assert loss <= RISK_U + 0.1, f"亏损 {loss}U 超本金 10% 却没标「偏重」：{line}"
+    # ⑤ 文案卫生：旧口径措辞不许回来
     assert line.count("保证金") == 1, f"「保证金」出现多次：{line}"
-    for bad in ("单笔亏 5U", "10x 占保证金", "偏重", "把杠杆降到", "本金 = 100U 保证金，10x"):
+    for bad in ("单笔亏 5U", "10x 占保证金", "把杠杆降到", "按单笔风险", "恒亏", "反推", "放弃"):
         assert bad not in line, f"旧口径措辞「{bad}」回归：{line}"
 
 
-# ---------------- 1. 核心口径：止损贴结构 → 10x/1000U；止损宽 → 自动缩仓 ----------------
+# ---------------- 1. 演示口径：名义恒为 本金×10x，止损只影响报数 ----------------
 
-def test_tight_stop_reaches_demo_leverage():
-    """止损 0.5%：10U ÷ 0.5% = 2000U 超上限 → 封顶 10x/1000U（用户演示口径）。"""
+def test_demo_headline_and_light_loss():
+    """止损 0.5%：名义 1000U，打止损亏 5U ≤ 10U → 无「偏重」建议。"""
     line = _mod()._size_line(100.0, 99.5, "long")
-    assert "名义 ≈ 1000U" in line and "约 10.0x" in line, line
+    assert "开单名义 ≈ 1000U" in line, line
     assert "打止损亏 ≈ 5.0U" in line, line
+    assert "偏重" not in line, line
     _assert_sizing_consistent(line)
 
 
-def test_normal_stop_sizes_from_risk_budget():
-    """止损 1.6%（入场 2535.94 / 止损 2495.06）：名义 = 10 ÷ 1.6% ≈ 625U，亏 ≈ 10U。"""
-    line = _mod()._size_line(2535.94, 2495.06, "long")
-    _assert_sizing_consistent(line)
-    assert "打止损亏 ≈ 10.0U" in line, line
+def test_structural_stop_reports_loss_honestly():
+    """用户素材：OB 中位 0.1218 入场、结构止损 0.1149 → 距离 5.7%，10x 亏 ≈57U，如实报数并给建议。"""
+    anchor = "多头 OB 下沿 0.1155 下方 0.5% 缓冲，结构失效即离场"
+    line = _mod()._size_line(0.12175, 0.1149, "long", anchor)
+    assert anchor in line, f"结构锚位说明丢失：{line}"
+    assert "打止损亏 ≈ 56.3U" in line, line
+    assert "偏重" in line and "止损位不动" in line, line
+    _assert_sizing_consistent(line, require_anchor=True)
 
 
-def test_wide_stop_shrinks_notional():
-    """止损 8%：名义 = 10 ÷ 8% = 125U（1.2x），打止损仍只亏 ≈10U —— 不再出现亏 137%。"""
-    line = _mod()._size_line(100.0, 92.0, "long")
-    _assert_sizing_consistent(line)
-    assert "125" in line, line
-
-
-def test_too_wide_stop_says_skip():
-    """用户实测那个场景（0.1332 现价挂 OB、止损 0.1149）：距离 >10% → 如实建议放弃。"""
-    line = _mod()._size_line(0.1332, 0.1149, "long")
-    _assert_sizing_consistent(line)
-    assert "放弃" in line, line
+def test_advice_notional_restores_risk_to_ten_percent():
+    """建议名义 = 10U ÷ 距离：验证建议本身自洽（0.12175/0.1149 → ≈176U → 亏 ≈10U）。"""
+    line = _mod()._size_line(0.12175, 0.1149, "long", "多头 OB 下沿 0.1155 下方 0.5% 缓冲，结构失效即离场")
+    m = re.search(r"名义降到 ≈\s*([\d,.]+)U", line)
+    n2 = _num(m.group(1))
+    assert abs(n2 * (0.12175 - 0.1149) / 0.12175 - RISK_U) < 1.2, f"建议名义自洽失败：{n2}"
 
 
 def test_direction_word_follows_bias():
@@ -147,7 +143,7 @@ def test_direction_word_follows_bias():
     assert "做空开单名义" in _mod()._size_line(100.0, 103.0, "short")
 
 
-# ---------------- 2. SMC 结构位：距离从入场价算，不从现价算 ----------------
+# ---------------- 2. SMC 结构位：止损锚结构、距离从入场价算 ----------------
 
 def _k(closes, lows, highs, n=120):
     return {"closes": (closes * (n // len(closes) + 1))[:n],
@@ -155,8 +151,8 @@ def _k(closes, lows, highs, n=120):
             "highs": (highs * (n // len(highs) + 1))[:n]}
 
 
-def test_ob_entry_distance_uses_entry_not_price():
-    """OB 限价接：入场参考价 = OB 区中位，止损 = OB 下沿下方；距离必须明显小于「现价→止损」。"""
+def test_ob_stop_anchored_to_structure_and_distance_from_entry():
+    """OB 限价接：止损 = OB 下沿下方缓冲（结构），距离 = 入场参考价到止损（远小于现价距离）。"""
     sr = _mod()
     stat = {"symbol": "TESTUSDT",
             "k90": _k([0.12, 0.125], [0.10, 0.11], [0.14, 0.135], 90),
@@ -166,6 +162,8 @@ def test_ob_entry_distance_uses_entry_not_price():
     smc = {"ob": {"low": 0.1155, "high": 0.128}, "sh_v": [0.162]}
     lv = sr._plan_levels(stat, "long", smc)
     assert lv, "plan_levels 不应返回空"
+    assert abs(lv["stop"] - 0.1155 * 0.995) < 1e-9, f"止损没锚在 OB 下沿下方：{lv['stop']}"
+    assert lv["anchor"] and "OB 下沿" in lv["anchor"], f"缺结构锚位说明：{lv.get('anchor')}"
     assert lv["entry_px"] is not None and 0.1155 <= lv["entry_px"] <= 0.128, \
         f"入场参考价不在 OB 区内：{lv.get('entry_px')}"
     dist_entry = abs(lv["entry_px"] - lv["stop"]) / lv["entry_px"] * 100
@@ -173,7 +171,10 @@ def test_ob_entry_distance_uses_entry_not_price():
     assert dist_entry < dist_price, f"入场价距离({dist_entry:.1f}%)应小于现价距离({dist_price:.1f}%)"
     plan = sr._plan(stat, "long", smc)
     sizing = [l for l in plan if l.startswith("· 仓位算法：")][0]
-    _assert_sizing_consistent(sizing)
+    _assert_sizing_consistent(sizing, require_anchor=True)
+    # 距离必须按入场参考价算：行内数字 = |entry_px - stop| / entry_px
+    inline_dist = float(re.search(r"距入场 ([\d.]+)%", sizing).group(1))
+    assert abs(inline_dist - dist_entry) < 0.15, f"距离不是从入场价算的：{sizing}"
     # 止盈行带盈亏比（从入场价算）
     tp = [l for l in plan if l.startswith("· 止盈：")][0]
     assert re.search(r"盈亏比 ≈ [\d.]+", tp), f"止盈行缺盈亏比：{tp}"
@@ -197,19 +198,24 @@ def test_legacy_line_contains_the_wrong_numbers():
 
 # ---------------- 4. 源码护栏 ----------------
 
-def test_source_sizes_from_risk_budget():
+def test_source_keeps_demo_notional_and_structural_stop():
     src = _size_src()
-    assert "notional = _RISK_TARGET_U / d" in src, "名义没有按 风险预算÷距离 反推"
-    assert "_CAPITAL_U * _LEVERAGE" not in src, "名义仍在写死 本金×10x"
-    assert "偏重" not in src and "把杠杆降到" not in src, "旧的降杠杆建议还在"
+    assert "notional = _CAPITAL_U * _LEVERAGE" in src, "名义不再按 本金×杠杆 演示口径"
+    assert "notional = _RISK_TARGET_U / d" not in src, "名义仍被风险预算反推（恒亏 10U 口径回归）"
+    assert "anchor" in src, "止损没有结构锚位说明参数"
+    assert "这笔放弃" not in src, "v1.5.46 的「放弃」分支还在"
+    # _plan 必须把 anchor 传给 _size_line
+    src_all = SRC_PATH.read_text(encoding="utf-8")
+    plan_src = src_all[src_all.index("def _plan("):src_all.index("def ", src_all.index("def _plan(") + 10)]
+    assert 'lv.get("anchor", "")' in plan_src, "_plan 没把结构锚位说明传给 _size_line"
 
 
-def test_plan_uses_entry_px_for_sizing():
-    src = (SRC_PATH.read_text(encoding="utf-8"))
-    plan_src = src[src.index("def _plan("):src.index("def ", src.index("def _plan(") + 10)]
-    assert 'lv["entry_px"] or lv["price"]' in plan_src, "_plan 没把入场参考价传给 _size_line"
-    lv_src = src[src.index("def _plan_levels"):src.index("def _plan(")]
-    assert 'lv["entry_px"] = (ob_lo + ob_hi) / 2' in lv_src, "OB 入场没取区中位当入场参考价"
+def test_plan_levels_anchor_covers_all_branches():
+    """每个入场分支都必须给出 SMC 结构锚位说明（止损不能没有依据）。"""
+    src_all = SRC_PATH.read_text(encoding="utf-8")
+    lv_src = src_all[src_all.index("def _plan_levels"):src_all.index("def _plan(")]
+    anchors = lv_src.count('lv["anchor"] = ')
+    assert anchors == 5, f"入场分支锚位说明应 5 处（OB多/OTE多/摆动多/OB空/摆动空），实际 {anchors}"
 
 
 # ---------------- 5. 端到端 ----------------
@@ -227,7 +233,7 @@ def test_article_end_to_end_sizing_line_is_sane():
     _, body, _ = sr._article(stat)
     sizing = [l for l in body.splitlines() if l.startswith("· 仓位算法：")]
     assert len(sizing) == 1, f"仓位算法应恰好一行，实际 {len(sizing)} 行"
-    _assert_sizing_consistent(sizing[0])
+    _assert_sizing_consistent(sizing[0], require_anchor=True)
     # 仓位算法里的止损价必须和反向剧本一致（v1.5.39 的约束不能回退）
     inv = [l for l in body.splitlines() if l.startswith("· 反向剧本：")][0]
     stop_txt = re.search(r"止损 ([\d,]+\.\d+)", sizing[0]).group(1)
