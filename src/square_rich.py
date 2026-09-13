@@ -753,15 +753,22 @@ def _plan(stat: dict, bias: str, smc: dict = None) -> list:
     if not lv:
         return ["· 数据不足，给不出靠谱点位，宁可错过不做没把握的。"]
     if bias in ("long", "short"):
-        # 盈亏比从入场参考价算（挂区间限价取区中位）；算不出就不写，不硬凑
-        rr = ""
-        if lv.get("entry_px") and lv.get("tp1"):
-            risk = abs(lv["entry_px"] - lv["stop"])
-            rew = abs(lv["tp1"] - lv["entry_px"])
-            if risk > 0:
-                rr = f"，盈亏比 ≈ {rew / risk:.1f}"
+        # 止盈目标保持 SMC 原设计（4h 摆动点 = 第一流动性目标，先减半、破位续持有）；
+        # v1.5.49 只改「呈现诚实」：RR 从入场参考价如实算，<1 = 结构质量差（目标贴着
+        # 入场、止损却远）→ 如实劝退，不再摆出一副能做的样子（用户质问「盈亏比 0.3
+        # 是认真的吗」）
+        risk = abs((lv.get("entry_px") or lv["price"]) - lv["stop"])
+        rew = abs(lv["tp1"] - (lv.get("entry_px") or lv["price"])) if lv.get("tp1") else 0
+        rr = (rew / risk) if (risk > 0 and lv.get("tp1")) else None
+        if rr is not None and rr < 1.0:
+            return [lv["entry"],
+                    f"· 止盈：SMC 第一目标 {_fmt(lv['tp1'])}（{lv['tp_txt']}）离入场太近，"
+                    f"盈亏比 ≈ {rr:.1f} —— **这笔结构质量不够，放弃**；等价格离摆动点更远、"
+                    "或入场更贴近止损再排计划"]
+        rr_txt = f"，盈亏比 ≈ {rr:.1f}" if rr is not None else ""
+        note = "（盈亏比一般，只试小仓）" if rr is not None and rr < 1.5 else ""
         return [lv["entry"],
-                f"· 止盈：第一目标 {_fmt(lv['tp1'])}（{lv['tp_txt']}{rr}）先减半，破位续持有看日线级别空间",
+                f"· 止盈：第一目标 {_fmt(lv['tp1'])}（{lv['tp_txt']}{rr_txt}）先减半{note}，破位续持有看日线级别空间",
                 _size_line(lv["entry_px"] or lv["price"], lv["stop"], bias, lv.get("anchor", ""))]
     return ["· 观望为主：多空信号打架时，不进场就是最好的仓位。",
             f"· 若非要动：向上突破 {_fmt(lv['r10_hi']*1.01)} 小仓跟多 / 跌破 {_fmt(lv['r10_lo']*0.99)} 小仓跟空，"

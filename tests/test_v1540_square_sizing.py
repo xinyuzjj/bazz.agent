@@ -202,6 +202,74 @@ def test_short_ob_entry_uses_lower_edge():
     assert "进价 0.128——" in lv["entry"], f"入场文案必须标明进入价格：{lv['entry']}"
 
 
+# ---------------- 2b. 止盈诚实呈现（v1.5.49：SMC 目标不变，RR<1 劝退） ----------------
+
+def test_tp_stays_smc_swing_target():
+    """止盈目标必须仍是 SMC 原设计：多头 = 最近摆动高点（sh_v[-1]），不许换远目标凑 RR。"""
+    sr = _mod()
+    stat = {"symbol": "TESTUSDT",
+            "k90": _k([0.12, 0.125], [0.10, 0.11], [0.30, 0.135], 90),
+            "k4h": _k([0.125, 0.1332], [0.1155, 0.12], [0.1332, 0.14]),
+            "c24": [0.13, 0.1332], "change_pct": 1.0, "market": "spot"}
+    smc = {"ob": {"low": 0.1155, "high": 0.128}, "sh_v": [0.14, 0.162]}
+    plan = sr._plan(stat, "long", smc)
+    tp = [l for l in plan if l.startswith("· 止盈：")][0]
+    assert "0.162" in tp and "4h 前高/摆动高点" in tp, \
+        f"止盈目标没锚在最近摆动高点（SMC 原设计）：{tp}"
+
+
+def test_tp_rr_below_one_gives_up():
+    """用户质问的场景：目标贴着入场（RR≈0.3）→ 必须如实劝退，不再给仓位算法。"""
+    sr = _mod()
+    # 多头：OB 0.1155~0.128，进价 0.128，止损 0.1149（风险 13.1 点）；摆动高点 0.132
+    # 仅高 4 点 → RR ≈ 0.3
+    stat = {"symbol": "TESTUSDT",
+            "k90": _k([0.12, 0.125], [0.10, 0.11], [0.14, 0.135], 90),
+            "k4h": _k([0.125, 0.1332], [0.1155, 0.12], [0.1332, 0.14]),
+            "c24": [0.13, 0.1332], "change_pct": 1.0, "market": "spot"}
+    smc = {"ob": {"low": 0.1155, "high": 0.128}, "sh_v": [0.132]}
+    plan = sr._plan(stat, "long", smc)
+    joined = "\n".join(plan)
+    assert "盈亏比 ≈ 0.3" in joined, f"RR 未如实标出：{joined}"
+    assert "放弃" in joined, f"RR<1 未劝退：{joined}"
+    assert not [l for l in plan if l.startswith("· 仓位算法：")], \
+        f"劝退的单不该再给仓位算法：{joined}"
+
+
+def test_tp_rr_between_one_and_half_notes_small():
+    """1.0 ≤ RR < 1.5：保留计划但标注「只试小仓」。"""
+    sr = _mod()
+    # 进价 0.128、止损 0.1155*0.995（风险 ≈0.0131）；摆动高点 0.147（回报 0.019）
+    # → RR ≈ 1.45（显示 ≈1.5 但 <1.5 阈值）→ 标「只试小仓」
+    stat = {"symbol": "TESTUSDT",
+            "k90": _k([0.12, 0.125], [0.10, 0.11], [0.14, 0.135], 90),
+            "k4h": _k([0.125, 0.1332], [0.1155, 0.12], [0.1332, 0.14]),
+            "c24": [0.13, 0.1332], "change_pct": 1.0, "market": "spot"}
+    smc = {"ob": {"low": 0.1155, "high": 0.128}, "sh_v": [0.147]}
+    plan = sr._plan(stat, "long", smc)
+    tp = [l for l in plan if l.startswith("· 止盈：")][0]
+    assert "盈亏比 ≈ 1.5" in tp or "盈亏比 ≈ 1.4" in tp, tp
+    assert "只试小仓" in tp, f"1≤RR<1.5 未标注小仓：{tp}"
+
+
+def test_tp_rr_strong_no_apology():
+    """RR ≥ 1.5：正常计划，不带「一般/小仓」注脚。"""
+    sr = _mod()
+    stat = {"symbol": "TESTUSDT",
+            "k90": _k([0.12, 0.125], [0.10, 0.11], [0.14, 0.135], 90),
+            "k4h": _k([0.125, 0.1332], [0.1155, 0.12], [0.1332, 0.14]),
+            "c24": [0.13, 0.1332], "change_pct": 1.0, "market": "spot"}
+    smc = {"ob": {"low": 0.1155, "high": 0.128}, "sh_v": [0.162]}
+    plan = sr._plan(stat, "long", smc)
+    tp = [l for l in plan if l.startswith("· 止盈：")][0]
+    rr = float(re.search(r"盈亏比 ≈ ([\d.]+)", tp).group(1))
+    assert rr >= 1.5, tp
+    assert "只试小仓" not in tp and "放弃" not in tp, tp
+    sizing = [l for l in plan if l.startswith("· 仓位算法：")]
+    assert sizing, f"RR 达标应有仓位算法：{plan}"
+    _assert_sizing_consistent(sizing[0], require_anchor=True)
+
+
 # ---------------- 3. 判据必须能拒绝旧文案 ----------------
 
 def test_guard_rejects_the_legacy_line():
