@@ -121,21 +121,22 @@ def test_demo_headline_and_light_loss():
 
 
 def test_structural_stop_reports_loss_honestly():
-    """用户素材：OB 中位 0.1218 入场、结构止损 0.1149 → 距离 5.7%，10x 亏 ≈57U，如实报数并给建议。"""
-    anchor = "多头 OB 下沿 0.1155 下方 0.5% 缓冲，结构失效即离场"
-    line = _mod()._size_line(0.12175, 0.1149, "long", anchor)
+    """用户素材（空单）：OB 上沿 78,542 进、止损 78,934.71（上沿上方 0.5%）→ 10x 亏 ≈5U。
+    用户官方计算 4.7U 是数量步进取整（0.0127→0.012 BTC），理论值 5.0U。"""
+    anchor = "空头 OB 上沿 78,542.00 上方 0.5% 缓冲，结构失效即离场"
+    line = _mod()._size_line(78542.0, 78934.71, "short", anchor)
     assert anchor in line, f"结构锚位说明丢失：{line}"
-    assert "打止损亏 ≈ 56.3U" in line, line
-    assert "偏重" in line and "止损位不动" in line, line
+    assert "距入场 0.5%" in line, line
+    assert "打止损亏 ≈ 5.0U" in line, line
+    assert "偏重" not in line, "贴结构止损（0.5%）不该触发降名义建议"
     _assert_sizing_consistent(line, require_anchor=True)
 
 
-def test_advice_notional_restores_risk_to_ten_percent():
-    """建议名义 = 10U ÷ 距离：验证建议本身自洽（0.12175/0.1149 → ≈176U → 亏 ≈10U）。"""
-    line = _mod()._size_line(0.12175, 0.1149, "long", "多头 OB 下沿 0.1155 下方 0.5% 缓冲，结构失效即离场")
-    m = re.search(r"名义降到 ≈\s*([\d,.]+)U", line)
-    n2 = _num(m.group(1))
-    assert abs(n2 * (0.12175 - 0.1149) / 0.12175 - RISK_U) < 1.2, f"建议名义自洽失败：{n2}"
+def test_wide_entry_reports_honestly_and_advises():
+    """宽止损场景（挂现价、摆动低点远）：如实报数 + 降名义建议，止损位不动。"""
+    line = _mod()._size_line(0.12175, 0.1149, "long", "近 10 根摆动低点下方 1% 缓冲，摆动结构失效即离场")
+    assert "偏重" in line and "止损位不动" in line, line
+    _assert_sizing_consistent(line, require_anchor=True)
 
 
 def test_direction_word_follows_bias():
@@ -152,7 +153,7 @@ def _k(closes, lows, highs, n=120):
 
 
 def test_ob_stop_anchored_to_structure_and_distance_from_entry():
-    """OB 限价接：止损 = OB 下沿下方缓冲（结构），距离 = 入场参考价到止损（远小于现价距离）。"""
+    """OB 限价接：多在 OB 下沿进（贴止损那条沿），距离 = 沿到止损 ≈0.5%。"""
     sr = _mod()
     stat = {"symbol": "TESTUSDT",
             "k90": _k([0.12, 0.125], [0.10, 0.11], [0.14, 0.135], 90),
@@ -164,11 +165,12 @@ def test_ob_stop_anchored_to_structure_and_distance_from_entry():
     assert lv, "plan_levels 不应返回空"
     assert abs(lv["stop"] - 0.1155 * 0.995) < 1e-9, f"止损没锚在 OB 下沿下方：{lv['stop']}"
     assert lv["anchor"] and "OB 下沿" in lv["anchor"], f"缺结构锚位说明：{lv.get('anchor')}"
-    assert lv["entry_px"] is not None and 0.1155 <= lv["entry_px"] <= 0.128, \
-        f"入场参考价不在 OB 区内：{lv.get('entry_px')}"
+    assert abs(lv["entry_px"] - 0.1155) < 1e-9, \
+        f"多头入场参考价应是 OB 下沿（贴止损那条沿），实际 {lv.get('entry_px')}"
     dist_entry = abs(lv["entry_px"] - lv["stop"]) / lv["entry_px"] * 100
     dist_price = abs(lv["price"] - lv["stop"]) / lv["price"] * 100
     assert dist_entry < dist_price, f"入场价距离({dist_entry:.1f}%)应小于现价距离({dist_price:.1f}%)"
+    assert dist_entry < 1.0, f"贴结构入场距离应 ≈0.5%，实际 {dist_entry:.2f}%"
     plan = sr._plan(stat, "long", smc)
     sizing = [l for l in plan if l.startswith("· 仓位算法：")][0]
     _assert_sizing_consistent(sizing, require_anchor=True)
@@ -178,6 +180,22 @@ def test_ob_stop_anchored_to_structure_and_distance_from_entry():
     # 止盈行带盈亏比（从入场价算）
     tp = [l for l in plan if l.startswith("· 止盈：")][0]
     assert re.search(r"盈亏比 ≈ [\d.]+", tp), f"止盈行缺盈亏比：{tp}"
+
+
+def test_short_ob_entry_uses_upper_edge():
+    """空头 OB：入场参考价 = OB 上沿（用户实测：在 78,542 买入做空），止损贴上沿上方。"""
+    sr = _mod()
+    stat = {"symbol": "TESTUSDT",
+            "k90": _k([0.12, 0.125], [0.10, 0.11], [0.14, 0.135], 90),
+            "k4h": _k([0.13, 0.125], [0.125, 0.12], [0.128, 0.1332]),
+            "c24": [0.127, 0.125], "change_pct": -1.0, "market": "spot",
+            "funding_rate": 0.00004}
+    smc = {"ob": {"low": 0.128, "high": 0.1332}, "sl_v": [0.10]}
+    lv = sr._plan_levels(stat, "short", smc)
+    assert abs(lv["entry_px"] - 0.1332) < 1e-9, \
+        f"空头入场参考价应是 OB 上沿，实际 {lv.get('entry_px')}"
+    assert abs(lv["stop"] - 0.1332 * 1.005) < 1e-9, f"止损没锚在 OB 上沿上方：{lv['stop']}"
+    assert "OB 上沿" in (lv["anchor"] or ""), f"缺结构锚位说明：{lv.get('anchor')}"
 
 
 # ---------------- 3. 判据必须能拒绝旧文案 ----------------
@@ -208,6 +226,9 @@ def test_source_keeps_demo_notional_and_structural_stop():
     src_all = SRC_PATH.read_text(encoding="utf-8")
     plan_src = src_all[src_all.index("def _plan("):src_all.index("def ", src_all.index("def _plan(") + 10)]
     assert 'lv.get("anchor", "")' in plan_src, "_plan 没把结构锚位说明传给 _size_line"
+    lv_src = src_all[src_all.index("def _plan_levels"):src_all.index("def _plan(")]
+    assert 'lv["entry_px"] = ob_lo' in lv_src and 'lv["entry_px"] = ob_hi' in lv_src, \
+        "OB 入场参考价没有取贴止损那条沿（多=下沿 / 空=上沿）"
 
 
 def test_plan_levels_anchor_covers_all_branches():

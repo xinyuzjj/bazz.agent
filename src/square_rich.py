@@ -688,23 +688,24 @@ def _plan_levels(stat: dict, bias: str, smc: dict = None) -> dict:
     ote_lo, ote_hi = smc.get("ote_lo"), smc.get("ote_hi")
     lv = {"price": price, "k": k, "r10_lo": r10_lo, "r10_hi": r10_hi,
           "entry": None, "stop": None, "tp1": None, "tp_txt": "",
-          # entry_px：计算止损距离/盈亏比用的**入场参考价**（挂区间限价时取区中位），
-          # v1.5.46 起 _size_line 从入场价算距离，不再用现价
+          # entry_px：计算止损距离/盈亏比用的**入场参考价**。v1.5.47b（用户实测纠偏）：
+          # SMC 打法是「买在 OB 下沿 / 空在 OB 上沿」（贴止损那条沿），不是区中位——
+          # 空单挂上沿 78,542 进、止损贴上沿上方 0.5%，10x 亏 ≈5U；按区中位算会虚报成 9.3U
           "entry_px": None,
           # anchor：止损的 SMC 结构锚位说明（v1.5.47）——止损只看结构失效位
           "anchor": ""}
 
     if bias == "long":
         if ob_lo and ob_hi and ob_lo < price:
-            lv["entry"] = (f"· 入场：优先挂 {_fmt(ob_lo)} ~ {_fmt(ob_hi)} 的多头 OB 区回踩接（限价），"
-                           f"现价 {_fmt(price)} 直接追的盈亏比一般")
+            lv["entry"] = (f"· 入场：优先挂 {_fmt(ob_lo)} ~ {_fmt(ob_hi)} 的多头 OB 区回踩接"
+                           f"（限价，下沿 {_fmt(ob_lo)} 附近进），现价 {_fmt(price)} 直接追的盈亏比一般")
             lv["stop"] = ob_lo * 0.995
-            lv["entry_px"] = (ob_lo + ob_hi) / 2
+            lv["entry_px"] = ob_lo
             lv["anchor"] = f"多头 OB 下沿 {_fmt(ob_lo)} 下方 0.5% 缓冲，结构失效即离场"
         elif smc.get("ote_dir") == "up" and ote_lo is not None and ote_lo < price:
             lv["entry"] = f"· 入场：等回踩 OTE 窗口 {_fmt(ote_lo)} ~ {_fmt(ote_hi)}（斐波那契 0.618-0.705）分批接"
             lv["stop"] = ote_lo * 0.99
-            lv["entry_px"] = (ote_lo + ote_hi) / 2
+            lv["entry_px"] = ote_lo
             lv["anchor"] = f"OTE 窗口下沿 {_fmt(ote_lo)} 下方 1% 缓冲，结构失效即离场"
         else:
             lv["entry"] = (f"· 入场：现价 {_fmt(price)} 附近轻仓试，"
@@ -716,9 +717,10 @@ def _plan_levels(stat: dict, bias: str, smc: dict = None) -> dict:
         lv["tp_txt"] = "4h 前高/摆动高点"
     elif bias == "short":
         if ob_hi and ob_hi > price:
-            lv["entry"] = f"· 入场：优先挂 {_fmt(ob_lo)} ~ {_fmt(ob_hi)} 的空头 OB 区反弹接（限价），不追空"
+            lv["entry"] = (f"· 入场：优先挂 {_fmt(ob_lo)} ~ {_fmt(ob_hi)} 的空头 OB 区反弹接"
+                           f"（限价，上沿 {_fmt(ob_hi)} 附近进），不追空")
             lv["stop"] = ob_hi * 1.005
-            lv["entry_px"] = (ob_lo + ob_hi) / 2
+            lv["entry_px"] = ob_hi
             lv["anchor"] = f"空头 OB 上沿 {_fmt(ob_hi)} 上方 0.5% 缓冲，结构失效即离场"
         else:
             lv["entry"] = f"· 入场：反弹到 {_fmt(r10_hi*1.005)}（近 10 根高点上方）再空，不追空"
