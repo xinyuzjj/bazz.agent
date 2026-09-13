@@ -273,23 +273,27 @@ def draw_cover(stat: dict, path: str) -> str:
 
     # —— 蜡烛区 —— #
     x0, x1 = 16, W - 96          # 右侧留价格轴
-    y0, y1 = 104, H - 236        # 价格区拉高（用户反馈：蜡烛太扁）
+    y0, y1 = 104, H - 320
     lo, hi = min(l), max(h)
     pad = (hi - lo) * 0.06 or hi * 0.01
     lo_p, hi_p = lo - pad, hi + pad
     n = len(c)
     step = (x1 - x0) / n
-    bw = max(2, int(step * 0.55))   # 细身，去扁感
+    bw = max(2, int(step * 0.62))
 
     def py(p):
         return y1 - (p - lo_p) / (hi_p - lo_p) * (y1 - y0)
 
-    # 极简网格：只留极淡横线 + 价格轴（用户选定 minimal 风格）
+    # 横向虚线网格 + 价格轴；日期锚点处补竖向淡网格
+    date_idx = [i for i in (0, n // 3, 2 * n // 3, n - 1) if 0 <= i < len(t)]
     for i in range(5):
         gy = y0 + (y1 - y0) * i / 4
-        dr.line([x0, gy, x1, gy], fill=(24, 28, 34), width=1)
+        _dashed(dr, x0, gy, x1, GRID)
         gp = hi_p - (hi_p - lo_p) * i / 4
-        dr.text((x1 + 10, gy - 8), _fmt(gp), font=_font(13), fill=(110, 118, 130))
+        dr.text((x1 + 10, gy - 8), _fmt(gp), font=_font(13), fill=SUB)
+    for idx in date_idx:
+        vx = x0 + step * idx + step / 2
+        dr.line([vx, y0, vx, y1], fill=_blend(GRID, BG, 0.45), width=1)
 
     # 区间高/低虚线标注（降级周期时标注实际覆盖范围），胶囊标签保证可读
     imax, imin = h.index(max(h)), l.index(min(l))
@@ -308,11 +312,11 @@ def draw_cover(stat: dict, path: str) -> str:
         cx = x0 + step * i + step / 2
         up = c[i] >= o[i]
         col = UP if up else DOWN
-        dr.line([cx, py(h[i]), cx, py(l[i])], fill=_blend(col, BG, 0.45), width=1)  # 影线柔和，衬托实体
+        dr.line([cx, py(h[i]), cx, py(l[i])], fill=_blend(col, BG, 0.3), width=1)  # 影线收暗一层，实体更立体
         top, bot = py(max(o[i], c[i])), py(min(o[i], c[i]))
-        if bot - top < 1.6:
-            bot = top + 1.6
-        dr.rounded_rectangle([cx - bw / 2, top, cx + bw / 2, bot], radius=min(2, bw / 3), fill=col)
+        if bot - top < 1.2:
+            bot = top + 1.2
+        dr.rectangle([cx - bw / 2, top, cx + bw / 2, bot], fill=col)
 
     # 现价标记（右侧轴，虚线更轻）
     _dashed(dr, x0, py(price), x1, ACCENT)
@@ -328,8 +332,8 @@ def draw_cover(stat: dict, path: str) -> str:
             lab = _xaxis_label(t[idx])
             dr.text((min(cx, x1 - 40), y1 + 6), lab, font=_font(12), fill=SUB)
 
-    # —— 成交量区（压矮一档，衬托价格区） —— #
-    vy0, vy1 = y1 + 30, H - 150
+    # —— 成交量区 —— #
+    vy0, vy1 = y1 + 28, H - 100
     vmax = max(v) or 1
     for i in range(n):
         cx = x0 + step * i + step / 2
