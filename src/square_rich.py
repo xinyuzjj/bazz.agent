@@ -271,9 +271,9 @@ def draw_cover(stat: dict, path: str) -> str:
     _draw_header(dr, W, stat["symbol"], stat["market"], price, chg,
                  sub_right=time.strftime("%Y-%m-%d %H:%M %Z", time.localtime()).replace(" +0800", " UTC+8"))
 
-    # —— 蜡烛区 —— #
+    # —— 蜡烛区（主图放大） —— #
     x0, x1 = 16, W - 96          # 右侧留价格轴
-    y0, y1 = 104, H - 320
+    y0, y1 = 104, H - 236
     lo, hi = min(l), max(h)
     pad = (hi - lo) * 0.06 or hi * 0.01
     lo_p, hi_p = lo - pad, hi + pad
@@ -294,6 +294,35 @@ def draw_cover(stat: dict, path: str) -> str:
     for idx in date_idx:
         vx = x0 + step * idx + step / 2
         dr.line([vx, y0, vx, y1], fill=_blend(GRID, BG, 0.45), width=1)
+
+    # —— SMC 区域标记（OB / FVG / OTE 半透明色带，画在蜡烛下层） —— #
+    def _band(blo, bhi, col, lab, alpha=0.10):
+        by0, by1 = py(bhi), py(blo)
+        if by1 - by0 < 2:
+            by1 = by0 + 2
+        by0, by1 = max(by0, y0), min(by1, y1)
+        if by1 <= by0:
+            return
+        dr.rectangle([x0, by0, x1, by1], fill=_blend(BG, col, alpha))
+        _dashed(dr, x0, by0, x1, _blend(col, BG, 0.5))
+        _dashed(dr, x0, by1, x1, _blend(col, BG, 0.5))
+        ly = by0 + 4 if by0 > y0 + 22 else by1 - 18
+        dr.text((x0 + 8, ly), lab, font=_font(12, True), fill=_blend(col, TXT, 0.35))
+
+    k4 = stat.get("k4h") or {}
+    if _k_usable(k4):
+        for d, col, lab in (("bullish", UP, "多头 OB"), ("bearish", DOWN, "空头 OB")):
+            ob = _find_ob(k4, d)
+            if ob:
+                _band(ob["low"], ob["high"], col, lab, alpha=0.12)
+        gaps = sorted((_find_fvg(k4) or []),
+                      key=lambda g: abs((g["lo"] + g["hi"]) / 2 - price))
+        for g in gaps[:3]:
+            col = UP if (g["lo"] + g["hi"]) / 2 < price else DOWN
+            _band(g["lo"], g["hi"], col, "FVG", alpha=0.08)
+        smc_ov = _smc(stat)
+        if smc_ov.get("ote_lo") is not None and smc_ov.get("ote_hi") is not None:
+            _band(smc_ov["ote_lo"], smc_ov["ote_hi"], ACCENT, "OTE", alpha=0.09)
 
     # 区间高/低虚线标注（降级周期时标注实际覆盖范围），胶囊标签保证可读
     imax, imin = h.index(max(h)), l.index(min(l))
@@ -332,8 +361,8 @@ def draw_cover(stat: dict, path: str) -> str:
             lab = _xaxis_label(t[idx])
             dr.text((min(cx, x1 - 40), y1 + 6), lab, font=_font(12), fill=SUB)
 
-    # —— 成交量区 —— #
-    vy0, vy1 = y1 + 28, H - 100
+    # —— 成交量区（矮排，衬托主图） —— #
+    vy0, vy1 = y1 + 30, H - 150
     vmax = max(v) or 1
     for i in range(n):
         cx = x0 + step * i + step / 2
