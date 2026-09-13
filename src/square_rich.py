@@ -284,16 +284,12 @@ def draw_cover(stat: dict, path: str) -> str:
     def py(p):
         return y1 - (p - lo_p) / (hi_p - lo_p) * (y1 - y0)
 
-    # 横向网格（虚线）+ 价格轴；日期锚点处补竖向淡网格
-    date_idx = [i for i in (0, n // 3, 2 * n // 3, n - 1) if 0 <= i < len(t)]
+    # 极简网格：只留极淡横线 + 价格轴（用户选定 minimal 风格）
     for i in range(5):
         gy = y0 + (y1 - y0) * i / 4
-        _dashed(dr, x0, gy, x1, GRID)
+        dr.line([x0, gy, x1, gy], fill=(24, 28, 34), width=1)
         gp = hi_p - (hi_p - lo_p) * i / 4
-        dr.text((x1 + 10, gy - 8), _fmt(gp), font=_font(13), fill=SUB)
-    for idx in date_idx:
-        vx = x0 + step * idx + step / 2
-        dr.line([vx, y0, vx, y1], fill=_blend(GRID, BG, 0.45), width=1)
+        dr.text((x1 + 10, gy - 8), _fmt(gp), font=_font(13), fill=(110, 118, 130))
 
     # 区间高/低虚线标注（降级周期时标注实际覆盖范围），胶囊标签保证可读
     imax, imin = h.index(max(h)), l.index(min(l))
@@ -312,7 +308,7 @@ def draw_cover(stat: dict, path: str) -> str:
         cx = x0 + step * i + step / 2
         up = c[i] >= o[i]
         col = UP if up else DOWN
-        dr.line([cx, py(h[i]), cx, py(l[i])], fill=_blend(col, BG, 0.3), width=1)  # 影线收暗一层，实体更立体
+        dr.line([cx, py(h[i]), cx, py(l[i])], fill=_blend(col, BG, 0.45), width=1)  # 影线柔和，衬托实体
         top, bot = py(max(o[i], c[i])), py(min(o[i], c[i]))
         if bot - top < 1.6:
             bot = top + 1.6
