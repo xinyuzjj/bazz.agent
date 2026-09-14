@@ -199,6 +199,9 @@ export const api = {
   squareKey: () => jget("/square/key"),
   squareConnect: (api_key: string) => jpost("/square/connect", { api_key }),
   squareDisconnect: () => jpost("/square/disconnect", {}),
+  // v1.5.61：广场发文模拟挂单（发文成功自动建单，后台 7 天结算获利/亏损）
+  squarePaper: () => jget("/square/paper"),
+  squarePaperDelete: (ids: string[]) => jpost("/square/paper/delete", { ids }),
   getAutoExec: async () => {
     // fail-closed：请求失败时视为未开启自动执行（false → 走人工确认），不能 fail-open 放大权限
     const r = await fetch(BASE + "/settings/auto-exec", { headers: authHeaders() });

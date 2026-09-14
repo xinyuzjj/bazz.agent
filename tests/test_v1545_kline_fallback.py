@@ -337,6 +337,94 @@ def test_ote_up_leg_window_below_swing_high():
     assert lo < smc["ote_entry"] < hi, "中间值 0.702 必须落在 OTE 窗口内"
 
 
+# ---------------- v1.5.60：入场结构位止损距离护栏（LSK/牛来实测翻车） ----------------
+
+def _rally_k():
+    """前 110 根横盘 55~60，末 10 根 60→100 暴涨：现价距近10根低点也 40%+（r10 兜底同样超限）。"""
+    bars = [(56, 59, 55, 58)] * 110
+    seq = [60, 66, 73, 80, 86, 91, 95, 98, 99, 100]
+    bars += [(seq[i - 1] if i else 58, seq[i] + 1, seq[i] - 2, seq[i]) for i in range(10)]
+    return {"opens": [b[0] for b in bars], "highs": [b[1] for b in bars],
+            "lows": [b[2] for b in bars], "closes": [b[3] for b in bars],
+            "vols": [1.0] * len(bars), "times": list(range(len(bars)))}
+
+
+def _crash_k():
+    """镜像：前 110 根横盘 140~145，末 10 根 140→100 暴跌（空头 r10 兜底同样超限）。"""
+    bars = [(142, 146, 141, 144)] * 110
+    seq = [136, 128, 120, 113, 108, 105, 103, 101, 100, 100]
+    bars += [(seq[i - 1] if i else 144, seq[i] + 2, seq[i] - 1, seq[i]) for i in range(10)]
+    return {"opens": [b[0] for b in bars], "highs": [b[1] for b in bars],
+            "lows": [b[2] for b in bars], "closes": [b[3] for b in bars],
+            "vols": [1.0] * len(bars), "times": list(range(len(bars)))}
+
+
+def test_stop_ok_guard():
+    assert square_rich._stop_ok(100, 93) is True        # 7% 可承受
+    assert square_rich._stop_ok(100, 91) is False       # 9% 超 8% 上限
+    assert square_rich._stop_ok(None, 95) is False
+    assert square_rich._stop_ok(100, None) is False
+
+
+def test_long_far_ob_falls_back_to_ote():
+    """LSK 翻车场景：OB 距现价 -65%（止损距离 14.7%）→ 拒绝，降级到 OTE 入场。"""
+    stat = {"k4h": _rally_k()}
+    smc = {"ob": {"low": 30.0, "high": 35.0, "dir": "bull"},
+           "ote_dir": "up", "ote_lo": 91.0, "ote_hi": 95.0, "ote_entry": 92.3}
+    lv = square_rich._plan_levels(stat, "long", smc)
+    assert "OTE" in lv["entry"] and "0.702" in lv["entry"], lv["entry"]
+    assert abs(lv["entry_px"] - 92.3) < 1e-9, lv
+    assert lv.get("rr") is not None, "OTE 入场应继续算盈亏比"
+
+
+def test_long_all_structures_too_far_noplay():
+    """OB/OTE/近10根低点的止损距离全部超 8% → 观望劝退，不摆仓位算法（10x 活不到止损）。"""
+    stat = {"k4h": _rally_k()}
+    smc = {"ob": {"low": 30.0, "high": 35.0, "dir": "bull"},
+           "ote_dir": "up", "ote_lo": 20.0, "ote_hi": 24.0, "ote_entry": 22.5}
+    lv = square_rich._plan_levels(stat, "long", smc)
+    assert lv.get("noplay") is True, lv
+    assert "观望" in lv["entry"] and "8%" in lv["entry"], lv["entry"]
+    assert lv.get("stop") is None and "rr" not in lv, "noplay 不应给出止损/盈亏比"
+    plan = square_rich._plan(stat, "long", smc)
+    assert len(plan) == 1 and "观望" in plan[0], "noplay 只给劝退行，不带仓位算法"
+
+
+def test_short_wide_ob_falls_back_to_ote():
+    """牛来翻车场景：空头 OB 区宽 58%（止损距离 91%）→ 拒绝，降级到空头 OTE。"""
+    stat = {"k4h": _crash_k()}
+    smc = {"ob": {"low": 140.0, "high": 190.0, "dir": "bear"},
+           "ote_dir": "down", "ote_lo": 104.0, "ote_hi": 108.0, "ote_entry": 106.6}
+    lv = square_rich._plan_levels(stat, "short", smc)
+    assert "空头 OTE" in lv["entry"] and "0.702" in lv["entry"], lv["entry"]
+    assert abs(lv["stop"] - 108 * 1.01) < 1e-9, lv
+
+
+def test_short_all_structures_too_far_noplay():
+    """空头镜像：OB 区宽超大、OTE 窗口高悬、近10根高点远在天上 → 观望。"""
+    stat = {"k4h": _crash_k()}
+    smc = {"ob": {"low": 140.0, "high": 190.0, "dir": "bear"},
+           "ote_dir": "down", "ote_lo": 270.0, "ote_hi": 300.0, "ote_entry": 280.0}
+    lv = square_rich._plan_levels(stat, "short", smc)
+    assert lv.get("noplay") is True, lv
+    assert "观望" in lv["entry"], lv["entry"]
+    assert lv.get("stop") is None and "rr" not in lv
+
+
+def test_view_tail_explains_divergence():
+    """牛来翻车场景：4h 结构多头 + 最终偏空（日线权重 3:1 压过）→ 结论必须说破分歧，
+    不能上文「多头结构没坏」下一句就「几条对得上，倾向偏空」。"""
+    p = square_rich._view_story({"k4h": _rally_k()}, "short", {"structure": "bullish"})
+    txt = "".join(p)
+    assert "分量更重" in txt, txt[-200:]
+    assert "几条对得上" not in txt, txt[-200:]
+    p2 = square_rich._view_story({"k4h": _crash_k()}, "long", {"structure": "bearish"})
+    txt2 = "".join(p2)
+    assert "分量更重" in txt2, txt2[-200:]
+    p3 = square_rich._view_story({"k4h": _rally_k()}, "long", {"structure": "bullish"})
+    assert "几条对得上" in "".join(p3), "同向时保留原结论"
+
+
 # ---------------- runner ----------------
 
 def main():

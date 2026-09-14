@@ -1033,6 +1033,7 @@ def _pick_tp(stat: dict, smc: dict, entry_px: float, stop: float, direction: str
                  + liq
                  + ([(max(k4["highs"][-30:]), "近 30 根 4h 高点") if k4.get("highs") else None])
                  + ([(max(k90["highs"]), "90日高点") if k90.get("highs") else None]))
+        cands = [cd for cd in cands if cd]      # k90/k4h 缺失时上面的条件项是裸 None（v1.5.60 修）
         ok = [(v, t) for v, t in cands if v and v > entry_px]
         risk = entry_px - stop
     else:
@@ -1040,6 +1041,7 @@ def _pick_tp(stat: dict, smc: dict, entry_px: float, stop: float, direction: str
                  + liq
                  + ([(min(k4["lows"]), "近 30 根 4h 低点") if k4.get("lows") else None])
                  + ([(min(k90["lows"]), "90日低点") if k90.get("lows") else None]))
+        cands = [cd for cd in cands if cd]
         ok = [(v, t) for v, t in cands if v and v < entry_px]
         risk = stop - entry_px
     if risk <= 0 or not ok:
@@ -1054,6 +1056,17 @@ def _pick_tp(stat: dict, smc: dict, entry_px: float, stop: float, direction: str
             return v, t, abs(v - entry_px) / risk
     v, t = max(uniq, key=lambda vt: abs(vt[0] - entry_px))  # 全不达标：取最远目标，RR 如实上报
     return v, t, abs(v - entry_px) / risk
+
+
+# 10x 杠杆下反向 ~9-10% 就强平，止损距离必须 ≤8% 才能活着被打到止损位
+# （v1.5.60 护栏，用户实测两篇翻车：LSK 旧 OB 距现价 -85% 还挂单、牛来空头 OB 区宽 58%，
+#   止损距离 59%——都是「打止损前先强平」的不可执行结构）
+_STOP_MAX_PCT = 0.08
+
+
+def _stop_ok(entry_px, stop):
+    """入场→止损的距离是否在 10x 杠杆可承受范围内（≤8%）。"""
+    return bool(entry_px and stop and 0 < abs(entry_px - stop) / entry_px <= _STOP_MAX_PCT)
 
 
 def _plan_levels(stat: dict, bias: str, smc: dict = None) -> dict:
@@ -1079,6 +1092,8 @@ def _plan_levels(stat: dict, bias: str, smc: dict = None) -> dict:
     ote_lo, ote_hi = smc.get("ote_lo"), smc.get("ote_hi")
     lv = {"price": price, "k": k, "r10_lo": r10_lo, "r10_hi": r10_hi,
           "entry": None, "stop": None, "tp1": None, "tp_txt": "",
+          # zone_lo/zone_hi：入场参考区（模拟挂单建单时判断现价是否已入场用，v1.5.61）
+          "zone_lo": None, "zone_hi": None,
           # entry_px：计算止损距离/盈亏比用的**入场参考价**。v1.5.47c（用户定版）：
           # 多头买在 OB 上沿、空头卖在 OB 下沿（第一触点，保证成交），入场文案标明进价；
           # 止损锚对侧失效位（多头 OB 下沿下方 / 空头 OB 上沿上方）——距离 = 区宽 + 缓冲，如实计算
@@ -1087,43 +1102,74 @@ def _plan_levels(stat: dict, bias: str, smc: dict = None) -> dict:
           "anchor": ""}
 
     if bias == "long":
-        if ob_lo and ob_hi and ob_lo < price:
+        # 结构位降级链（v1.5.60）：OB → OTE → 近10根低点 → 观望。
+        # 每档都要过 _stop_ok 护栏（止损距离 ≤8%，10x 杠杆活着到止损的前提），
+        # 拒绝「挂单距离/止损距离」超限的旧结构（暴涨币的 OB 可能还在 -85% 的老底）。
+        if ob_lo and ob_hi and ob_lo < price and _stop_ok(ob_hi, ob_lo * 0.995):
             lv["entry"] = (f"· 入场：优先挂 {_fmt(ob_lo)} ~ {_fmt(ob_hi)} 的多头 OB 区回踩接"
                            f"（限价，进价 {_fmt(ob_hi)}——上沿第一触点保证成交），现价 {_fmt(price)} 直接追的盈亏比一般")
             lv["stop"] = ob_lo * 0.995
             lv["entry_px"] = ob_hi
+            lv["zone_lo"], lv["zone_hi"] = ob_lo, ob_hi
             lv["anchor"] = f"多头 OB 下沿 {_fmt(ob_lo)} 下方 0.5% 缓冲，结构失效即离场"
-        elif smc.get("ote_dir") == "up" and ote_lo is not None and ote_lo < price:
+        elif smc.get("ote_dir") == "up" and ote_lo is not None and ote_lo < price \
+                and _stop_ok(smc.get("ote_entry") or ote_hi, ote_lo * 0.99):
             ote_e = smc.get("ote_entry") or ote_hi
             lv["entry"] = (f"· 入场：等回踩 OTE 窗口 {_fmt(ote_lo)} ~ {_fmt(ote_hi)}（斐波那契 0.62-0.79）分批接"
                            f"（参考中间值进价 {_fmt(ote_e)}——取 0.702 位）")
             lv["stop"] = ote_lo * 0.99
             lv["entry_px"] = ote_e
+            lv["zone_lo"], lv["zone_hi"] = ote_lo, ote_hi
             lv["anchor"] = f"OTE 窗口下沿 {_fmt(ote_lo)} 下方 1% 缓冲，结构失效即离场"
-        else:
+        elif _stop_ok(price, r10_lo * 0.99):
             lv["entry"] = (f"· 入场：现价 {_fmt(price)} 附近轻仓试，"
                            f"或等 4h 回踩 {_fmt(r10_lo*0.995)}（近 10 根低点下方）确认支撑")
             lv["stop"] = r10_lo * 0.99
             lv["entry_px"] = price
+            lv["zone_lo"], lv["zone_hi"] = price * 0.995, price * 1.005
             lv["anchor"] = "近 10 根摆动低点下方 1% 缓冲，摆动结构失效即离场"
-        got = _pick_tp(stat, smc, lv["entry_px"], lv["stop"], "long")
-        if got:
-            lv["tp1"], lv["tp_txt"], lv["rr"] = got
+        else:
+            lv["noplay"] = True
+            lv["entry"] = (f"· 入场：观望——现价 {_fmt(price)} 距离所有可用结构位（OB/OTE/近10根低点）"
+                           f"的止损距离都超出 10x 杠杆可承受的 8%（强平线 ~9%），挂哪都可能在打止损前先被强平；"
+                           "降杠杆（如 3x）或等价格回撤出更近的结构再排计划")
+        if lv.get("entry_px") and lv.get("stop"):
+            got = _pick_tp(stat, smc, lv["entry_px"], lv["stop"], "long")
+            if got:
+                lv["tp1"], lv["tp_txt"], lv["rr"] = got
     elif bias == "short":
-        if ob_hi and ob_hi > price:
+        # 结构位降级链（v1.5.60）：OB → 空头 OTE → 近10根高点 → 观望（护栏同多头）
+        if ob_lo and ob_hi and ob_hi > price and _stop_ok(ob_lo, ob_hi * 1.005):
             lv["entry"] = (f"· 入场：优先挂 {_fmt(ob_lo)} ~ {_fmt(ob_hi)} 的空头 OB 区反弹接"
                            f"（限价，进价 {_fmt(ob_lo)}——下沿第一触点保证成交），不追空")
             lv["stop"] = ob_hi * 1.005
             lv["entry_px"] = ob_lo
+            lv["zone_lo"], lv["zone_hi"] = ob_lo, ob_hi
             lv["anchor"] = f"空头 OB 上沿 {_fmt(ob_hi)} 上方 0.5% 缓冲，结构失效即离场"
-        else:
+        elif smc.get("ote_dir") == "down" and ote_hi is not None and ote_hi > price \
+                and _stop_ok(smc.get("ote_entry") or ote_lo, ote_hi * 1.01):
+            ote_e = smc.get("ote_entry") or ote_lo
+            lv["entry"] = (f"· 入场：等反抽空头 OTE 窗口 {_fmt(ote_lo)} ~ {_fmt(ote_hi)}（斐波那契 0.62-0.79）分批空"
+                           f"（参考中间值进价 {_fmt(ote_e)}——取 0.702 位）")
+            lv["stop"] = ote_hi * 1.01
+            lv["entry_px"] = ote_e
+            lv["zone_lo"], lv["zone_hi"] = ote_lo, ote_hi
+            lv["anchor"] = f"空头 OTE 窗口上沿 {_fmt(ote_hi)} 上方 1% 缓冲，结构失效即离场"
+        elif _stop_ok(price, r10_hi * 1.01):
             lv["entry"] = f"· 入场：反弹到 {_fmt(r10_hi*1.005)}（近 10 根高点上方）再空，不追空"
             lv["stop"] = r10_hi * 1.01
             lv["entry_px"] = price
+            lv["zone_lo"], lv["zone_hi"] = price * 0.995, price * 1.005
             lv["anchor"] = "近 10 根摆动高点上方 1% 缓冲，摆动结构失效即离场"
-        got = _pick_tp(stat, smc, lv["entry_px"], lv["stop"], "short")
-        if got:
-            lv["tp1"], lv["tp_txt"], lv["rr"] = got
+        else:
+            lv["noplay"] = True
+            lv["entry"] = (f"· 入场：观望——现价 {_fmt(price)} 距离所有可用结构位（OB/OTE/近10根高点）"
+                           f"的止损距离都超出 10x 杠杆可承受的 8%（强平线 ~9%），挂哪都可能在打止损前先被强平；"
+                           "降杠杆（如 3x）或等价格反弹出更近的结构再排计划")
+        if lv.get("entry_px") and lv.get("stop"):
+            got = _pick_tp(stat, smc, lv["entry_px"], lv["stop"], "short")
+            if got:
+                lv["tp1"], lv["tp_txt"], lv["rr"] = got
     return lv
 
 
@@ -1133,6 +1179,8 @@ def _plan(stat: dict, bias: str, smc: dict = None) -> list:
     lv = _plan_levels(stat, bias, smc)
     if not lv:
         return ["· 数据不足，给不出靠谱点位，宁可错过不做没把握的。"]
+    if lv.get("noplay"):
+        return [lv["entry"]]     # 结构位止损距离全部超限 → 只给观望劝退，不摆仓位算法
     if bias in ("long", "short"):
         # 止盈（v1.5.49 定版）：首选 SMC 摆动点，太近（RR<1.5）自动换更远的流动性目标
         # （近 30 根极值 → 90日极值）；仍不达标则如实标注小仓/劝退（用户质问「盈亏比
@@ -1425,10 +1473,20 @@ def _view_story(stat: dict, bias: str, smc: dict) -> list:
 
     ob = smc.get("ob") or {}
     if ob.get("dir") == "bull" and price:
-        rel = "现价就踩在这个区里" if ob.get("low") <= price <= ob.get("high") else "回踩这个区看承接反应"
+        if ob.get("low") <= price <= ob.get("high"):
+            rel = "现价就踩在这个区里"
+        elif price / ob["high"] > 1.25:      # 老底远在天下（暴涨币）：如实标注参考意义有限
+            rel = f"距现价 -{(1 - ob['high'] / price) * 100:.0f}%，是很远的老底，短期承接参考意义有限"
+        else:
+            rel = "回踩这个区看承接反应"
         p.append(f"下方最近的多头 OB（需求区）在 {_fmt(ob['low'])}~{_fmt(ob['high'])}，{rel}")
     elif ob.get("dir") == "bear" and price:
-        rel = "现价就顶在这个区里" if ob.get("low") <= price <= ob.get("high") else "反弹到这个区看压制反应"
+        if ob.get("low") <= price <= ob.get("high"):
+            rel = "现价就顶在这个区里"
+        elif ob["low"] / price > 1.25:
+            rel = f"距现价 +{(ob['low'] / price - 1) * 100:.0f}%，是很远的老顶，短期压制参考意义有限"
+        else:
+            rel = "反弹到这个区看压制反应"
         p.append(f"上方最近的空头 OB（供给区）在 {_fmt(ob['low'])}~{_fmt(ob['high'])}，{rel}")
 
     for g in smc.get("fvg") or []:
@@ -1444,9 +1502,20 @@ def _view_story(stat: dict, bias: str, smc: dict) -> list:
         else:
             p.append(f"4h 价格还在 MA20（{_fmt(ma20)}）下方，短线动能暂时跟不上结构")
 
-    tail = {"long": "几条对得上，我的倾向是偏多：按下面计划分批做，不追价",
-            "short": "几条对得上，我的倾向是偏空：按下面计划挂单等，不追空",
-            "neutral": "多空信号拧在一起，谁也说服不了谁，我的倾向就是观望：宁可错过，不做看不懂的"}[bias]
+    # 倾向结论要与上文自洽（v1.5.60 修，牛来翻车：上文「4h 多头结构没坏」下一句直接
+    # 「几条对得上，倾向偏空」——日线 -3 压过 4h +1 的分歧必须说破，不能装作几条对得上）
+    if bias == "short" and st == "bullish":
+        tail = "4h 结构虽然还偏多，但日线大趋势那边的分量更重（权重 3:1），方向上我站偏空：按下面计划挂单等，不追空"
+    elif bias == "long" and st == "bearish":
+        tail = "4h 结构虽然还偏空，但日线大趋势那边的分量更重（权重 3:1），方向上我站偏多：按下面计划分批做，不追价"
+    elif bias == "neutral" and st == "bullish":
+        tail = "4h 结构虽然偏多，但日线那边没跟上、其他信号也互相打架，方向上我倾向观望：宁可错过，不做看不懂的"
+    elif bias == "neutral" and st == "bearish":
+        tail = "4h 结构虽然偏空，但日线那边没跟上、其他信号也互相打架，方向上我倾向观望：宁可错过，不做看不懂的"
+    else:
+        tail = {"long": "几条对得上，我的倾向是偏多：按下面计划分批做，不追价",
+                "short": "几条对得上，我的倾向是偏空：按下面计划挂单等，不追空",
+                "neutral": "多空信号拧在一起，谁也说服不了谁，我的倾向就是观望：宁可错过，不做看不懂的"}[bias]
     p.append(tail)
     return p
 
@@ -1840,14 +1909,28 @@ def compose(symbol: str, market: str = "futures", style: str = None) -> dict:
         "funding_rate": stat.get("funding_rate"), "oi": stat.get("oi"),
         "top_ratio": stat.get("top_ratio"), "global_ratio": stat.get("global_ratio"),
     }
+    # v1.5.61 模拟挂单：把文章的 SMC 计划写进 meta.json 的 plan 节（发布成功后建单钩子读它）。
+    # 观望（neutral/noplay/无点位）→ plan=null，绝不硬造方向
+    plan = None
+    try:
+        bias, _why, smc = _bias(stat)
+        lv = _plan_levels(stat, bias, smc)
+        if bias in ("long", "short") and lv and not lv.get("noplay") \
+                and lv.get("entry_px") and lv.get("stop"):
+            plan = {"direction": bias, "entry": lv["entry_px"],
+                    "zone_lo": lv.get("zone_lo"), "zone_hi": lv.get("zone_hi"),
+                    "stop": lv["stop"], "tp": lv.get("tp1"), "price": lv["price"]}
+    except Exception:
+        plan = None
     with open(meta_f, "w", encoding="utf-8") as f:
         json.dump({"symbol": symbol, "market": market, "ts": int(time.time()),
                    "stats": stats, "tags": tags, "title": title,
                    "style": art["style"], "style_label": art["style_label"],
-                   "news_count": (stat.get("news") or {}).get("count", 0)},
+                   "news_count": (stat.get("news") or {}).get("count", 0),
+                   "plan": plan},
                   f, ensure_ascii=False, indent=1)
 
     return {"ok": True, "dir": out_dir, "title_file": title_f, "text_file": text_f,
             "cover": cover, "extra_chart": extra, "chart_4h": chart_4h,
-            "tags": tags, "stats": stats,
+            "tags": tags, "stats": stats, "plan": plan,
             "style": art["style"], "style_label": art["style_label"]}

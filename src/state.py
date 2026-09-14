@@ -126,6 +126,31 @@ def _init():
         created_at REAL NOT NULL,
         updated_at REAL NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS paper_orders (
+        id TEXT PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        market TEXT DEFAULT 'futures',
+        direction TEXT DEFAULT 'long',
+        entry REAL NOT NULL,
+        zone_lo REAL DEFAULT 0,
+        zone_hi REAL DEFAULT 0,
+        stop REAL DEFAULT 0,
+        tp REAL DEFAULT 0,
+        leverage INTEGER DEFAULT 10,
+        margin REAL DEFAULT 100,
+        status TEXT DEFAULT 'pending',
+        last_price REAL DEFAULT 0,
+        filled_ts REAL,
+        closed_ts REAL,
+        close_price REAL DEFAULT 0,
+        pnl_pct REAL DEFAULT 0,
+        post_id TEXT DEFAULT '',
+        title TEXT DEFAULT '',
+        run_dir TEXT DEFAULT '',
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_paper_run ON paper_orders(run_dir) WHERE run_dir <> '';
     CREATE TABLE IF NOT EXISTS radar_tracks (
         id TEXT PRIMARY KEY,
         symbol TEXT NOT NULL,
@@ -844,6 +869,83 @@ def track_set_active(tid: str, active: bool) -> None:
 @_serialized
 def track_remove(tid: str) -> None:
     _conn_get().execute("DELETE FROM tracked_orders WHERE id=?", (tid,))
+    _conn_get().commit()
+
+
+# ---------------- 广场发文模拟挂单（v1.5.61：发文成功按文章 SMC 计划建纸单，7 天结算） ----------------
+
+def _paper_out(r) -> dict:
+    return dict(r)
+
+
+@_serialized
+def paper_add(symbol: str, direction: str, entry: float, stop: float, tp: float,
+              zone_lo: float = 0, zone_hi: float = 0, market: str = "futures",
+              leverage: int = 10, margin: float = 100.0, price: float = 0,
+              status: str = "pending", post_id: str = "", title: str = "",
+              run_dir: str = "") -> str:
+    """创建模拟挂单。同 run_dir 已存在则幂等返回（防重复建单）。
+    status: pending=挂单中 / open=已入场（建单时现价已在入场区内）。"""
+    if run_dir:
+        exist = _conn_get().execute(
+            "SELECT id FROM paper_orders WHERE run_dir=?", (run_dir,)).fetchone()
+        if exist:
+            return exist["id"]
+    pid = _uid()
+    now = time.time()
+    filled_ts = now if status == "open" else None
+    _conn_get().execute(
+        "INSERT INTO paper_orders (id,symbol,market,direction,entry,zone_lo,zone_hi,stop,tp,"
+        "leverage,margin,status,last_price,filled_ts,closed_ts,close_price,pnl_pct,"
+        "post_id,title,run_dir,created_at,updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,? ,NULL,0,0,?,?,?, ?,?)",
+        (pid, str(symbol).upper(), market or "futures",
+         "short" if str(direction).lower() == "short" else "long",
+         float(entry), float(zone_lo or 0), float(zone_hi or 0),
+         float(stop or 0), float(tp or 0), int(leverage or 10), float(margin or 100),
+         status or "pending", float(price or 0), filled_ts,
+         post_id or "", title or "", run_dir or "", now, now))
+    _conn_get().commit()
+    return pid
+
+
+def paper_list(limit: int = 200) -> list:
+    rows = _conn_get().execute(
+        "SELECT * FROM paper_orders ORDER BY created_at DESC LIMIT ?", (int(limit),)).fetchall()
+    return [_paper_out(r) for r in rows]
+
+
+def paper_stats() -> dict:
+    rows = _conn_get().execute("SELECT status, COUNT(*) n FROM paper_orders GROUP BY status").fetchall()
+    by = {r["status"]: r["n"] for r in rows}
+    total = sum(by.values())
+    settled_wl = by.get("win", 0) + by.get("loss", 0)
+    return {"total": total, "pending": by.get("pending", 0), "open": by.get("open", 0),
+            "win": by.get("win", 0), "loss": by.get("loss", 0), "noentry": by.get("noentry", 0),
+            "win_rate": round(by.get("win", 0) / settled_wl * 100, 1) if settled_wl else None}
+
+
+@_serialized
+def paper_update(pid: str, **fields) -> None:
+    """允许字段：status/last_price/filled_ts/closed_ts/close_price/pnl_pct。"""
+    allowed = {"status", "last_price", "filled_ts", "closed_ts", "close_price", "pnl_pct"}
+    sets, vals = [], []
+    for k, v in fields.items():
+        if k in allowed:
+            sets.append(f"{k}=?")
+            vals.append(v)
+    if not sets:
+        return
+    sets.append("updated_at=?")
+    vals.append(time.time())
+    vals.append(pid)
+    _conn_get().execute(f"UPDATE paper_orders SET {', '.join(sets)} WHERE id=?", vals)
+    _conn_get().commit()
+
+
+@_serialized
+def paper_remove(pid: str) -> None:
+    _conn_get().execute("DELETE FROM paper_orders WHERE id=?", (pid,))
     _conn_get().commit()
 
 

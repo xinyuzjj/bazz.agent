@@ -22,6 +22,20 @@ type Post = {
 type Stats = { total: number; posted: number; failed: number; today: number; week: number; limit_per_day: number };
 type KeyInfo = { present: boolean; masked: string; source?: string };
 
+// v1.5.61：广场发文模拟挂单（发文成功按文章 SMC 计划自动建单，后台 7 天结算）
+type PaperOrder = {
+  id: string; created_at: number; symbol: string; market: string;
+  direction: "long" | "short"; entry: number; zone_lo: number; zone_hi: number;
+  stop: number; tp: number; leverage: number; margin: number;
+  status: "pending" | "open" | "win" | "loss" | "noentry";
+  last_price: number; filled_ts: number | null; closed_ts: number | null;
+  close_price: number; pnl_pct: number; post_id: string; title: string; run_dir: string;
+};
+type PaperStats = {
+  total: number; pending: number; open: number; win: number; loss: number;
+  noentry: number; win_rate: number | null;
+};
+
 const KIND_META: Record<string, { label: string; glyph: string; tip: string }> = {
   text: { label: "短文", glyph: "✎", tip: "纯文本快讯" },
   article: { label: "文章", glyph: "▤", tip: "带标题的长文" },
@@ -44,11 +58,28 @@ function rel(ts: number): { n: number; u: string } {
   return { n: Math.floor(s / 86400), u: "d" };
 }
 
+function fmtPx(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(Number(n)) || Number(n) === 0) return "—";
+  return Number(n).toLocaleString("en-US", { maximumSignificantDigits: 6 });
+}
+
+function fmtPct(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(Number(n))) return "—";
+  return `${n > 0 ? "+" : ""}${Number(n).toFixed(2)}%`;
+}
+
+const PAPER_ST_PILL: Record<PaperOrder["status"], string> = {
+  pending: "pill-dim", open: "pill-gold", win: "pill-green", loss: "pill-red", noentry: "pill-dim",
+};
+
 export function SquarePostView() {
   const [data, setData] = useState<{ posts: Post[]; stats: Stats; key: KeyInfo } | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [filter, setFilter] = useState<"all" | "posted" | "failed">("all");
+  // v1.5.61：广场页双标签 —— 发文台账 / 模拟挂单
+  const [tab, setTab] = useState<"ledger" | "paper">("ledger");
+  const [paper, setPaper] = useState<{ orders: PaperOrder[]; stats: PaperStats } | null>(null);
 
   // KEY_VAULT —— OpenAPI Key 填入
   const [squareKey, setSquareKey] = useState("");
@@ -72,6 +103,18 @@ export function SquarePostView() {
   }, []);
 
   useEffect(() => { load(); const t = setInterval(() => load(true), 15000); return () => clearInterval(t); }, [load]);
+
+  // v1.5.61：模拟挂单数据（15s 静默刷新，与台账同节奏）
+  const loadPaper = useCallback(async (silent = false) => {
+    try {
+      const r: any = await api.squarePaper();
+      if (r?.ok === false) return;
+      setPaper({ orders: r?.orders ?? [], stats: r?.stats ?? { total: 0, pending: 0, open: 0, win: 0, loss: 0, noentry: 0, win_rate: null } });
+    } catch {
+      /* 模拟挂单拉取失败不打扰台账主界面 */
+    }
+  }, []);
+  useEffect(() => { loadPaper(); const t = setInterval(() => loadPaper(true), 15000); return () => clearInterval(t); }, [loadPaper]);
 
   const connectSquare = async () => {
     if (!squareKey.trim()) { setSquareErr(t("square.keyEmpty")); return; }
@@ -143,6 +186,18 @@ export function SquarePostView() {
     }
   }, [t, data, load]);
 
+  // v1.5.61：删除模拟单（仅本地数据，不影响真实资金）
+  const delPaper = useCallback(async (id: string) => {
+    if (!id) return;
+    if (!await confirmDialog(t("square.paperDelTip"), { title: t("square.paperDel"), danger: true })) return;
+    try {
+      await api.squarePaperDelete([id]);
+      loadPaper(true);
+    } catch {
+      /* 静默，下轮刷新 */
+    }
+  }, [t, loadPaper]);
+
   return (
     <div className="p-5 space-y-4">
       {/* Header */}
@@ -165,6 +220,24 @@ export function SquarePostView() {
         </button>
       </div>
 
+      {/* v1.5.61：页签 —— 发文台账 / 模拟挂单 */}
+      <div className="glass p-2 flex items-center gap-1.5" style={{ borderRadius: 12 }}>
+        {([["ledger", t("square.tabLedger")], ["paper", t("square.tabPaper")]] as const).map(([k, label]) => (
+          <button key={k} onClick={() => setTab(k)}
+            className={`px-3.5 py-1.5 rounded-md font-mono text-[12px] transition-colors
+              ${tab === k ? "bg-gold text-canvas" : "text-ink-dim hover:bg-card/60 border border-transparent"}`}>
+            {label}
+            {k === "paper" && paper && paper.stats.total > 0 && (
+              <span className="ml-1.5 opacity-70">{paper.stats.total}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {tab === "paper" ? (
+        <PaperPanel paper={paper} onDelete={delPaper} />
+      ) : (
+        <>
       {/* KEY_VAULT —— Square OpenAPI Key 填入 / 状态 / 断开 */}
       <div className="glass p-3.5 space-y-2.5">
         <div className="flex items-center gap-3 flex-wrap">
@@ -292,6 +365,8 @@ export function SquarePostView() {
           {shown.map((p, i) => <PostCard key={p.id || `${p.ts}-${i}`} p={p} onDelete={delPost} />)}
         </div>
       )}
+        </>
+      )}
     </div>
   );
 }
@@ -303,6 +378,116 @@ function Stat({ label, value, sub, gold, green, red }: { label: string; value: s
       <div className="prefix">{label}</div>
       <div className={`mt-1 font-mono text-[19px] font-bold tabular ${color}`}>{value}</div>
       <div className="mt-0.5 font-mono text-[10px] text-ink-mute">{sub}</div>
+    </div>
+  );
+}
+
+// ---------------- v1.5.61：模拟挂单面板 ----------------
+
+function PaperPanel({ paper, onDelete }: { paper: { orders: PaperOrder[]; stats: PaperStats } | null; onDelete?: (id: string) => void }) {
+  const t = useT();
+  const s = paper?.stats ?? { total: 0, pending: 0, open: 0, win: 0, loss: 0, noentry: 0, win_rate: null };
+  const orders = paper?.orders ?? [];
+  return (
+    <div className="space-y-3">
+      {/* 数据口径说明 */}
+      <div className="rounded-md border border-line bg-elevated/20 px-4 py-3 flex items-start gap-3" style={{ borderRadius: 10 }}>
+        <I.Shield size={14} className="text-gold shrink-0 mt-0.5" />
+        <div className="font-mono text-[11px] text-ink-dim leading-relaxed">{t("square.paperNote")}</div>
+      </div>
+
+      {/* 战绩统计 */}
+      <div className="grid grid-cols-3 md:grid-cols-7 gap-3">
+        <Stat label={t("square.paperStatTotal")} value={String(s.total)} sub={t("square.paperStatTotal")} gold />
+        <Stat label={t("square.paperStatPending")} value={String(s.pending)} sub={t("square.paperStPending")} />
+        <Stat label={t("square.paperStatOpen")} value={String(s.open)} sub={t("square.paperStOpen")} gold />
+        <Stat label={t("square.paperStatWin")} value={String(s.win)} sub={t("square.paperStWin")} green />
+        <Stat label={t("square.paperStatLoss")} value={String(s.loss)} sub={t("square.paperStLoss")} red={s.loss > 0} />
+        <Stat label={t("square.paperStatNoentry")} value={String(s.noentry)} sub={t("square.paperStNoentry")} />
+        <Stat label={t("square.paperStatWinRate")}
+          value={s.win_rate === null || s.win_rate === undefined ? "—" : `${s.win_rate}%`}
+          sub={s.win_rate === null || s.win_rate === undefined ? t("square.paperWinRateNA") : t("square.paperStatWinRate")}
+          green={(s.win_rate ?? 0) >= 50} />
+      </div>
+
+      {/* 单卡列表 */}
+      {orders.length === 0 ? (
+        <div className="glass px-5 py-10 text-center space-y-2" style={{ borderRadius: 12 }}>
+          <I.Megaphone className="text-ink-mute mx-auto" size={26} />
+          <div className="font-mono text-[13px] text-ink">{t("square.paperEmpty")}</div>
+          <div className="max-w-[520px] mx-auto font-mono text-[11px] text-ink-mute leading-relaxed">{t("square.paperEmptyHint")}</div>
+        </div>
+      ) : (
+        <div className="space-y-2.5">
+          {orders.map((o) => <PaperCard key={o.id} o={o} onDelete={onDelete} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PaperCard({ o, onDelete }: { o: PaperOrder; onDelete?: (id: string) => void }) {
+  const t = useT();
+  const isLong = o.direction === "long";
+  const stLabel = { pending: t("square.paperStPending"), open: t("square.paperStOpen"),
+    win: t("square.paperStWin"), loss: t("square.paperStLoss"), noentry: t("square.paperStNoentry") }[o.status];
+  // 浮动盈亏：持仓中按现价折算；结算后用落库的 pnl_pct
+  const floatPnl = o.status === "open" && o.last_price
+    ? (isLong ? (o.last_price / o.entry - 1) : (o.entry / o.last_price - 1)) * o.leverage * 100
+    : null;
+  const pnl = o.status === "win" || o.status === "loss" ? o.pnl_pct : floatPnl;
+  const pnlColor = pnl === null ? "text-ink-mute" : pnl > 0 ? "text-green" : pnl < 0 ? "text-red" : "text-ink-dim";
+  const share = o.post_id ? `https://www.binance.com/square/post/${o.post_id}` : "";
+  return (
+    <div className="square-post glass space-y-2">
+      {/* head：币种 / 方向 / 状态 / 时间 / 删除 */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="font-mono text-[14px] font-bold text-ink">${o.symbol.replace(/USDT$/, "")}</span>
+        <span className={`pill text-[10px] ${isLong ? "pill-green" : "pill-red"}`}>
+          {isLong ? "▲" : "▼"} {isLong ? t("square.paperLong") : t("square.paperShort")} · {o.leverage}x
+        </span>
+        <span className={`pill text-[10px] ${PAPER_ST_PILL[o.status]}`}>
+          {o.status === "open" && <span className="dot dot-green live" />}
+          {stLabel}
+        </span>
+        <span className="ml-auto font-mono text-[10px] text-ink-mute" title={fmtTs(o.created_at * 1000)}>
+          {t("square.paperCreated")} {fmtTs(o.created_at * 1000)}
+        </span>
+        {onDelete && (
+          <button onClick={() => onDelete(o.id)} className="btn-ghost text-[11px] py-1 text-red/80 hover:text-red" title={t("square.paperDelTip")}>
+            <I.Trash size={11} /> {t("square.paperDel")}
+          </button>
+        )}
+      </div>
+
+      {/* 点位行 */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-x-4 gap-y-1.5 font-mono text-[11px]">
+        <div><span className="text-ink-mute">{t("square.paperEntryZone")}</span>
+          <div className="text-ink font-bold">{fmtPx(o.zone_lo || o.entry)} ~ {fmtPx(o.zone_hi || o.entry)}</div></div>
+        <div><span className="text-ink-mute">{t("square.paperStop")}</span>
+          <div className="text-red font-bold">{fmtPx(o.stop)}</div></div>
+        <div><span className="text-ink-mute">{t("square.paperTp")}</span>
+          <div className="text-green font-bold">{fmtPx(o.tp)}</div></div>
+        <div><span className="text-ink-mute">{t("square.paperNow")}</span>
+          <div className="text-ink font-bold">{fmtPx(o.last_price)}</div></div>
+        <div><span className="text-ink-mute">{o.status === "win" || o.status === "loss" ? t("square.paperPnl") : t("square.paperFloat")}</span>
+          <div className={`${pnlColor} font-bold text-[13px]`}>{pnl === null ? "—" : fmtPct(pnl)}
+            {(o.status === "win" || o.status === "loss") && o.closed_ts ? <span className="text-ink-mute font-normal text-[10px] ml-1">{t("square.paperClosed")} {fmtTs(o.closed_ts * 1000)}</span> : null}
+          </div></div>
+      </div>
+
+      {/* 关联发文 */}
+      {(o.title || share) && (
+        <div className="flex items-center gap-2 flex-wrap font-mono text-[10.5px] text-ink-dim">
+          <span className="text-ink-mute">{t("square.paperFrom")}</span>
+          {o.title && <span className="truncate max-w-[420px]">{o.title}</span>}
+          {share && (
+            <a href={share} target="_blank" rel="noreferrer" className="btn-ghost text-[10.5px] py-0.5 !text-gold">
+              <I.Link size={10} /> {t("square.originalPost")}
+            </a>
+          )}
+        </div>
+      )}
     </div>
   );
 }

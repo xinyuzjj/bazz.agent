@@ -19,11 +19,37 @@ _DB: dict = {}
 _stub_state = types.ModuleType("state")
 _stub_state.get_setting = lambda k, d="": _DB.get(k, d)
 _stub_state.set_setting = lambda k, v: _DB.__setitem__(k, v)
+# 收集期此刻可能已有真实 state（按字母序更前的测试文件已在收集时导入）
+_state_saved = sys.modules.get("state")
 sys.modules["state"] = _stub_state
 sys.path.insert(0, str(ROOT / "src"))
 
 import llm_auth  # noqa: E402
 import llm  # noqa: E402
+
+# pytest 会先收集（= import）全部测试文件、再运行：模块级桩若一直留在 sys.modules，
+# 后面文件**运行期**的 `import state`（如 test_v1535 的 desktop_app e2e）会拿到桩
+# 而炸掉。导入完成后立即还原；运行到本文件的测试时再由下方 fixture 重新上桩
+# （llm_auth/llm 内部有函数级 from state import，调用期才解析，必须保证测试期间桩在场）。
+if _state_saved is not None:
+    sys.modules["state"] = _state_saved
+else:
+    sys.modules.pop("state", None)
+
+try:
+    import pytest
+
+    @pytest.fixture(scope="module", autouse=True)
+    def _state_stub():
+        """本文件测试运行期间恢复 state 桩，结束后还原（不污染其他测试文件）。"""
+        sys.modules["state"] = _stub_state
+        yield
+        if _state_saved is not None:
+            sys.modules["state"] = _state_saved
+        else:
+            sys.modules.pop("state", None)
+except ImportError:  # 脱离 pytest 直跑时由 main() 自行上/撤桩
+    pass
 
 
 class _FakeResp:
@@ -401,18 +427,27 @@ def test_frontend_opens_system_browser_not_in_app_window():
 # ---------------- runner ----------------
 
 def main():
-    tests = [(k, v) for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
-    fails = 0
-    for name, fn in tests:
-        try:
-            fn()
-            print(f"  PASS  {name}")
-        except Exception as e:
-            fails += 1
-            import traceback
-            print(f"  FAIL  {name}: {e}")
-            traceback.print_exc()
-    print(f"\n{len(tests) - fails}/{len(tests)} passed")
+    # 脱离 pytest 直跑：只有本文件在跑，自行上/撤桩
+    sys.modules["state"] = _stub_state
+    try:
+        tests = [(k, v) for k, v in sorted(globals().items())
+                 if k.startswith("test_") and callable(v)]
+        fails = 0
+        for name, fn in tests:
+            try:
+                fn()
+                print(f"  PASS  {name}")
+            except Exception as e:
+                fails += 1
+                import traceback
+                print(f"  FAIL  {name}: {e}")
+                traceback.print_exc()
+        print(f"\n{len(tests) - fails}/{len(tests)} passed")
+    finally:
+        if _state_saved is not None:
+            sys.modules["state"] = _state_saved
+        else:
+            sys.modules.pop("state", None)
     sys.exit(1 if fails else 0)
 
 

@@ -163,10 +163,11 @@ def test_ob_stop_anchored_to_structure_and_distance_from_entry():
             "k4h": _k([0.125, 0.1332], [0.1155, 0.12], [0.1332, 0.14]),
             "c24": [0.13, 0.1332], "change_pct": 1.0, "market": "spot",
             "funding_rate": 0.00004}
-    smc = {"ob": {"low": 0.1155, "high": 0.128}, "sh_v": [0.162]}
+    # v1.5.60 护栏：入场→止损距离必须 ≤8%，OB 区收窄到 0.121~0.128（5.9%）
+    smc = {"ob": {"low": 0.121, "high": 0.128}, "sh_v": [0.162]}
     lv = sr._plan_levels(stat, "long", smc)
     assert lv, "plan_levels 不应返回空"
-    assert abs(lv["stop"] - 0.1155 * 0.995) < 1e-9, f"止损没锚在 OB 下沿下方：{lv['stop']}"
+    assert abs(lv["stop"] - 0.121 * 0.995) < 1e-9, f"止损没锚在 OB 下沿下方：{lv['stop']}"
     assert lv["anchor"] and "OB 下沿" in lv["anchor"], f"缺结构锚位说明：{lv.get('anchor')}"
     assert abs(lv["entry_px"] - 0.128) < 1e-9, \
         f"多头入场参考价应是 OB 上沿（第一触点保证成交），实际 {lv.get('entry_px')}"
@@ -211,7 +212,7 @@ def test_tp_prefers_smc_swing_target():
             "k90": _k([0.12, 0.125], [0.10, 0.11], [0.30, 0.135], 90),
             "k4h": _k([0.125, 0.1332], [0.1155, 0.12], [0.1332, 0.14]),
             "c24": [0.13, 0.1332], "change_pct": 1.0, "market": "spot"}
-    smc = {"ob": {"low": 0.1155, "high": 0.128}, "sh_v": [0.14, 0.162]}
+    smc = {"ob": {"low": 0.121, "high": 0.128}, "sh_v": [0.14, 0.162]}
     lv = sr._plan_levels(stat, "long", smc)
     assert abs(lv["tp1"] - 0.162) < 1e-9 and lv["tp_txt"] == "4h 前高/摆动高点", \
         f"摆动点 RR 达标却没优先用：{lv['tp1']} {lv['tp_txt']}"
@@ -220,12 +221,14 @@ def test_tp_prefers_smc_swing_target():
 def test_tp_falls_back_to_deeper_liquidity_when_swing_too_close():
     """用户指示：SMC 摆动点太近（RR<1.5）→ 换其他止盈方法（更远的流动性目标），标签如实。"""
     sr = _mod()
-    # 摆动高点 0.132 距进价 0.128 仅 4 点（RR≈0.3）→ 应换 90日高点 0.30（RR≈13）
+    # 摆动高点 0.132 距进价 0.128 仅 4 点（RR<1.5）→ 应换更远目标 90日高点 0.30；
+    # 近 30 根 4h 高点 0.135 的 RR 也 <1.5，不会半路截胡
+    # （v1.5.60 后 OB 收窄到 0.121~0.128 过 ≤8% 护栏，风险变小、RR 变大，故压低 4h 高点）
     stat = {"symbol": "TESTUSDT",
             "k90": _k([0.12, 0.125], [0.10, 0.11], [0.30, 0.135], 90),
-            "k4h": _k([0.125, 0.1332], [0.1155, 0.12], [0.1332, 0.14]),
+            "k4h": _k([0.125, 0.1332], [0.1155, 0.12], [0.1332, 0.135]),
             "c24": [0.13, 0.1332], "change_pct": 1.0, "market": "spot"}
-    smc = {"ob": {"low": 0.1155, "high": 0.128}, "sh_v": [0.132]}
+    smc = {"ob": {"low": 0.121, "high": 0.128}, "sh_v": [0.132]}
     lv = sr._plan_levels(stat, "long", smc)
     assert abs(lv["tp1"] - 0.30) < 1e-9, f"摆动点太近却没换更远目标：{lv['tp1']}"
     assert lv["tp_txt"] == "90日高点", f"换方法后标签未如实标注：{lv['tp_txt']}"
@@ -237,12 +240,13 @@ def test_tp_falls_back_to_deeper_liquidity_when_swing_too_close():
 def test_tp_rr_below_one_gives_up():
     """所有止盈方法都凑不出 RR≥1 → 如实劝退，不再给仓位算法。"""
     sr = _mod()
-    # 进价 0.128、止损 0.1149（风险 0.0131）；30 根高点/90日高点都只有 0.14（RR≈0.9）
+    # 进价 0.128、止损 0.121*0.995（风险 ≈0.0076，过 ≤8% 护栏）；
+    # 所有止盈候选（0.132 / 0.1332 / 90日高点 0.135）RR 都 <1 → 如实劝退
     stat = {"symbol": "TESTUSDT",
-            "k90": _k([0.12, 0.125], [0.10, 0.11], [0.14, 0.135], 90),
-            "k4h": _k([0.125, 0.1332], [0.1155, 0.12], [0.1332, 0.14]),
+            "k90": _k([0.12, 0.125], [0.10, 0.11], [0.134, 0.135], 90),
+            "k4h": _k([0.125, 0.1332], [0.1155, 0.12], [0.1332, 0.1332]),
             "c24": [0.13, 0.1332], "change_pct": 1.0, "market": "spot"}
-    smc = {"ob": {"low": 0.1155, "high": 0.128}, "sh_v": [0.132]}
+    smc = {"ob": {"low": 0.121, "high": 0.128}, "sh_v": [0.132]}
     plan = sr._plan(stat, "long", smc)
     joined = "\n".join(plan)
     assert "盈亏比 ≈ 0.9" in joined, f"RR 未如实标出：{joined}"
@@ -254,16 +258,17 @@ def test_tp_rr_below_one_gives_up():
 def test_tp_rr_between_one_and_half_notes_small():
     """1.0 ≤ RR < 1.5：保留计划但标注「只试小仓」。"""
     sr = _mod()
-    # 进价 0.128、止损 0.1155*0.995（风险 ≈0.0131）；摆动高点 0.147（回报 0.019）
-    # → RR ≈ 1.45（<1.5 阈值）→ 标「只试小仓」
+    # 进价 0.128、止损 0.121*0.995（风险 ≈0.0076，过 ≤8% 护栏）；
+    # 最远候选 90日高点 0.136 → RR ≈ 1.05（1.0 ≤ RR < 1.5）→ 标「只试小仓」
     stat = {"symbol": "TESTUSDT",
-            "k90": _k([0.12, 0.125], [0.10, 0.11], [0.14, 0.135], 90),
-            "k4h": _k([0.125, 0.1332], [0.1155, 0.12], [0.1332, 0.14]),
+            "k90": _k([0.12, 0.125], [0.10, 0.11], [0.134, 0.136], 90),
+            "k4h": _k([0.125, 0.1332], [0.1155, 0.12], [0.1332, 0.135]),
             "c24": [0.13, 0.1332], "change_pct": 1.0, "market": "spot"}
-    smc = {"ob": {"low": 0.1155, "high": 0.128}, "sh_v": [0.147]}
+    smc = {"ob": {"low": 0.121, "high": 0.128}, "sh_v": [0.132]}
     plan = sr._plan(stat, "long", smc)
     tp = [l for l in plan if l.startswith("· 止盈：")][0]
-    assert "盈亏比 ≈ 1.5" in tp or "盈亏比 ≈ 1.4" in tp, tp
+    rr = float(re.search(r"盈亏比 ≈ ([\d.]+)", tp).group(1))
+    assert 1.0 <= rr < 1.5, tp
     assert "只试小仓" in tp, f"1≤RR<1.5 未标注小仓：{tp}"
 
 
@@ -274,7 +279,7 @@ def test_tp_rr_strong_no_apology():
             "k90": _k([0.12, 0.125], [0.10, 0.11], [0.14, 0.135], 90),
             "k4h": _k([0.125, 0.1332], [0.1155, 0.12], [0.1332, 0.14]),
             "c24": [0.13, 0.1332], "change_pct": 1.0, "market": "spot"}
-    smc = {"ob": {"low": 0.1155, "high": 0.128}, "sh_v": [0.162]}
+    smc = {"ob": {"low": 0.121, "high": 0.128}, "sh_v": [0.162]}
     plan = sr._plan(stat, "long", smc)
     tp = [l for l in plan if l.startswith("· 止盈：")][0]
     rr = float(re.search(r"盈亏比 ≈ ([\d.]+)", tp).group(1))
@@ -323,7 +328,8 @@ def test_plan_levels_anchor_covers_all_branches():
     src_all = SRC_PATH.read_text(encoding="utf-8")
     lv_src = src_all[src_all.index("def _plan_levels"):src_all.index("def _plan(")]
     anchors = lv_src.count('lv["anchor"] = ')
-    assert anchors == 5, f"入场分支锚位说明应 5 处（OB多/OTE多/摆动多/OB空/摆动空），实际 {anchors}"
+    assert anchors == 6, \
+        f"入场分支锚位说明应 6 处（多/空 × OB/OTE/摆动，v1.5.60 降级链），实际 {anchors}"
 
 
 # ---------------- 5. 端到端 ----------------

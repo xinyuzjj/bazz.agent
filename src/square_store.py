@@ -333,15 +333,63 @@ def record_from_run(skill_name: str, arg_s: str, output: str, exit_code: int,
         if post_id and not share_url:
             share_url = f"{POST_URL_PREFIX}{post_id}"
 
-        return append_record(
+        rec = append_record(
             kind=kind, text=text, title=title,
             tags=_extract_tags(text, title),
             post_id=post_id, share_url=share_url,
             status="failed" if failed else "posted",
             error=err if failed else "", via=via,
         )
+        # v1.5.61 模拟挂单：rich 发文**发布成功**且产物 meta.json 带 SMC 计划 → 建纸单。
+        # agent / 手动两条执行路径都汇聚在 record_from_run，钩子放这里全覆盖；
+        # 幂等（run_dir 唯一索引），观望文章 plan=null 不建单
+        if not failed and skill_name == RICH_SKILL and m_dir and os.path.isdir(m_dir.group(1)):
+            try:
+                _paper_order_from_run(m_dir.group(1), post_id, title)
+            except Exception:
+                pass
+        return rec
     except Exception:
         return None
+
+
+def _paper_order_from_run(run_dir: str, post_id: str, title: str) -> str | None:
+    """读产物 meta.json 的 plan 节建模拟挂单。现价已到/穿过入场区 → 直接 open（持仓中），
+    否则 pending（挂单中）——与 paper_tracker._eval 的触发口径一致（多头 price<=zone_hi、
+    空头 price>=zone_lo 即视为已触及）。"""
+    import state as _state
+    from scanner import klines_ohlcv
+
+    meta = json.load(open(os.path.join(run_dir, "meta.json"), encoding="utf-8"))
+    plan = meta.get("plan") or {}
+    if not plan.get("entry") or not plan.get("stop"):
+        return None
+    symbol = (meta.get("symbol") or "").upper()
+    if not symbol:
+        return None
+    market = meta.get("market") or "futures"
+    direction = plan.get("direction") or "long"
+    price = float(plan.get("price") or 0)
+    try:
+        k = klines_ohlcv(symbol, interval="5m", limit=1, market=market) or {}
+        if k.get("closes"):
+            price = float(k["closes"][-1])
+    except Exception:
+        pass
+    entry, zlo, zhi = float(plan["entry"]), float(plan.get("zone_lo") or 0), float(plan.get("zone_hi") or 0)
+    if price:
+        if zlo and zhi:
+            touched = price <= zhi if direction == "long" else price >= zlo
+        else:
+            touched = price <= entry if direction == "long" else price >= entry
+        status = "open" if touched else "pending"
+    else:
+        status = "pending"
+    return _state.paper_add(symbol=symbol, direction=direction, entry=entry,
+                            stop=plan["stop"], tp=plan.get("tp") or 0,
+                            zone_lo=zlo, zone_hi=zhi, market=market,
+                            price=price, status=status, post_id=post_id,
+                            title=title, run_dir=run_dir)
 
 
 # ---------------- 只读查询 ----------------

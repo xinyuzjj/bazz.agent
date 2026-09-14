@@ -114,9 +114,11 @@ proxy_pool.bootstrap()
 import market_ws
 import order_tracker
 import radar_tracker
+import paper_tracker        # v1.5.61：广场发文模拟挂单复查（发文成功自动建单 → 7 天结算）
 market_ws.start()
 order_tracker.ensure_started()
 radar_tracker.ensure_started()  # v1.5.2：妖币启动前发现 → 后续暴涨/暴跌结局跟踪
+paper_tracker.ensure_started()
 
 # 后台预热钱包状态缓存（baw 冷启动慢，先算好，前端打开钱包页即秒回）
 threading.Thread(target=wallet_client.warm_wallet_cache, daemon=True).start()
@@ -2150,6 +2152,39 @@ def square_posts_delete_endpoint(payload: dict = Body(default_factory=dict)):
 def square_key_endpoint():
     import square_store
     return square_store.square_key_status()
+
+
+# ---------------- v1.5.61 广场发文模拟挂单 ----------------
+
+@app.get("/api/square/paper")
+def square_paper_endpoint():
+    """模拟挂单列表 + 战绩统计（发文成功后按文章 SMC 计划自动建单，7 天结算）。"""
+    import paper_tracker
+    import state
+    try:
+        paper_tracker.ensure_started()   # 双保险：路由先于启动钩子被调也能起线程
+        return {"ok": True, "orders": state.paper_list(), "stats": state.paper_stats()}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "orders": [],
+                "stats": {"total": 0, "pending": 0, "open": 0, "win": 0,
+                          "loss": 0, "noentry": 0, "win_rate": None}}
+
+
+@app.post("/api/square/paper/delete")
+def square_paper_delete_endpoint(payload: dict = Body(default_factory=dict)):
+    """删除本地模拟单（误建/清理用），不影响任何真实资金。body: { ids: [...] }"""
+    import state
+    try:
+        ids = payload.get("ids")
+        if not isinstance(ids, list):
+            return {"ok": False, "error": "ids 必须是数组", "deleted": 0}
+        n = 0
+        for pid in ids:
+            state.paper_remove(str(pid))
+            n += 1
+        return {"ok": True, "deleted": n}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "deleted": 0}
 
 
 @app.post("/api/square/connect")
