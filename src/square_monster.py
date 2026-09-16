@@ -612,9 +612,11 @@ def _draw_stage_band(dr, x0, y0, x1, y1, sa: dict):
         elif i == cur:
             dr.rounded_rectangle([cx0, y0, cx1, y1], radius=8, fill=_blend(PANEL, color, 0.34),
                                  outline=color, width=2)
-            # 指针
+            # 指针：贴在**高亮框内侧顶部**。
+            # v1.6.6 视觉验收发现：原先画在框外上方，当「当前格」恰好是第 1/2 格时，
+            # 游标会压住左上角那行表头「妖币剧本 · 演到第几格」——所以挪进框里。
             mx = (cx0 + cx1) / 2
-            dr.polygon([(mx - 9, y0 - 12), (mx + 9, y0 - 12), (mx, y0 - 1)], fill=color)
+            dr.polygon([(mx - 8, y0 + 11), (mx + 8, y0 + 11), (mx, y0 + 2)], fill=color)
             dr.text((cx0 + 10, y0 + 12), "当前", font=_font(11, True), fill=color)
             dr.text((cx0 + 10, y0 + 34), label, font=_font(16, True), fill=TXT)
         else:
