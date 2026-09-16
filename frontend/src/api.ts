@@ -165,6 +165,8 @@ export const api = {
   // v1.4.0 订单跟踪（下单后状态流转 + SL/TP 提醒）
   ordersTrack: () => jget("/orders/track"),
   orderUntrack: (id: string) => jdel(`/orders/track?id=${encodeURIComponent(id)}`),
+  // v1.6.5（OPT-09）真撤单：去交易所把挂单摘掉（与上面的「停止跟踪」不是一回事）
+  orderCancel: (b: { id?: string; symbol: string; order_id: string }) => jpost("/orders/cancel", b),
   // 链上钱包（Binance Web3 Wallet API，BX- Key）：官方连接器桥
   web3Status: () => jget("/wallet/web3/status"),
   web3Connect: (api_key: string, secret: string) => jpost("/wallet/web3/connect", { api_key, secret }),

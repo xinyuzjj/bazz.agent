@@ -29,12 +29,13 @@ v1.6.3 的定位（用户确认）＝「顺剧本骑①②」：
 8. 源码护栏：不得再出现 abs(funding) 这类方向无关写法
 9. 链路护栏：contract 独大 / 换手畸高 所需的 fut_qv、oi_usd 已接进主流程
 
-安装版真实关单回放（23 笔：20 dump / 3 moon）得到的结论：
+安装版真实关单回放（23 笔 = 20 LONG（3 moon / 17 dump）+ 3 SHORT）得到的结论：
   · 3 笔做空 3/3 全亏（轧空 +10.0/+10.3/+11.0%，最大有利仅 0.0/0.0/1.4%）→ 支持「绝不做空」
   · 负费率既出现在 dump（REZ −0.373%、MTL −0.237%）也出现在 moon（VTHO −0.776%）
-    → **负费率不是可靠判别器**，故第 6 项把硬降级降为标注
+    → **负费率不是可靠判别器**，故第 6 项把硬降级降为标注（v1.6.4 进一步把扣分 10 → 3）
   · dump 组「最大涨」几乎全 ≤6.7%（大量 0.0~3.3%），moon 组全是 30%+
-    → 真正的下一刀是**入场确认**（等第一次上攻站稳），而非继续收紧过滤
+    → 真正的下一刀**不是入场确认**（用户已否决候选观察期，定版「登记即入场、不设候选态」），
+      而是**登记时刻的快照过滤**：只登记「价格未启动（chg24<3%）且持仓未堆积（OI24<5%）」的币。
 
 运行：.venv/Scripts/python.exe tests/test_v163_manip_guard.py
 """
@@ -116,7 +117,9 @@ def test_manip_flags_unit():
     d5.update({"funding": -0.002})
     flags5, _, pen5 = M(d5)
     check("控盘③：费率 −0.20% → 命中「空头付钱」", "空头付钱" in flags5, str(flags5))
-    check("控盘③：命中扣分最重（> 其它信号）", pen5 >= 10.0, str(pen5))
+    # v1.6.4 降权 10 → 3：VTHOUSDT 登记时费率 −0.776% 却是 +31.3% moon，
+    # 全样本负费率只有 1 moon / 2 dump —— 对做多结局判别力弱，不该压掉真妖币。
+    check("控盘③：扣分已降权到 3（不再高于其它信号）", 3.0 <= pen5 < 6.0, str(pen5))
 
     d6 = _clean_d()
     d6.update({"funding": 0.002})                   # 正费率＝多头拥挤，是热度不是收割
@@ -173,7 +176,8 @@ def test_score_funding_directional():
     d_neg = _clean_d()
     d_neg["funding"] = -0.002
     s_neg2 = S(t, {"funding": -0.002}, d_neg, False)
-    check("评分：负费率经控盘层扣 10 分", s_zero - s_neg2 == 10, f"{s_zero}→{s_neg2}")
+    check("评分：负费率经控盘层扣 3 分（v1.6.4 由 10 降权）",
+          s_zero - s_neg2 == 3, f"{s_zero}→{s_neg2}")
 
 
 def test_score_manip_penalty():
@@ -250,12 +254,19 @@ def test_only_unstarted_registered():
     """
     src = _src()
     line = next((l for l in src.splitlines() if l.strip().startswith("rows_ign = [")), "")
-    started_line = next((l for l in src.splitlines() if l.strip().startswith("_started = ")), "")
-    check("登记：rows_ign 带「未启动」前置条件", "not _started(r)" in line, line[:130])
-    check("登记：未启动判定复用 _TRIG_UP_CHG24（与依据生成同源，不会漂移）",
-          "_TRIG_UP_CHG24" in started_line, started_line[:130])
+    # v1.6.4：判定函数由 `_started`（只看价格）改为 `_late`（价格已启动 **或** 持仓已堆积）。
+    # 阈值写在 `_late` 的函数体里（不是 def 那一行），所以要整段取。
+    late_body = src[src.index("def _late("):src.index("rows_ign = [")]
+    check("登记：rows_ign 带「未启动」前置条件", "not _late(r)" in line, line[:130])
+    # v1.6.5（OPT-04）：硬挡线由 _TRIG_UP_CHG24(3.0，触发线) 换成 _TRIG_LATE_CHG24(10.0，有据线)。
+    # 触发线仍是 3.0（"24h +X%" 依据生成用），但**它不再是登记闸门** —— 两者必须分开，
+    # 否则「依据生成阈值」和「登记门槛」会再次被动地绑成一个数。
+    check("登记：未启动判定的硬挡线是 _TRIG_LATE_CHG24（10.0，与 3.0 触发线解耦）",
+          "_TRIG_LATE_CHG24" in late_body, late_body[:220])
+    check("登记：硬挡线不再误用触发线 _TRIG_UP_CHG24",
+          "_TRIG_UP_CHG24" not in late_body, late_body[:220])
     check("登记：已启动的行不丢弃，划归 takeoff 仍可见",
-          "and _started(r)" in src, "")
+          "and _late(r)" in src, "")
 
 
 def test_short_ambush_not_tradeable():

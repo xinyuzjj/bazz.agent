@@ -437,11 +437,46 @@ def api_orders_track():
 
 @app.delete("/api/orders/track")
 def api_orders_untrack(id: str):
-    """停止跟踪某订单。"""
+    """停止**本地跟踪**某订单（不动交易所里的挂单）。真正撤单见 /api/orders/cancel。"""
     try:
         import order_tracker
         order_tracker.untrack(id)
         return {"status": "ok"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)[:200]}
+
+
+@app.post("/api/orders/cancel")
+async def api_orders_cancel(req: Request):
+    """撤单（v1.6.5 OPT-09）：真去交易所把这张挂单摘掉，成功/已是终态后同步本地台账。
+
+    body: {"id": 本地跟踪 id（可选）, "symbol": "BTCUSDT", "order_id": "12345"}
+    与 DELETE /api/orders/track 的区别写在这里是为了少一次误操作：
+    那个只是「不再跟」，这个才是「撤掉」。
+    """
+    try:
+        body = json.loads((await req.body()) or b"{}")
+    except Exception:
+        body = {}
+    sym = str(body.get("symbol") or "").upper()
+    oid = str(body.get("order_id") or "")
+    tid = str(body.get("id") or "")
+    if not sym or not oid:
+        return {"status": "error", "message": "缺少 symbol / order_id"}
+    try:
+        import executor
+        res = executor.cancel_order(sym, oid)
+        if res.get("status") == "ok":
+            if tid:
+                state.track_set_status(tid, "CANCELED")
+            try:
+                import market_ws
+                market_ws.publish_event("order", event="canceled", id=tid,
+                                        order_id=oid, symbol=sym)
+            except Exception:
+                pass
+            return {"status": "ok", "order": res.get("order"), "note": res.get("note", "")}
+        return {"status": "error", "message": res.get("message") or str(res)[:200]}
     except Exception as e:
         return {"status": "error", "message": str(e)[:200]}
 

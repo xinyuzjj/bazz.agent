@@ -5,8 +5,10 @@
   **v1.6.2 起**：① 「已拉升」（EXTENDED，当日涨幅越过 12% 追高线）不再进 ignition 组，
   不再被登记；② 做空埋伏须已破位才成立；③ 同币关单后 24h 内拒绝重登
   （`state.RADAR_REENTRY_COOLDOWN`，旧实现关单即可立刻重登，实测 MTLUSDT 被登记 4 次全 dump）。
-- 跟踪：daemon 线程 60s 轮询 pending 记录；价格取 market_ws.price("spot") 内存快照
-  （WS 未覆盖时回退 scanner.get_snapshot 60s 缓存），不新增外网请求路径。
+- 跟踪：daemon 线程 60s 轮询 pending 记录；价格三级兜底（v1.6.4）：
+  `market_ws.price("spot")` → **`market_ws.price("futures")`** → 现货∪合约快照
+  （`scanner.get_snapshot()` ∪ `scanner.futures_snapshot()`，现货优先），不新增外网请求路径。
+  合约那两级是扩池后的必需品：纯合约币（无现货市场）只查现货会永远取不到价。
 - 结局（v1.5.8，按 10x 合约杠杆口径，仓位模拟 100U×10x）：逆向 ≥10%（近强平线）→ dump（失败）；
   顺向 ≥25% 达标不直接关单——判反转因子（费率极值回落/OI 脉冲/爆仓潮）：现反转 → 落袋 moon，
   否则转持有模式移动止盈（自持有期极值回撤/反弹 ≥12% → moon）；7 天未触发 → expired。
@@ -30,12 +32,42 @@ LEVERAGE = 10      # 仓位模拟：10x 合约
 TTL_SEC = 7 * 86400  # 跟踪期限：超时未触发 → expired（未兑现）
 POLL_SEC = 60.0
 
+# ---- v1.6.5（OPT-06）持仓质量：疑似假启动 ----
+# 证据（安装版 20 笔 LONG 已关单；口径必须说清，否则数字会被读成另一个意思）：
+#   · 17 笔 dump 里 **15 笔的 max_gain ≤ 6.7%**（只有 ETHFI 15.1 / RAY 13.4 例外）——
+#     dump 单几乎从来没给过超过 7% 的浮盈；
+#   · 3 笔 moon **全部在 24h 内就摸到 ≥25%**（关单耗时 23.8h / 25.1h / 31.9h），
+#     而 dump 的关单耗时中位数是 46.5h。
+# 但这个标志**只在「24h 时还没关单」的行上才有意义**：17 笔 dump 里有 7 笔在 24h 前
+# 就已经逆向破 10% 关单了，它们根本走不到被标记那一步。所以真实口径是：
+#   「活过 24h 的 10 笔 dump 里，**7 笔**在 24h 时 max_gain < 5%；3 笔 moon **0 笔**被标」。
+# 提示的正确用法是「这只跟了很久还不动的，别指望它」，而不是「命中率 XX% 所以要砍掉它」。
+# ⚠️ 只提示，**绝不做自动离场**：VTHO 就是反例 —— 早期回撤 7.9% 之后冲到 +31.3%。
+FAKE_START_HOURS = 24.0   # 观察窗：满 24h 还没浮盈才谈「疑似」
+FAKE_START_GAIN = 5.0     # 浮盈线（用历史极值 max_gain，不用当前价）
+
 _started = False
+
+
+def _pick(row: dict, factors: dict, key: str):
+    """取登记快照值（v1.6.4）：**顶层存在就用顶层**，不存在才回退 factors。
+
+    必须是「键是否存在」而不是「值是否为 None」—— 顶层 `oi_chg24` 在确认因子缺失时
+    显式写 None（未测到），若按值回退会拿到 `factors.oi_chg24` 的 0.0，
+    把「没测到」伪装成「持仓没动」，恰好污染 OPT-03 的判据口径。
+    """
+    if key in row:
+        return row[key]
+    return factors.get(key)
 
 
 def record_from_radar(payload: dict) -> None:
     """雷达扫描完成后登记启动前（吸筹/点火）发现。任何异常静默，不拖垮雷达同步响应。
-    方向取雷达行的 side：WATCH_SHORT → SHORT（做空观察），其余（LONG/WATCH）→ LONG。"""
+    方向取雷达行的 side：WATCH_SHORT → SHORT（做空观察），其余（LONG/WATCH）→ LONG。
+
+    v1.6.4：同时落库**登记时刻数值快照**（chg24/oi24/amp24/funding/rvol15）。
+    此前只有 reasons_json 文本，回放靠解析文本反推，口径会漂；落快照后新样本可直接
+    按数值复算，规则改动能做真正的 A/B 回放。"""
     try:
         rows = (payload or {}).get("ignition") or []
         for r in rows:
@@ -44,15 +76,31 @@ def record_from_radar(payload: dict) -> None:
             if not sym or px <= 0:
                 continue
             direction = "SHORT" if str(r.get("side") or "").upper() == "WATCH_SHORT" else "LONG"
+            f = r.get("factors") or {}
+            snap = {
+                "chg24": _pick(r, f, "change24_pct"),
+                "oi24": _pick(r, f, "oi_chg24"),
+                "amp24": _pick(r, f, "amp24"),
+                "funding": _pick(r, f, "funding"),
+                "rvol15": _pick(r, f, "rvol15"),
+            }
             state.radar_track_add(sym, str(r.get("stage") or "IGNITION"), px,
                                   int(r.get("score") or 0), r.get("reasons") or [],
-                                  direction=direction)
+                                  direction=direction, snap=snap)
     except Exception:
         pass
 
 
 def _current_price(sym: str, snap: dict):
+    """取价三级兜底（v1.6.4）：现货 WS → **合约 WS** → 合并快照。
+
+    扩池到合约全市场后，池里含「只上合约、不上现货」的币（RAVE / LAB 这类纯合约妖币），
+    只查现货会永远取到 None → `_tick` 直接 continue → 该单永久卡 pending，
+    7 天后被 expired 静默吞掉，战绩里完全看不见。`market_ws.price("futures", …)` 本就存在。
+    """
     px = market_ws.price("spot", sym)
+    if px is None:
+        px = market_ws.price("futures", sym)
     if px is None:
         px = snap.get(sym)
     return float(px) if px else None
@@ -220,6 +268,13 @@ def _tick() -> None:
         snap = {r["symbol"]: float(r.get("price") or 0) for r in scanner.get_snapshot()}
     except Exception:
         snap = {}
+    # v1.6.4：补齐合约口径 —— 纯合约币不在现货快照里，缺了它连兜底都取不到价。
+    # 用 setdefault 让**现货优先**：同 symbol 两个市场存在价差，不能让合约价污染现货币的涨跌幅。
+    try:
+        for r in scanner.futures_snapshot():
+            snap.setdefault(r["symbol"], float(r.get("price") or 0))
+    except Exception:
+        pass
     now = time.time()
     for t in tracks:
         try:
@@ -286,13 +341,48 @@ def ensure_started() -> None:
     threading.Thread(target=_loop, daemon=True, name="bazz-radar-tracker").start()
 
 
+def _fake_start(t: dict, now: float) -> bool:
+    """v1.6.5（OPT-06）：疑似假启动 —— 跟踪够久（≥24h）却**始终没给过** 5% 顺向浮盈。
+
+    判据用**历史极值**（做多看 `max_gain_pct` / 做空看 `max_drop_pct`），**不看当前价**：
+    「曾经冲到 8% 又跌回来」不该被打这个标 —— 那属于「给过机会但没走」，
+    与「从头到尾没动过」是两回事，混在一起会让提示失去意义。
+    已进持有模式（holding=1）的行不参与（它已经达标过了）。
+
+    ⚠️ 方向必须分开取轴：**做空的顺向是「跌」**，用 max_gain 去判断做空等于拿反向指标做判据，
+    会把「已经跌了 20% 的空单」标成「假启动」—— 第一版就是这个 bug。
+    阈值本身（24h / 5%）是在 LONG 样本（17 笔 dump / 3 笔 moon）上校准的，
+    做空侧是同一口径的语义推广，**没有独立样本验证**（且 v1.6.3 起 SHORT_AMBUSH 已不再登记，
+    新空单不会进来，这里只对历史遗留的 pending 空单生效）。
+    """
+    try:
+        if int(t.get("holding") or 0):
+            return False
+        age = now - float(t.get("found_at") or now)
+        if age < FAKE_START_HOURS * 3600:
+            return False
+        axis = "max_drop_pct" if (t.get("direction") or "LONG") == "SHORT" else "max_gain_pct"
+        return float(t.get(axis) or 0) < FAKE_START_GAIN
+    except (TypeError, ValueError):
+        return False
+
+
 def tracks_view() -> dict:
-    """GET /api/market/radar/tracks 数据：进行中 + 历史（按关单时间降序 50 条）+ 战绩统计。"""
+    """GET /api/market/radar/tracks 数据：进行中 + 历史（按关单时间降序 50 条）+ 战绩统计。
+
+    v1.6.5（OPT-06）：pending 行补 `fake_start`（疑似假启动，只提示不自动平仓）与 `age_h`
+    （已跟踪小时数）—— 前端据此打徽章；不加这两个字段前端就得自己算时间，口径会漂。
+    """
+    now = time.time()
+    pending = state.radar_tracks_list("pending")
+    for t in pending:
+        t["fake_start"] = _fake_start(t, now)
+        t["age_h"] = round(max(0.0, now - float(t.get("found_at") or now)) / 3600.0, 1)
     history = [h for h in state.radar_tracks_list("closed")]
     history.sort(key=lambda h: h.get("closed_at") or 0, reverse=True)
     return {
-        "pending": state.radar_tracks_list("pending"),
+        "pending": pending,
         "history": history[:50],
         "stats": state.radar_tracks_stats(),
-        "ts": time.time(),
+        "ts": now,
     }

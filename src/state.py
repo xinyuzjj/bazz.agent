@@ -170,6 +170,11 @@ def _init():
         review TEXT DEFAULT '',
         holding INTEGER DEFAULT 0,
         hold_ext REAL DEFAULT 0,
+        snap_chg24 REAL,
+        snap_oi24 REAL,
+        snap_amp24 REAL,
+        snap_funding REAL,
+        snap_rvol15 REAL,
         found_at REAL NOT NULL,
         closed_at REAL,
         updated_at REAL NOT NULL
@@ -200,6 +205,14 @@ def _init():
     if rtcols and "hold_ext" not in rtcols:
         c.execute("ALTER TABLE radar_tracks ADD COLUMN hold_ext REAL DEFAULT 0")
         c.commit()
+    # v1.6.4：radar_tracks 补**登记时刻数值快照**（snap_*）。
+    # 此前回放只能解析 reasons_json 文本反推，口径会漂（同一条规则算出「剩 11 笔」与
+    # 「剩 7 笔」两个答案）→ 改任何规则都无法做 A/B 回放。老库这 5 列为 NULL，
+    # 回放脚本必须兼容「快照缺失」并回退文本口径。
+    for _scol in ("snap_chg24", "snap_oi24", "snap_amp24", "snap_funding", "snap_rvol15"):
+        if rtcols and _scol not in rtcols:
+            c.execute(f"ALTER TABLE radar_tracks ADD COLUMN {_scol} REAL")
+            c.commit()
     ccols = {r[1] for r in c.execute("PRAGMA table_info(conversations)").fetchall()}
     if ccols and "persona" not in ccols:
         c.execute("ALTER TABLE conversations ADD COLUMN persona TEXT DEFAULT ''")
@@ -964,12 +977,30 @@ def _radar_track_out(r):
     return d
 
 
+def _snap_val(snap: dict, key: str):
+    """登记快照取数（v1.6.4）：**缺值写 NULL，不写 0**。
+    0 的含义是「真的是 0」，None 的含义是「没测到」—— 回放时两者结论完全不同，不能混。
+    纯函数，不加 `@_serialized`（它不碰连接）。"""
+    if not snap:
+        return None
+    v = snap.get(key)
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 @_serialized
 def radar_track_add(symbol: str, stage: str, found_price: float, found_score: int = 0,
-                    reasons=None, found_at: float = 0, direction: str = "LONG") -> str:
+                    reasons=None, found_at: float = 0, direction: str = "LONG",
+                    snap: dict = None) -> str:
     """登记一条启动前发现记录；同币已在跟踪中（pending）则幂等返回已有 id；
     同币刚关单不满 RADAR_REENTRY_COOLDOWN 则**拒绝登记**（返回空串，调用方据此跳过）。
-    direction: LONG=做多 / SHORT=做空（决定结局语义，见 radar_tracker._judge_outcome）。"""
+    direction: LONG=做多 / SHORT=做空（决定结局语义，见 radar_tracker._judge_outcome）。
+    snap: v1.6.4 登记时刻数值快照（chg24/oi24/amp24/funding/rvol15）—— 落库后回放不再依赖
+    `reasons_json` 文本反推；缺键写 NULL。"""
     now = time.time()
     sym_u = str(symbol).upper()
     exist = _conn_get().execute(
@@ -986,11 +1017,14 @@ def radar_track_add(symbol: str, stage: str, found_price: float, found_score: in
     _conn_get().execute(
         "INSERT INTO radar_tracks (id,symbol,stage,direction,found_price,found_score,reasons_json,"
         "status,outcome,max_gain_pct,max_drop_pct,peak_price,trough_price,last_price,"
-        "outcome_price,found_at,closed_at,updated_at) VALUES (?,?,?,?,?,?,?, 'pending','',0,0,0,0,0,0,?,NULL,?)",
+        "outcome_price,snap_chg24,snap_oi24,snap_amp24,snap_funding,snap_rvol15,"
+        "found_at,closed_at,updated_at) VALUES (?,?,?,?,?,?,?, 'pending','',0,0,0,0,0,0,?,?,?,?,?,?,NULL,?)",
         (tid, str(symbol).upper(), stage or "IGNITION",
          "SHORT" if str(direction).upper() == "SHORT" else "LONG",
          float(found_price or 0),
          int(found_score or 0), json.dumps(reasons or [], ensure_ascii=False),
+         _snap_val(snap, "chg24"), _snap_val(snap, "oi24"), _snap_val(snap, "amp24"),
+         _snap_val(snap, "funding"), _snap_val(snap, "rvol15"),
          float(found_at or now), now))
     _conn_get().commit()
     return tid
@@ -1077,16 +1111,123 @@ def radar_tracks_list(status: str = "") -> list:
 
 
 def radar_tracks_stats() -> dict:
+    """战绩统计（+ v1.6.5 OPT-07 的 by_stage 分组）。
+
+    为什么要按 stage 分组：安装版已关单里 `IGNITION` 是 3 moon / 13 dump（18.8%），
+    而 `ACCUMULATION` 是 **0 moon / 4 dump**，新规则却仍把 ACCUMULATION 当 ignition 登记。
+    4 笔样本可能纯属偶然，所以本轮**不删、不降权**，只把两组的胜率分开摆出来，
+    攒到 10 笔再决定（这正是 OPT-07 的原文要求）。
+    """
     rows = _conn_get().execute(
-        "SELECT status, outcome, COUNT(*) AS n FROM radar_tracks GROUP BY status, outcome").fetchall()
-    st = {"total": 0, "pending": 0, "moon": 0, "dump": 0, "expired": 0}
+        "SELECT status, outcome, stage, COUNT(*) AS n FROM radar_tracks "
+        "GROUP BY status, outcome, stage").fetchall()
+    st = {"total": 0, "pending": 0, "moon": 0, "dump": 0, "expired": 0,
+          "by_stage": {}, "stages": []}
     for r in rows:
         st["total"] += r["n"]
+        g = st["by_stage"].setdefault(
+            r["stage"] or "—",
+            {"pending": 0, "moon": 0, "dump": 0, "expired": 0, "closed": 0, "win_rate": 0.0})
         if r["status"] == "pending":
             st["pending"] += r["n"]
+            g["pending"] += r["n"]
         elif r["outcome"] in ("moon", "dump", "expired"):
             st[r["outcome"]] += r["n"]
+            g[r["outcome"]] += r["n"]
+            g["closed"] += r["n"]
+    for name, g in st["by_stage"].items():
+        # 胜率分母只用**已关单**样本：pending 既不算赢也不算输，混进来会把胜率稀释成噪声。
+        g["win_rate"] = round(g["moon"] / g["closed"] * 100, 1) if g["closed"] else 0.0
+    # stages 按「已关单样本数」降序，样本多的组排前面（前端直接按序渲染，不再自己排）
+    st["stages"] = sorted(st["by_stage"].items(), key=lambda kv: -kv[1]["closed"])
     return st
+
+
+# ---------------- OPT-08 解除阻塞：登记快照 × 结局交叉统计 ----------------
+# OPT-08（触发层从「发现波动」重建为「发现沉寂」）**不能现在动**：它是重建不是调参，
+# 而现有 11 条规则之所以无效，是因为它们都在测同一件事（波动率，moon/dump 分布几乎完全重叠）。
+# 要证明「低振幅横盘 + RVOL 放大 + OI 未动」更好，必须拿**登记时刻的数值快照**去分桶算胜率 ——
+# 而 snap_* 列是 v1.6.4 才加的，安装版库里全是 NULL（0 条样本）。
+# 所以本轮交付的不是改触发规则，而是**解除这个阻塞的工具**：下面的分桶器 + 门禁。
+# 样本够了（>= RADAR_SNAP_MIN_N）再动规则，否则又是拍脑袋。
+RADAR_SNAP_MIN_N = 20        # 门禁：已关单且带快照的样本少于它，不出任何结论
+_RADAR_SNAP_BUCKETS = {
+    # 轴的边界取法与判据本身同源（chg24 的 3/10 就是 _TRIG_UP_CHG24 / _TRIG_LATE_CHG24，
+    # oi24 的 5 就是 _TRIG_MAX_OI24），只写数值不 import scanner，避免循环依赖。
+    "snap_chg24":  [(-1e9, 0.0, "<0%"), (0.0, 3.0, "0~3%"),
+                    (3.0, 10.0, "3~10%"), (10.0, 1e9, ">=10%")],
+    "snap_oi24":   [(-1e9, -5.0, "<-5%"), (-5.0, 0.0, "-5~0%"),
+                    (0.0, 5.0, "0~5%"), (5.0, 1e9, ">=5%")],
+    "snap_amp24":  [(0.0, 10.0, "<10%"), (10.0, 20.0, "10~20%"),
+                    (20.0, 35.0, "20~35%"), (35.0, 1e9, ">=35%")],
+    "snap_funding": [(-1e9, -0.0015, "<=-0.15%"), (-0.0015, 0.0, "-0.15~0%"),
+                     (0.0, 0.0005, "0~0.05%"), (0.0005, 1e9, ">=0.05%")],
+    "snap_rvol15": [(0.0, 1.0, "<1x"), (1.0, 2.0, "1~2x"),
+                    (2.0, 4.0, "2~4x"), (4.0, 1e9, ">=4x")],
+}
+SNAP_AXES = tuple(_RADAR_SNAP_BUCKETS.keys())
+
+
+def snapshot_axis_labels(key: str) -> list:
+    """某轴的分桶标签（纯函数，供前端/测试直接读，不用连库）。"""
+    return [b[2] for b in _RADAR_SNAP_BUCKETS.get(key, [])]
+
+
+def snap_axis_bucket(key: str, v) -> str:
+    """把快照值映射到分桶标签。**None（未测到）返回 None**，不是「落在第一桶」。
+
+    这条是硬要求：把「没测到」并进「<0%」会让某一桶凭空多出一堆假样本，
+    正是 v1.6.4 落库时坚持写 NULL 不写 0 的同一个理由。
+    """
+    if v is None:
+        return None
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    for lo, hi, label in _RADAR_SNAP_BUCKETS.get(key, []):
+        if lo <= v < hi:
+            return label
+    return None
+
+
+def radar_snapshot_crosstab(direction: str = "LONG") -> dict:
+    """OPT-08 的敲门砖：快照每个轴 × 结局的交叉表（默认只看 LONG —— 做空已整条砍掉）。
+
+    返回 {n, ready, min_n, axes:{key:[{label,n,moon,dump,expired,win_rate}]}, unknown:{key:int}}。
+    `ready=False` 时**不要**用它去改规则：样本不足，任何阈值都是拍脑袋。
+    """
+    rows = _conn_get().execute(
+        "SELECT outcome, direction, snap_chg24, snap_oi24, snap_amp24, snap_funding, snap_rvol15 "
+        "FROM radar_tracks WHERE status='closed'").fetchall()
+    want = str(direction or "LONG").upper()
+    closed = [r for r in rows if (r["direction"] or "LONG") == want
+              and r["outcome"] in ("moon", "dump", "expired")]
+    out = {"n": 0, "ready": False, "min_n": RADAR_SNAP_MIN_N,
+           "direction": want, "axes": {}, "unknown": {}}
+    for key in SNAP_AXES:
+        out["axes"][key] = [{"label": lb, "n": 0, "moon": 0, "dump": 0, "expired": 0,
+                             "win_rate": 0.0} for lb in snapshot_axis_labels(key)]
+        out["unknown"][key] = 0
+    for r in closed:
+        # 计数口径：at least one axis 有值才算「带快照的样本」（用 chg24 当锚，与 v1.6.4 落库一致）
+        if r["snap_chg24"] is not None:
+            out["n"] += 1
+        for key in SNAP_AXES:
+            lb = snap_axis_bucket(key, r[key])
+            if lb is None:
+                out["unknown"][key] += 1
+                continue
+            node = next((x for x in out["axes"][key] if x["label"] == lb), None)
+            if node is None:
+                continue
+            node["n"] += 1
+            node[r["outcome"]] += 1
+    for key, nodes in out["axes"].items():
+        for nd in nodes:
+            nd["win_rate"] = round(nd["moon"] / nd["n"] * 100, 1) if nd["n"] else 0.0
+    out["ready"] = out["n"] >= RADAR_SNAP_MIN_N
+    return out
 
 
 if __name__ == "__main__":

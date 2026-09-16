@@ -23,6 +23,14 @@ import { CoinDetail } from "../components/CoinDetail";
  * 30s REST 轮询只负责聚合数据（信号/综述/雷达）。
  */
 
+// v1.6.5（OPT-07）：stage 分组胜率 chip 里的阶段名配色。
+// 不复用 STAGE_META 的 pill-* 类 —— 那是给 pill 容器用的，这里只要文字色。
+const STAGE_TEXT: Record<string, string> = {
+  ACCUMULATION: "text-green", IGNITION: "text-green", SHORT_AMBUSH: "text-red",
+  VERTICAL: "text-gold", EXTENDED: "text-gold", DISTRIBUTION: "text-red",
+  CRASH: "text-red", DORMANT: "text-ink-dim", ACTIVE: "text-ink-dim",
+};
+
 const PAGE = 120; // 每批展示行数（"加载更多"）
 type SortKey = "price" | "change_pct" | "quote_volume";
 
@@ -569,6 +577,36 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
                   <span className="text-red">● {t("markets.outcomeDump")} {dump}</span>
                   <span className="text-ink-mute">● {t("markets.outcomeExpired")} {expired}</span>
                 </div>
+              </div>
+            );
+          })()}
+
+          {/* v1.6.5（OPT-07）按 stage 分组胜率：分开观察「点火」与「吸筹」——实测 18.8% vs 0/4，
+              样本太少所以只观察、不删也不降权，攒到 10 笔再决定 */}
+          {(() => {
+            const bys = tracks.stats?.by_stage ?? {};
+            const list = (tracks.stats?.stages ?? []).filter(([, g]) => g.closed > 0);
+            if (list.length < 2) return null;
+            return (
+              <div className="px-4 pb-3 flex items-center gap-2 flex-wrap" title={t("markets.stageWinTip")}>
+                <span className="font-mono text-[11px] text-ink-mute tracking-wider">{t("markets.stageWinTitle")}</span>
+                {list.map(([name, g]) => (
+                  <span key={name}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-line px-2 py-0.5 text-[11px] font-mono"
+                    title={`${t("markets.outcomeMoon")} ${g.moon} · ${t("markets.outcomeDump")} ${g.dump} · ${t("markets.outcomeExpired")} ${g.expired}`}>
+                    <span className={STAGE_TEXT[name] ?? "text-ink-dim"}>
+                      {t(`markets.stage.${name}`)}
+                    </span>
+                    <span className={g.win_rate >= 50 ? "text-green" : g.closed >= 4 && g.moon === 0 ? "text-red" : "text-ink"}>
+                      {g.win_rate.toFixed(0)}%
+                    </span>
+                    <span className="text-ink-mute">{t("markets.stageWin", { n: String(g.closed) })}</span>
+                  </span>
+                ))}
+                {/* 吸筹组 0 胜率的显式警告：4 笔样本可能纯属偶然，但必须让人看见 */}
+                {(bys.ACCUMULATION?.closed ?? 0) >= 4 && (bys.ACCUMULATION?.moon ?? 0) === 0 && (
+                  <span className="font-mono text-[11px] text-ink-mute">{t("markets.stageWinTipAcc")}</span>
+                )}
               </div>
             );
           })()}

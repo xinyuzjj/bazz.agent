@@ -994,6 +994,29 @@ def _short_sweep(o, c, v) -> dict:
 # 新实现分三条通道：机会型（up，必须顺向）/ 风险型（down，只产崩跌·做空语义）/
 # 波动率通道（方向无关，仅用于取出确认因子与风险提示，**不构成做多机会**）。
 _TRIG_UP_CHG24 = 3.0       # 机会型顺向涨幅门槛（旧：|chg24| >= 10.0 双向）
+# v1.6.5（OPT-04）登记涨幅门槛分段。此前「登记门槛」与「触发门槛」共用 3.0，
+# 于是 3% 这个**没有样本支撑**的数字被当成硬挡线（注释里写的「连 3%~12% 也晚了」数据不支持）。
+# 实测（安装版 20 笔 LONG 已关单，reasons 原文级统计）：
+#   · 9 笔「登记时已涨」样本的 chg24 最小是 **11.3%**（ETHFI），其余 13.9%~21.9%，**9 笔全 dump**；
+#   · **3%~11.3% 之间一笔样本都没有** → 有证据的只是「≥11.3% 该挡」。
+# 所以把硬挡线外推到 10.0（仍在有据区间下沿，且不越过 11.3 的观测下限），
+# 3%~10% 这段改为**降分不挡**：它是「刚点着火」的位置，靠 OI 判据（_piled）二次筛，
+# 而不是靠一个拍出来的 3%。这是本轮唯一的「放宽」方向（用户拍板）。
+_TRIG_LATE_CHG24 = 10.0    # 硬挡线：chg24 ≥ 它 → 认定「你来晚了」，不进 ignition 组
+_TRIG_WARM_CHG24 = _TRIG_UP_CHG24   # 暖启动段下沿（= 机会型触发线）
+_TRIG_WARM_PENALTY = 6.0   # 暖启动段 [3, 10) 的降分幅度（只排序 + 记录，不构成闸门）
+# v1.6.4 持仓堆积线（价格之外的**第二个「启动」维度**）。
+# 证据（安装版 20 笔 LONG 已关单，依据原文级统计，只取前缀 fullmatch 避免误读 "OI 24h"）：
+#   · `OI 24h` 为**正**的样本 **9 笔 —— 9 笔全是 dump**（+7.4% ~ +106.3%）；
+#     3 笔 moon 里**从来没有出现过正值 OI**。
+#   · `OI 24h` 为负的样本只有 2 笔（SEI −6.2 dump / VTHO −14.5 moon）→ 负值无判别力。
+# 逻辑：OI 涨 = 已经有人建仓 = 你进去就是接盘；妖币启动前持仓是平的、甚至在减。
+# 阈值取 5.0 是**故意的零外推**：依据生成处本身就是 `abs(oi_chg24) >= 5` 才写进 reasons，
+# 所以 5.0 正好等于「我实际观测到的那个集合」。更严的 `oi_chg24 <= 0` 在 (0, 5) 区间
+# 没有任何样本，属于外推，暂不采用。
+# 叠加回放（chg24>=3 或 oi24>=5 即不登记）：20 笔 → 存活 9 笔（3 moon / 6 dump），
+# 胜率 15.0% → **33.3%**，且**零误杀**（3 笔 moon 全部留存）。
+_TRIG_MAX_OI24 = 5.0       # 持仓堆积线：OI 24h ≥ 它 → 已不算「启动前」
 _TRIG_MAX_CHG24 = 12.0     # 追高线：涨幅越过它不再算「启动机会」，交 _stage_of 判 EXTENDED
 _TRIG_DOWN_CHG24 = -12.0   # 下跌侧风险触发
 _TRIG_AMP_OK = 20.0        # 振幅「活口线」：以内算有活口（加分），超过算接力末端（扣分）
@@ -1329,7 +1352,10 @@ def _manip_flags(d: dict) -> tuple:
        这正是庄家挤空收割空头的标志（RAVE 年化 −1000%~−4000%）。
        此刻的拉升是挤空，不是趋势 —— 绝不可在此做空，长仓也应视为随时反手。
 
-    任一命中即扣分；`空头付钱` 额外强制把做多降到 WATCH（顺剧本骑①②：特征一现即离场）。"""
+    任一命中即扣分（v1.6.4：「空头付钱」权重由 10 降到 3，理由见该分支注释）。
+    **注意：只扣分、不改 side、不构成登记门槛** —— `_stage_of` 里也明确写了「只做标注，
+    避免重蹈『过滤过紧误杀赢家』」。风控语义靠 `notes`（风险提示）表达，不靠降级 side。
+    各项权重：无现货 / 合约独大 / 换手畸高 各 6，空头付钱 3，拉升无爆仓 4。"""
     flags, notes = [], []
     penalty = 0.0
     price = d.get("price", 0.0) or 0.0
@@ -1367,10 +1393,14 @@ def _manip_flags(d: dict) -> tuple:
             penalty += 6.0
 
     # ③ 空头付钱（挤空收割特征）
+    # v1.6.4 降权 10 → 3：这条规则**自带反例** —— VTHOUSDT 登记时费率 −0.776%，
+    # 结局却是 +31.3% moon。全样本负费率只有 1 moon / 2 dump，对**做多结局**判别力很弱，
+    # 而它原本是最大单项扣分（10 分），足以把真妖币压出登记组。
+    # 语义保留（对做空确实是硬约束、且是重要风险提示），只降低它对做多评分的权重。
     if fu <= _MANIP_NEG_FUNDING:
         flags.append("空头付钱")
         notes.append(f"费率 {fu * 100:+.3f}% = 空头在给多头付钱（挤空特征，严禁做空）")
-        penalty += 10.0
+        penalty += 3.0
 
     # ④ 拉升无爆仓（数据可疑 / 假突破诱多）
     if chg24 >= 8.0 and liq_n > 0 and liq5 < 5e4:
@@ -1733,8 +1763,20 @@ def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_F
             cooldown = bool(prev and prev[1] == stage and cycle_ts - prev[0] < RADAR_COOLDOWN_V1)
         _radar_prev[sym] = (cycle_ts, stage)
         score = _radar_score(f["t"], cf, d, cooldown)
+        # v1.6.5（OPT-04）暖启动降分：登记的那一刻已经涨了 3%~10% 的币，
+        # **不硬挡**（样本不足以证明该挡，见 _TRIG_LATE_CHG24 注释），但降 6 分让它排到冷启动之后。
+        # ⚠️ 登记链路本身是**不看 score 的**（radar_tracker.record_from_radar 遍历整个 ignition 数组），
+        # 所以这个降分的作用是「排序 + 把暖启动这件事写进依据/快照，便于日后按数值分桶回放」，
+        # 真正的闸门仍是 `_late`（价格硬挡线 + OI 堆积）。别把它当过滤用。
+        chg24_now = float(d.get("chg24") or 0.0)
+        warm = _TRIG_WARM_CHG24 <= chg24_now < _TRIG_LATE_CHG24
+        if warm:
+            score = round(max(1.0, score - _TRIG_WARM_PENALTY), 1)
         # 确认因子补充触发依据
         reasons = list(f["reasons"])
+        if warm:
+            # 插到最前而不是追加：reasons 会被 [:6] 截断，追加等于把这条最该看见的信息丢掉。
+            reasons.insert(0, f"涨幅已温 {chg24_now:+.1f}%（3~10% 段降分不挡）")
         if cf:
             if abs(cf.get("oi_chg24", 0) or 0) >= 5:
                 reasons.append(f"OI 24h {cf['oi_chg24']:+.1f}%")
@@ -1754,6 +1796,9 @@ def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_F
             "symbol": sym, "price": d["price"],
             "manip": mflags, "manip_note": mnote,
             "change24_pct": round(d.get("chg24", 0.0), 2),
+            # v1.6.4：OI 24h 提到行顶层（原来只在 factors 里），供登记判据与快照落库直接读。
+            # 确认为空时写 **None（未测到）而不是 0** —— 0 会被判据误读成「持仓没动」。
+            "oi_chg24": (round(d["oi_chg24"], 2) if d.get("oi_chg24") is not None else None),
             "change1h_pct": round(d.get("chg1h", 0.0) or 0.0, 2),
             "change3d_pct": round(d.get("chg3d", 0.0) or 0.0, 2),
             "change7d_pct": round(d.get("chg7d", 0.0) or 0.0, 2),
@@ -1767,6 +1812,7 @@ def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_F
             "amp24": round(d.get("amp24", 0.0) or 0.0, 2),
             "stage": stage, "stage_label": slabel, "tag": tag, "side": side,
             "note": note, "score": score,
+            "warm": warm,   # v1.6.5（OPT-04）：登记时已涨 3%~10%（降分不挡），供回放分桶
             "floor_rising": bool(d.get("floor_rising")),
             "factors": {
                 "flow": round(d.get("flow", 0.0) or 0.0, 1),
@@ -1793,15 +1839,34 @@ def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_F
         stage_counts[stage] = stage_counts.get(stage, 0) + 1
 
     rows.sort(key=lambda x: x["score"], reverse=True)
-    # v1.6.3：**只有「尚未启动」的币才可登记**（登记即入场，不设候选态）。
+    # v1.6.3 起：**只有「尚未启动」的币才可登记**（登记即入场，不设候选态）。
     # 实测（安装版 20 笔 LONG 已关单）：3 笔 moon 的登记依据里**全都没有「24h +X%」**，
-    # 即登记时 chg24 < _TRIG_UP_CHG24；而 9 笔「登记时已涨 7.4%~24.8%」的**全是 dump**。
+    # 即登记时 chg24 < _TRIG_UP_CHG24；而 9 笔「登记时已涨」的**全是 dump**。
     # 回放：现状 20 笔 −1086.5U / 胜率 15.0% → 只留未启动 7 笔 **+213.5U / 胜率 42.9%**。
-    # 注意这条与 v1.6.2 的 EXTENDED（>12% 追高线）是同一条思路的收紧：
-    # 实测连 3%~12% 这段也晚了 —— 「已启动」不该再算机会。
     # 已启动的行不删除，划归 takeoff（仅展示），让「雷达看见但太晚」这件事仍可解释。
-    _started = (lambda r: (r.get("change24_pct") or 0.0) >= _TRIG_UP_CHG24)
-    rows_ign = [r for r in rows if r["stage"] in ("ACCUMULATION", "IGNITION") and not _started(r)]
+    #
+    # v1.6.5（OPT-04，用户拍板）硬挡线 3.0 → 10.0，3%~10% 段降分不挡。证据边界见
+    # `_TRIG_LATE_CHG24` 注释：9 笔已启动样本 chg24 最小 11.3%，3%~11.3% 无样本，
+    # 有据的只是「≥11.3% 该挡」；原 3% 是外推。这段改降分后**是「放宽」方向**，
+    # 唯一依据是逻辑（3%~10% 恰是「刚点着火」）而非样本 —— 属用户确认的风险偏好。
+    #
+    # v1.6.4：判据从「价格已启动」扩为「**价格已启动 或 持仓已堆积**」——
+    # 两者是「你来晚了」的同一件事的两个维度（证据见 _TRIG_MAX_OI24 注释，方向一致性 10/10）。
+    def _piled(r) -> bool:
+        """持仓是否已堆积。**确认因子缺失时返回 False（fail-open）**：
+        接口失败时必须与扩池前行为一致，不能因为拿不到 OI 就少登记。"""
+        try:
+            v = r.get("oi_chg24")
+            return v is not None and float(v) >= _TRIG_MAX_OI24
+        except (TypeError, ValueError):
+            return False
+
+    def _late(r) -> bool:
+        """v1.6.5（OPT-04）：价格硬挡线由 3.0 抬到 10.0（3%~10% 只降分不挡，见 `_warm`）。
+        OI 判据不变 —— 持仓堆积是「你来晚了」的第二个维度，与价格无关。"""
+        return (r.get("change24_pct") or 0.0) >= _TRIG_LATE_CHG24 or _piled(r)
+
+    rows_ign = [r for r in rows if r["stage"] in ("ACCUMULATION", "IGNITION") and not _late(r)]
     # v1.6.3：**SHORT_AMBUSH 移出 ignition（登记）组，改入 takeoff（仅展示）组**。
     # 实测证据（安装版已关单 3 笔做空全亏）：CAKE +10.0% / THETA +10.3% / SAGA +11.0%
     # 全部逆向轧空击穿 10% 强平线，而**最大有利仅 0.0% / 0.0% / 1.4%** —— 从一开始就没跌过，
@@ -1809,7 +1874,7 @@ def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_F
     # 「只需维持横盘，做空者账户便会因费率清零」。用户定位：**绝不做空**。
     # 顶部风险仍需可见（派发/做空意图对持仓者是离场信号），所以只降级、不删除。
     rows_tk = [r for r in rows if r["stage"] in ("VERTICAL", "DISTRIBUTION", "CRASH", "EXTENDED", "SHORT_AMBUSH")]
-    rows_tk += [r for r in rows if r["stage"] in ("ACCUMULATION", "IGNITION") and _started(r)]
+    rows_tk += [r for r in rows if r["stage"] in ("ACCUMULATION", "IGNITION") and _late(r)]
     rows_tk += [r for r in rows if r["stage"] == "DORMANT"
                 and (r.get("change30d_pct") or 0) >= 30.0]
     rows_tk.sort(key=lambda x: x["score"], reverse=True)

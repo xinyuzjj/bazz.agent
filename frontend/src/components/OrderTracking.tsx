@@ -24,9 +24,10 @@ const STATUS_META: Record<string, { key: string; cls: string }> = {
   FAILED: { key: "track.stRejected", cls: "pill-red" },
 };
 
-const TrackedLine = memo(function TrackedLine({ o, onRemove }: {
+const TrackedLine = memo(function TrackedLine({ o, onRemove, onCancel }: {
   o: TrackedOrder;
   onRemove: (id: string) => void;
+  onCancel: (o: TrackedOrder) => void;
 }) {
   const t = useT();
   const fut = useLiveTick("futures", o.symbol);
@@ -38,6 +39,10 @@ const TrackedLine = memo(function TrackedLine({ o, onRemove }: {
   const pnl = px && entry ? ((px - entry) / entry) * 100 * (long ? 1 : -1) : null;
   const sm = STATUS_META[o.status] ?? { key: "track.stNew", cls: "pill-dim" };
   const slDist = px && o.stop_loss ? ((px - o.stop_loss) / px) * 100 * (long ? 1 : -1) : null;
+  // 可撤单：只有交易所通道、还在跟踪中、且不是终态的单，撤了才有意义
+  const canCancel = !!o.active && o.route === "exchange"
+    && !!o.order_id && !["N/A", "WALLET"].includes(o.order_id)
+    && !["CANCELED", "REJECTED", "EXPIRED", "FAILED", "DONE"].includes(String(o.status).toUpperCase());
   const tpDist = px && o.take_profit ? ((o.take_profit - px) / px) * 100 * (long ? 1 : -1) : null;
   return (
     <div className="grid items-center px-4 py-2.5 border-b border-line/60 last:border-0 hover:bg-elevated/40 transition-colors font-mono text-[12px]"
@@ -63,7 +68,15 @@ const TrackedLine = memo(function TrackedLine({ o, onRemove }: {
       <div className="text-[11px] text-ink-dim tabular">
         {o.take_profit ? <span title={t("track.tp")}>TP {fmtPrice(o.take_profit)}{tpDist != null ? <span className="text-ink-mute"> ({tpDist.toFixed(1)}%)</span> : null}</span> : "—"}
       </div>
-      <div className="text-right">
+      <div className="text-right flex items-center justify-end gap-1">
+        {/* v1.6.5（OPT-09）真撤单：仅对「还在交易所挂着的委托单」显示。
+            已成交/已撤销/钱包通道的单没有可撤的东西，按钮就不出现 —— 少一个按了没反应的按钮。 */}
+        {canCancel && (
+          <button onClick={() => onCancel(o)} className="btn-ghost px-1.5 py-0.5 text-[10px] text-ink-mute hover:text-red"
+            title={t("track.cancelTip")}>
+            {t("track.cancelLabel")}
+          </button>
+        )}
         <button onClick={() => onRemove(o.id)} className="btn-ghost px-1.5 py-0.5 text-[10px] text-ink-mute hover:text-red" title={t("track.remove")}>
           <I.X size={10} />
         </button>
@@ -98,6 +111,22 @@ export function OrderTracking() {
     try { await api.orderUntrack(id); } catch { /* 下一轮轮询会恢复显示 */ }
   };
 
+  // v1.6.5（OPT-09）撤单：破坏性动作，先问一句再发。失败原因原样显示（-2015 权限 / 已终态…）
+  const cancel = async (o: TrackedOrder) => {
+    if (!window.confirm(t("track.cancelTip") + `\n\n${o.symbol}  #${o.order_id}`)) return;
+    try {
+      const r: any = await api.orderCancel({ id: o.id, symbol: o.symbol, order_id: o.order_id });
+      if (r?.status === "ok") {
+        setOrders((cur) => (cur ?? []).map((x) => x.id === o.id ? { ...x, status: "CANCELED", active: false } : x));
+        setErr("");
+      } else {
+        setErr(t("track.cancelFail", { msg: r?.message || "" }));
+      }
+    } catch (e: any) {
+      setErr(t("track.cancelFail", { msg: e?.message || String(e) }));
+    }
+  };
+
   return (
     <div className="glass overflow-hidden" style={{ borderRadius: 12 }}>
       <div className="px-4 py-3 flex items-center gap-3 border-b border-line flex-wrap">
@@ -118,7 +147,7 @@ export function OrderTracking() {
             <div>{t("markets.h.symbol")}</div><div>{t("track.status")}</div><div>{t("track.qtyEntry")}</div>
             <div>{t("track.live")}</div><div>{t("track.pnl")}</div><div>{t("track.sl")}</div><div>{t("track.tp")}</div><div />
           </div>
-          {orders.map((o) => <TrackedLine key={o.id} o={o} onRemove={remove} />)}
+          {orders.map((o) => <TrackedLine key={o.id} o={o} onRemove={remove} onCancel={cancel} />)}
         </>
       )}
     </div>

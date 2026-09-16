@@ -1,9 +1,15 @@
-"""链上钱包（CEX 账户，API Key + Secret 签名）——只读资产模块
+"""链上钱包（CEX 账户，API Key + Secret 签名）——资产查询 + 受限的交易动作
 
 与 Agentic Wallet（baw MPC 扫码）是两套独立体系：
   - Agentic Wallet：Binance App 扫码登录（MPC 无密钥），见 wallet_client.py
   - 本模块：用户自持 Binance API Key + Secret，HMAC 签名调用 CEX REST，
-    仅做账户 / 资产估值等**只读**查询，不承载下单（下单走 executor + 人工确认）。
+    做账户 / 资产估值查询，以及**下单 / 撤单 / 保护单**三件事（一律经 executor 的
+    人工确认门，本模块自身不认识 confirm 概念，也不自动调用）。
+
+v1.6.5（OPT-09）补齐撤单与保护单：此前整条链路只有「下」没有「撤」，
+`/api/orders/track` 的 DELETE 只是停止本地跟踪（不动交易所），
+而保护单函数 `executor.place_oco_order` 从来没有任何调用方。
+本模块现在提供幂等的 `cancel_order` / `cancel_open_orders` 与正确的 OCO 参数拼装。
 
 密钥存储：本地 sqlite settings（state.set_setting），与 desktop /api/settings 一致，
 绝不落日志、绝不返回明文给前端（只回掩码）。
@@ -153,6 +159,144 @@ def _get_signed(path: str, params: dict, api_key: str, secret: str) -> dict:
             raise ValueError(f"签名 / 时间戳被拒（{body_code}）：{msg}（请检查 Secret Key 是否对应、机器时钟是否同步）")
         raise PermissionError(msg) if req.status_code in (401, 403) else ConnectionError(msg)
     return req.json()
+
+
+def _signed_request(method: str, path: str, params: dict, api_key: str,
+                    secret: str) -> dict:
+    """签名请求统一入口（v1.6.5 OPT-09）：GET/POST/DELETE 共用一套错误归因。
+
+    抽出来的理由：撤单用 DELETE、下单用 POST、查单用 GET，三个动作的**错误码语义完全一样**
+    （-2015 权限 / -1022 签名 …），复制三份会在修 bug 时只改一处。错误归因与本模块
+    既有的 `_get_signed` 完全一致，行为零漂移。
+    """
+    qs = _sign(params, secret)
+    fn = {"GET": requests.get, "POST": requests.post, "DELETE": requests.delete}[method.upper()]
+    req = fn(f"{BASE_URL}{path}?{qs}", headers={"X-MBX-APIKEY": api_key}, timeout=15)
+    if req.status_code != 200:
+        body_msg, body_code = "", None
+        try:
+            e = req.json()
+            body_msg = str(e.get("msg") or e.get("message") or "")
+            body_code = e.get("code")
+        except Exception:
+            body_msg = req.text[:200]
+        msg = body_msg or f"HTTP {req.status_code}"
+        if "API-key format invalid" in msg or body_code == -2014:
+            raise ValueError("KEY_FORMAT::API-key format invalid（-2014）")
+        if body_code == -2015 or "invalid api-key, ip, or permissions" in msg.lower():
+            raise ValueError(f"IP_PERM::{msg}（-2015）")
+        if body_code in (-1022, -1021, -1003) or "signature" in msg.lower() or "timestamp" in msg.lower():
+            raise ValueError(f"签名 / 时间戳被拒（{body_code}）：{msg}（请检查 Secret Key 是否对应、机器时钟是否同步）")
+        raise PermissionError(msg) if req.status_code in (401, 403) else ConnectionError(msg)
+    return req.json()
+
+
+def _err(e: Exception) -> dict:
+    """把 _signed_request 抛出的异常归一成 {status:error, code, message}（与 place_order 同形）。"""
+    txt = str(e)
+    code = "not_configured"
+    if txt.startswith("KEY_FORMAT::"):
+        code, txt = "key_format", txt.split("::", 1)[1]
+    elif txt.startswith("IP_PERM::"):
+        code, txt = "ip_perm", txt.split("::", 1)[1]
+    elif isinstance(e, ConnectionError) and not isinstance(e, requests.exceptions.RequestException):
+        code = "exchange"
+    elif isinstance(e, requests.exceptions.RequestException):
+        code = "network"
+    return {"status": "error", "code": code, "message": txt[:300]}
+
+
+def cancel_order(symbol: str, order_id: str,
+                 keys: Optional[Tuple[str, str]] = None) -> dict:
+    """撤单（v1.6.5 OPT-09）：DELETE /api/v3/order。幂等 —— 已成交/已撤销时交易所返回
+    -2011（UNKNOWN_ORDER，订单不存在或已终态），这里**按成功语义收敛**，
+    因为「撤单」这个用户意图（让这张单不再挂着）本来就已经达成了，报错反而误导重试。
+
+    ⚠️ 只会撤**这一张**单；同 symbol 的其他挂单不动（避免把保护单顺手撤掉）。"""
+    if keys is None:
+        keys = _stored()
+    api_key, secret = keys
+    if not api_key or not secret:
+        return {"status": "error", "code": "not_configured",
+                "message": "尚未配置 Binance API Key / Secret（请到交易所页绑定）。"}
+    if not order_id or str(order_id) in ("N/A", "WALLET"):
+        return {"status": "error", "code": "bad_order",
+                "message": f"订单号无效（{order_id}），可能是钱包通道（链上）下的单，无法在 CEX 撤单。"}
+    try:
+        d = _signed_request("DELETE", "/api/v3/order",
+                            {"symbol": str(symbol).upper(), "orderId": str(order_id)},
+                            api_key, secret)
+        return {"status": "ok", "order": d}
+    except ValueError as e:
+        txt = str(e)
+        if "-2011" in txt or "UNKNOWN_ORDER" in txt.upper():
+            return {"status": "ok", "order": {"orderId": order_id, "status": "ALREADY_GONE"},
+                    "note": "订单已是终态（已成交或已撤销），无需再撤。"}
+        return _err(e)
+    except Exception as e:
+        return _err(e)
+
+
+def cancel_open_orders(symbol: str, keys: Optional[Tuple[str, str]] = None) -> dict:
+    """撤掉某标的下**全部**挂单：DELETE /api/v3/openOrders。"""
+    if keys is None:
+        keys = _stored()
+    api_key, secret = keys
+    if not api_key or not secret:
+        return {"status": "error", "code": "not_configured",
+                "message": "尚未配置 Binance API Key / Secret（请到交易所页绑定）。"}
+    try:
+        d = _signed_request("DELETE", "/api/v3/openOrders",
+                            {"symbol": str(symbol).upper()}, api_key, secret)
+        return {"status": "ok", "cancelled": len(d or [])}
+    except Exception as e:
+        return _err(e)
+
+
+def place_oco(symbol: str, side: str, quantity: str, take_profit: str,
+              stop_price: str, stop_limit_price: str,
+              keys: Optional[Tuple[str, str]] = None) -> dict:
+    """保护单：止盈 + 止损 OCO（二选一成交，另一腿自动撤销）。v1.6.5（OPT-09）。
+
+    参数拼装是**扁平**的 —— Binance `POST /api/v3/orderList/oco` 收的是
+    `price`（止盈腿限价）/ `stopPrice`（止损触发价）/ `stopLimitPrice`（止损腿限价）
+    / `stopLimitTimeInForce`，**不是** `legs` 数组。此前 `executor.place_oco_order`
+    传了 `legs=[{...},{...}]`，签名后交易所会直接拒（缺 price/stopPrice 必填参数），
+    而且该函数从来没有任何调用方，所以这个 bug 一直没被发现。
+
+    side 是**持仓方向的反向**（做多持仓 → 保护单 side=SELL）。
+    """
+    if keys is None:
+        keys = _stored()
+    api_key, secret = keys
+    if not api_key or not secret:
+        return {"status": "error", "code": "not_configured",
+                "message": "尚未配置 Binance API Key / Secret（请到交易所页绑定）。"}
+    flt = _lot_filters(symbol)
+    qty_s = _round_to_step(quantity, flt.get("step", 0))
+    try:
+        if flt.get("step") and float(qty_s) <= 0:
+            return {"status": "error", "code": "lot_size",
+                    "message": f"数量 {quantity} 不足 {symbol} 最小下单单位（stepSize={flt.get('step')}）。"}
+    except Exception:
+        pass
+    tick = flt.get("tick", 0)
+    params = {
+        "symbol": str(symbol).upper(),
+        "side": str(side).upper(),
+        "quantity": qty_s,
+        "price": _round_to_step(take_profit, tick),          # 止盈腿（LIMIT_MAKER）
+        "stopPrice": _round_to_step(stop_price, tick),        # 止损触发价
+        "stopLimitPrice": _round_to_step(stop_limit_price, tick),
+        "stopLimitTimeInForce": "GTC",
+        "listClientOrderId": f"bazzprot{int(time.time() * 1000) % 10_000_000_000}",
+    }
+    params = {k: v for k, v in params.items() if v not in ("", None)}   # 取整失败的空值不发
+    try:
+        d = _signed_request("POST", "/api/v3/orderList/oco", params, api_key, secret)
+        return {"status": "ok", "order": d}
+    except Exception as e:
+        return _err(e)
 
 
 def place_order(symbol: str, side: str, quantity: str, price: str,

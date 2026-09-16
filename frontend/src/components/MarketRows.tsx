@@ -73,9 +73,17 @@ export type TrackRow = {
   peak_price: number; trough_price: number;
   last_price: number; outcome_price: number;
   review?: string; holding?: number;
+  // v1.6.5（OPT-06）：疑似假启动（跟踪≥24h 却始终没给过 5% 浮盈）+ 已跟踪小时数
+  fake_start?: boolean; age_h?: number;
   found_at: number; closed_at: number | null; updated_at: number;
 };
-export type TracksData = { pending: TrackRow[]; history: TrackRow[]; stats?: { total?: number; pending?: number; moon?: number; dump?: number; expired?: number }; ts?: number; error?: string };
+// v1.6.5（OPT-07）：按 stage 分组胜率
+export type StageStat = { pending: number; moon: number; dump: number; expired: number; closed: number; win_rate: number };
+export type TrackStats = {
+  total?: number; pending?: number; moon?: number; dump?: number; expired?: number;
+  by_stage?: Record<string, StageStat>; stages?: [string, StageStat][];
+};
+export type TracksData = { pending: TrackRow[]; history: TrackRow[]; stats?: TrackStats; ts?: number; error?: string };
 export const OUTCOME_META: Record<string, { label: string; cls: string }> = {
   moon:    { label: "markets.outcomeMoon", cls: "pill-green" },
   dump:    { label: "markets.outcomeDump", cls: "pill-red" },
@@ -487,6 +495,11 @@ export const TrackLine = memo(function TrackLine({ r, variant, onDetail }: {
           <span className={`pill ${stageCls} text-[10.5px]`}>{t(`markets.stage.${r.stage}`)}</span>
           {isP && !!r.holding && (
             <span className="pill pill-gold text-[10.5px]" title={t("markets.holdingTip")}>{t("markets.holding")}</span>
+          )}
+          {/* v1.6.5（OPT-06）疑似假启动：只提示、不自动平仓（VTHO 反例：早期回撤 7.9% → +31.3%） */}
+          {isP && !!r.fake_start && (
+            <span className="pill pill-red text-[10.5px]"
+              title={t("markets.fakeStartTip", { h: String(r.age_h ?? 0) })}>{t("markets.fakeStart")}</span>
           )}
           {!isP && oc && <span className={`pill ${oc.cls} text-[10.5px]`}>{t(oc.label)}</span>}
           {/* 失败复盘：点击展开（阻止冒泡，不触发详情浮层） */}

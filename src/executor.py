@@ -68,27 +68,79 @@ def place_limit_order(symbol: str, side: str, quantity: str,
 
 def place_oco_order(symbol: str, side: str, quantity: str,
                     price: str, stop_price: str, limit_price: str) -> dict:
+    """保护单：止盈 + 止损 OCO（二选一成交，另一腿自动撤销）。
+
+    v1.6.5（OPT-09）**修 bug + 改走统一下单链路**。原实现有两个问题：
+      1. `legs=[{...},{...}]` 不是 Binance 的入参格式 —— `/api/v3/order/oco` 收的是扁平参数
+         （price / stopPrice / stopLimitPrice / stopLimitTimeInForce），传 legs 会因缺必填参数被拒；
+      2. 它自建了一套 BASE_URL + .env 密钥，与界面绑定的密钥（cex_wallet）是两条路，
+         用户没在 .env 里配 Key 时它永远返回「缺少 API Key」。
+    现在委托给 `cex_wallet.place_oco`：一套密钥、一套交易规则取整、一套错误归因。
+    旧签名保持兼容（price=止盈价 / stop_price=止损触发价 / limit_price=止损腿限价）。
     """
-    放置 OCO 订单（Take Profit + Stop Loss 合一单）
+    from cex_wallet import place_oco as _oco
+    return _oco(symbol=symbol, side=side, quantity=quantity, take_profit=price,
+                stop_price=stop_price, stop_limit_price=limit_price)
+
+
+def cancel_order(symbol: str, order_id: str) -> dict:
+    """撤单（v1.6.5 OPT-09）：委托 cex_wallet（界面绑定的密钥）。
+    注意与「停止本地跟踪」是两件事 —— 撤单才会真正把挂单从交易所摘掉。"""
+    from cex_wallet import cancel_order as _cancel
+    return _cancel(str(symbol).upper(), str(order_id))
+
+
+def cancel_open_orders(symbol: str) -> dict:
+    """撤掉某标的全部挂单（v1.6.5 OPT-09）。"""
+    from cex_wallet import cancel_open_orders as _cancel_all
+    return _cancel_all(str(symbol).upper())
+
+
+# 保护单止损距离：与仓位模拟口径**一致**（radar_tracker.FAIL_HIT = 10.0，10x 近强平线）。
+# 硬约束（用户明确要求）：止损 10% 与 10x 杠杆都不动，所以这里刻意不暴露成可调参数。
+PROTECT_STOP_PCT = 10.0
+
+
+def place_protective(signal: dict, fill_price: float = 0.0) -> dict:
+    """下单即挂保护单（v1.6.5 OPT-09）：现货 OCO，止损 −10%（与模拟口径一致），
+    止盈取 signal.take_profit（缺省按顺向 +25%，与雷达 GAIN_HIT 同源）。
+
+    只在**人工确认过**的入场之后调用（由 confirm_and_place 触发），且要求 signal 显式带
+    `protect=True` —— 默认不开，因为这是一张真金白银挂在交易所的委托单。
+    失败一律返回 error 字典、绝不抛异常：保护单挂不上不该把已成交的入场判成失败。
     """
-    if not API_KEY or not SECRET:
-        return {"error": "缺少 API Key"}
-    params = _sign({
-        "symbol": symbol,
-        "side": side,
-        "quantity": quantity,
-        "listClientOrderId": f"oco_{int(time.time())}",
-        "legs": [
-            {"price": limit_price, "quantity": quantity, "side": side, "type": "LIMIT_MAKER"},
-            {"stopPrice": stop_price, "quantity": quantity, "side": "SELL" if side == "BUY" else "BUY",
-             "type": "STOP_LOSS_LIMIT", "timeInForce": "GTC", "price": stop_price},
-        ],
-    })
-    r = requests.post(f"{BASE_URL}/api/v3/order/oco?{params}",
-                      headers={"X-MBX-APIKEY": API_KEY}, timeout=10)
-    if r.status_code == 200:
-        return r.json()
-    return {"error": r.text, "status_code": r.status_code}
+    sym = str(signal.get("symbol") or "").upper()
+    try:
+        qty = str(signal.get("quantity") or signal.get("executed_qty") or "")
+        entry = float(fill_price or signal.get("price") or 0)
+        if not sym or not qty or float(qty) <= 0 or entry <= 0:
+            return {"error": f"保护单参数不完整（symbol={sym or '—'} qty={qty or '—'} entry={entry or '—'}）",
+                    "orderId": "", "symbol": sym, "status": "PROTECT_FAILED"}
+        bull = str(signal.get("direction") or "").upper() in ("BULLISH", "做多", "LONG", "BUY")
+        tp = float(signal.get("take_profit") or 0)
+        if tp <= 0:
+            tp = entry * (1 + 0.25) if bull else entry * (1 - 0.25)
+        if bull:
+            stop = entry * (1 - PROTECT_STOP_PCT / 100.0)
+            stop_lim = stop * 0.995          # 止损腿限价再让 0.5%，避免触发后因滑点挂不上
+        else:
+            stop = entry * (1 + PROTECT_STOP_PCT / 100.0)
+            stop_lim = stop * 1.005
+        res = place_oco_order(symbol=sym, side="SELL" if bull else "BUY", quantity=qty,
+                              price=str(round(tp, 10)),
+                              stop_price=str(round(stop, 10)),
+                              limit_price=str(round(stop_lim, 10)))
+        if res.get("error"):
+            return {"error": res["error"], "orderId": "", "symbol": sym,
+                    "status": "PROTECT_FAILED"}
+        d = res.get("order") or {}
+        return {"orderId": str(d.get("orderListId") or d.get("orderId") or "N/A"),
+                "symbol": sym, "status": "PROTECTED",
+                "stop_price": round(stop, 10), "take_profit": round(tp, 10),
+                "side": "SELL" if bull else "BUY", "raw": d}
+    except Exception as e:
+        return {"error": f"保护单异常：{e.__class__.__name__}", "orderId": "", "symbol": sym,
+                "status": "PROTECT_FAILED"}
 
 
 def _wallet_place(signal: dict) -> dict:
@@ -188,6 +240,10 @@ def confirm_and_place(signal: dict, confirm: bool = False) -> dict:
         "margin_usdt": signal.get("margin_usdt"),
         "leverage": signal.get("leverage"),
         "route": signal.get("route", "exchange"),
+        # v1.6.5（OPT-09）：确认框里就要看见「会不会顺手挂保护单」，否则用户不知道
+        # 点确认之后还有第二张单会发出去。
+        "protect": bool(signal.get("protect")),
+        "protect_stop_pct": PROTECT_STOP_PCT if signal.get("protect") else None,
     }
     if not confirm:
         return {"status": "pending_confirm", "summary": summary,
@@ -201,12 +257,21 @@ def confirm_and_place(signal: dict, confirm: bool = False) -> dict:
     # 交易所密钥通道：用界面绑定的密钥（settings 优先 / .env 兜底），不依赖 MCP/OAuth
     from cex_wallet import place_order as cex_place
     side = "BUY" if summary["direction"] in ("BULLISH", "做多") else "SELL"
-    return _tracked(place_report(cex_place(
+    res = _tracked(place_report(cex_place(
         symbol=summary["symbol"],
         side=side,
         quantity=str(signal.get("quantity", "0.001")),
         price=str(summary["entry_price"]),
     )), signal)
+    # v1.6.5（OPT-09）：下单即挂保护单（止损 −10%，与模拟口径一致）。
+    # 仅当 signal 显式带 protect=True —— 默认不开，因为这是真挂在交易所的委托单。
+    # 失败只附注不改变下单结果：入场已成交，保护单挂不上不该被判成下单失败。
+    if signal.get("protect") and not res.get("error"):
+        prot = place_protective(signal)
+        res["protective"] = prot
+        if prot.get("error"):
+            res["protect_warning"] = f"保护单未挂上：{prot['error']}（请手动挂止损）"
+    return res
 
 
 def place_report(res: dict) -> dict:
