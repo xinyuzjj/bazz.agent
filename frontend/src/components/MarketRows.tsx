@@ -34,15 +34,19 @@ export type RadarRow = {
     btc_beta?: number | null; btc_residual?: number | null;
   };
   reasons?: string[];
+  // v1.6.3 控盘代理（妖币识别）：命中即说明这是庄家剧本盘 —— 做多侧已被后端降级为 WATCH
+  manip?: string[]; manip_note?: string;
 };
 export type OrderMode = "spot-long" | "futures-long" | "futures-short";
 
-// v1.5.0 语义层六阶段 → pill 样式（吸筹/点火=绿，垂直拉升=金，派发顶/崩跌=红，沉寂/异动=灰）
+// v1.5.0 语义层阶段 → pill 样式（吸筹/点火=绿，垂直拉升=金，派发顶/崩跌=红，沉寂/异动=灰）
+// v1.6.2 新增 EXTENDED（已拉升·追高区）：越过 12% 追高线，启动窗口已过 → 中性偏警示
 export const STAGE_META: Record<string, { cls: string }> = {
   ACCUMULATION: { cls: "pill-green" },
   IGNITION:     { cls: "pill-green" },
   SHORT_AMBUSH: { cls: "pill-red" },
   VERTICAL:     { cls: "pill-gold" },
+  EXTENDED:     { cls: "pill-gold" },
   DISTRIBUTION: { cls: "pill-red" },
   CRASH:        { cls: "pill-red" },
   DORMANT:      { cls: "pill-dim" },
@@ -388,6 +392,11 @@ export const RadarLine = memo(function RadarLine({ m, mode, onTrade, onOrder, on
           {!m.stage_label && <span className={`pill ${m.side === "LONG" ? "pill-green" : m.side === "WATCH_SHORT" ? "pill-red" : "pill-dim"} text-[10.5px]`} title={m.tag}>{m.tag}</span>}
           <span className="pill pill-dim text-[10.5px]" title={t("markets.scoreTitle")}>{t("markets.scorePrefix")}{m.score}</span>
           {m.cooldown && <span className="pill pill-dim text-[10.5px]" title={t("markets.cooldownTitle")}>{t("markets.cooldown")}</span>}
+          {!!m.manip?.length && (
+            <span className="pill pill-red text-[10.5px]" title={m.manip_note || m.manip.join(" / ")}>
+              控盘 {m.manip.join("/")}
+            </span>
+          )}
           {isIgn && m.floor_rising && <span className="pill pill-dim text-[10.5px]" title={t("markets.floorRisingTitle")}>{t("markets.floorRising")}</span>}
         </div>
         <div className="font-mono text-[11px] text-ink-mute truncate mt-0.5" title={bits.length ? bits.join(" · ") : m.note}>

@@ -1,4 +1,4 @@
-# BAZZ.AGENT 项目状态交接（v1.5.47 SMC 止损定版 + 爆款标题池 · 2026-09-13 更新）
+# BAZZ.AGENT 项目状态交接（v1.5.62 妖币雷达重做选币 · 2026-09-16 更新）
 
 > 用途：开新任务/新会话前快速恢复上下文。读完即可继续开发，无需翻旧对话。
 > 仓库：`github.com/xinyuzjj/bazz.agent`
@@ -6,7 +6,9 @@
 > 链接工作树：`C:\Users\Administrator\WorkBuddy\Worktrees\binance-agent-os-scout\main-a919d7e7`
 > （分支 `workbuddy/main-a919d7e7`，同一仓库同一提交 —— 在此改动**不会**影响主目录，注意别改错地方）
 >
-> ⚠️ 上一版本文档停留在 v1.5.3 / 表格到 v1.5.11，与代码实际差 18 个版本。**本文档已按 v1.5.35 全量校准。**
+> ⚠️ 上一版本文档停留在 v1.5.47，与代码实际差 14 个版本。**本文档已按 v1.5.62 全量校准（2026-09-16）。**
+> 后续发展方向见 **`outputs/roadmap-v1.5.61.html`**（P0 校准收口 → P1 战绩回灌 → P2 交易闭环 → P3 产能与工程债；
+> `outputs/` 已在 `.gitignore` 里，属本地产物、不入库）。
 
 ---
 
@@ -14,18 +16,32 @@
 
 - **形态**：Windows 桌面端（Electron 壳）+ FastAPI Python 后端 + TS/Vite 前端；同一套代码也能纯浏览器跑
 - **定位**：币安 AI 交易终端 —— Agent 对话、行情（现货/合约/股票化代币）、交易方案卡、CEX 连接、Agentic Wallet、广场发文、Skills Hub、多 Bot 群聊、x402 支付
-- **当前版本**：**v1.5.47（SMC 止损定版：多头买 OB 上沿/空头卖 OB 下沿并标进价、止损只锚结构失效位不凑风险数；标题池按爆款公式重写）**；
-  `package.json` 与最新 git tag 均为 v1.5.47
-- **规模**：后端 `src/` 32 个 py 模块 + `desktop_app.py`（**130 条路由** = 129 个 `@app.<method>(` + 1 个 `@app.websocket`）；前端 12 个视图 / 40 个文件；**10 个离线回归测试套件** + 1 套浏览器视觉验收（`tests/ui_preview_check.py`）
+- **当前版本**：**v1.5.62（妖币雷达重做选币：只登记「尚未启动」的币、池子扩到合约全市场并挡掉 TradFi、
+  新增控盘代理层与「绝不做空」）**；
+  `package.json` 与最新 git tag 均为 v1.5.62
+- **规模**：后端 `src/` **34 个** py 模块 + `desktop_app.py`（**137 条路由**，含 1 个 `@app.websocket`）；前端 12 个视图 / 40 个文件；**19 个离线回归测试套件**（`tests/test_*.py`）+ 1 套浏览器视觉验收（`tests/ui_preview_check.py`）
 - **工作区**：安装目录 `<安装根>/workspace`（state.db / proxies.json / 附件 / 日志 / spill / 复盘 / square_rich）；只读盘回退 `%APPDATA%\BAZZ.AGENT\workspace`
 - **预置资产**：`.agents/skills/` 官方技能包 + `.agents/bots/` 5 个 Bot 人设（default-assistant / trend-hunter / liquidity-hunter / onchain-fox / risk-sentinel）
 
 ---
 
-## 二、近期发布版本（v1.5.12 → v1.5.47）
+## 二、近期发布版本（v1.5.12 → v1.5.62）
 
 | 版本 | 核心内容 |
 |---|---|
+| **v1.5.62** | **妖币雷达重做选币（用户定位：「止损 10% 与 10x 杠杆都不动，亏的根因是找妖币的方法错了」）**。① **只登记「尚未启动」的币**（登记即入场、不设候选态）：当日涨幅 ≥ 3% 的行不再进登记组、改划「已拉升」展示组——依据是 3 笔 moon 的登记依据**全无「24h +X%」**，而 9 笔「登记时已涨 7.4%~24.8%」全是 dump；回放 20 笔做多 −1086.5U/15.0% → **只留未启动 7 笔 +213.5U/42.9%**。② **绝不做空**：3 笔做空 3/3 全亏（CAKE/THETA/SAGA 被轧空，最大有利仅 0.0/0.0/1.4%），`SHORT_AMBUSH` 移出登记组只留展示；负费率改为**只标注+扣分、不改方向**（反例 VTHO −0.776% 却 +31.3%），费率评分由 `abs()` 改**方向化**。③ **候选池扩到「现货 ∪ 合约全市场」**：纯合约妖币（RAVE / LAB）此前完全不可见；用合约接口 `underlyingType == "COIN"` 挡掉近 200 个 `TRADIFI_PERPETUAL`（NVDA/XAU/QQQ…，实测会占掉 110 池位中的 57 个且大半是 TradFi），Alpha 币与 meme/中文盘保留；纯合约币 K 线走合约回退。生产实测：86 现货 + 24 加密纯合约、TradFi 零泄漏、**LABUSDT 已进池**。④ **控盘代理层**（链下、零新增外部依赖）：`无现货`/`合约独大`、`换手畸高`（>10x）、`空头付钱`（≤−0.15%）、`拉升无爆仓`（带数据可用性守卫），命中扣分并在雷达行出红色「控盘」标。**测试**：新增 `test_v162_radar_select.py` / `test_v163_manip_guard.py`，**全量 19 套件全绿**、`tsc --noEmit` 退出码 0 |
+| **v1.5.61** | **广场发文模拟挂单（文章观点自动建档、7 天定胜负）**：发文成功后按文章 SMC 计划**自动建模拟挂单**（100U 保证金 × 10x，不碰真实资金）→ `paper_tracker` daemon 线程 60s 复查（5m K 线驱动纯函数 `_eval` 状态机）→ 7 天观察期到期强制结算。**状态机**：`pending`（挂单中）→ `open`（已入场）→ `win`/`loss`；同根 K 同时触 TP+SL **保守判 loss**；7 天未入场 → `noentry`；盈亏按 10x 杠杆折算**保证金收益率（%）**。**观望不建单**：`neutral`/`noplay`（止损距离超 8% 护栏）的文章 `plan=null`，绝不硬造方向。建单钩子 `_paper_order_from_run` 放在 `record_from_run`（agent / 手动两条发文路径全覆盖），`run_dir` 唯一索引幂等。广场页新增**双标签**「发文台账 \| 模拟挂单」+ 7 张统计卡（总单/挂单中/持仓/获利/亏损/未入场/胜率）+ 订单卡列表（现价、入场区、止损止盈、盈亏着色）、支持单条删除（二次确认，仅本地数据）；新增 `GET /api/square/paper` 与 `POST /api/square/paper/delete`，启动钩子 + 路由双保险拉起线程。**新增模块 `src/paper_tracker.py`（153 行）**；`state.paper_add/list/stats/update/remove`。**测试**：`tests/test_paper_orders.py` **17/17**（`_eval` 状态机直测 + 源码护栏） |
+| **v1.5.60** | **入场结构位止损距离 ≤8% 护栏（10x 杠杆活着到止损的前提）**：用户实测两篇翻车（LSK 旧 OB 距现价 **-85%** 还挂单；牛来空头 OB 区宽 **58%**）→ 拍板定版：**入场 → 止损距离必须 ≤8%**（10x 强平线 ~9% 的前提），超限结构位**一律不用**；结构位降级链 **OB → OTE → 近 10 根摆动点 → 观望（noplay）**，空头镜像；`noplay` 只输出观望劝退行、**不带仓位算法**。**「我的看法」与上文自洽**：4h 结构与最终 bias 方向相反时必须说破级别分歧（如「日线大趋势分量更重 权重 3:1」），禁止上下文打架；**老结构如实标注**：OB 距现价超 25% 标「很远的老底/老顶，短期参考意义有限」。**修 bug**：`_pick_tp` 裸 `None` 解包（stat 无 k90 时 cands 混入 None）。**测试**：sizing 7 个过时用例更新到护栏口径（锚位断言 5→6 处）+ 新增护栏测试（暴涨/暴跌合成行情 → noplay）；**修复 test_v1541 的 `sys.modules["state"]` 桩在 pytest 收集期污染全局导致 test_v1535 e2e 假失败**（v1.5.41 起的存量问题）。全量回归 **237 passed** |
+| **v1.5.59** | **大趋势判定定版 + 反向 OB 两态显示 + OTE 口径改 0.62-0.79**（用户拍板）。① **日线大趋势「趋势延续优先」**（v1.5.57 新增 `_htf_trend`）：锚定最近显著摆动点的**实体边缘**，**实体 K 收盘破位才翻转** —— 影线捅破不算、中途高点走低只算上涨中的调整；4h 图左上角标注「大趋势·日线 多头/空头/方向不明」。② **反向 OB 两态**（v1.5.58）：已实体收盘破结构最低/最高点 → **实线框**标「CHoCH 空头OB / CHoCH 多头OB」；尚未破 → **虚线框**标「跌破后的空头ob位 / 升破后的多头ob位」（用户指定也要显示）。③ **OTE 口径改版**：最优入场窗口 0.618-0.705 → **0.62-0.79**，一般用**中间值 0.702** 作入场参考位；新增 `ote_entry` 字段、计划入场价取 0.702；正文固定附「4h OTE 参考」行（窗口 + 中间值实际价），「我的看法」补 OTE 概念介绍；4h 结构图 OTE 金框自动跟随新窗口。**测试 23/23**（趋势延续/实体破位翻转/新旧锚取代护栏、反向 OB 实体破极值点才成立、虚线框护栏、OTE 0.62/0.79/0.702 窗口与中间值校验）。真实实测：BTC 锚 76,152（≈用户口径 76,165），影线捅破 76,000 收 77,191 **仍判多头**；ETH 多头 OTE 中间值 2,466.73 ≈ OB 上沿进价 2,465.82，双 SMC 位互相印证 |
+| **v1.5.56** | **日线封面不标 SMC，另出 4h 结构图单独标记**（用户要求「日线图不需要标记 SMC，另生成一张 4 小时图标记出来」）：`draw_cover` 增 `kkey`/`smc_zones` 参数，日线封面（默认）**不画** SMC 标记；新增 **`draw_cover_4h`** —— 4h 蜡烛 + 多头/空头 OB（红绿矩形框）+ FVG（最近 3 条）+ OTE 窗口，**矩形区间框只出现在这张图**；compose 产物新增 **`chart_4h.png`**，短贴发布自动附图（**cover + 24h + 4h 共 3 张**）；4h 图高/低胶囊与信息卡文案标「近 20 日·4h」（120 根 4h ≈ 20 日），不与日线混淆；k4h 不可用时静默跳过该图、不影响出稿。**测试**：fallback **14/14**（新增 3 例：日线默认无标记护栏 / 4h 图出图 / 缺 k4h 报错）、styles 17/17、sizing 16/16 |
+| **v1.5.55** | **封面图叠加 SMC 区域标记（OB / FVG / OTE 矩形区间框）+ 主图放大、量区压小**（用户要求）：**SMC 区域矩形框**画在蜡烛下层、实线描边、标签在框内左端 —— 多头 OB（绿框 12%）/ 空头 OB（红框 12%）/ FVG 缺口（按距现价取最近 3 条，现价下方绿、上方红，8%）/ OTE 斐波那契窗口（金色框 9%）；**最小可视高度 10px**（窄区间也能看出是「框」）；**不用虚线**（用户指定矩形区间）。**布局**：价格区 216px → **380px**（`y1 = H-236`），量区压至 **66px**（`vy1 = H-150`）。真实 BTC 实测 OB/FVG/OTE 色带聚焦现价附近供需、标签无遮挡；fallback 11/11、styles 17/17、sizing 16/16 |
+| **v1.5.54** | **封面 K 线终版：恢复虚线网格 + 大量柱区样式（用户以真实 BTC 样图拍板）** —— 看过真实 BTC 数据渲染后指定按 v1.5.51 风格定版，**撤销 v1.5.53「极简无网格」与 v1.5.52「压矮量区」**：恢复横向虚线网格 + 日期锚点竖向淡网格（价格轴 SUB 色）；价格区 104 ~ H-320、蜡烛实体宽度 **0.62 步长**、矩形实体、**影线收暗 30%**；成交量区恢复**高排**（H-100），量能起伏与价格走势对照更直观；高/低胶囊标签、现价虚线胶囊、底部信息卡保留。真实 BTC 实测（fapi 90d）：现价 77,176 / 90 日 57,758~82,282 / 费率 +0.0081% / OI 79.94 亿 / FNG 61。fallback 11/11、styles 17/17 |
+| **v1.5.53** | **封面 K 线定版「极简无网格」（用户三选一拍板）**：前两版样式仍不好看 → 出三种风格样图（霓虹渐变 / 空心经典 / 极简无网格）供挑选，拍板 **C · 极简无网格**：网格去掉虚线与竖线、只留极淡横线 + 更柔的价格轴文字；蜡烛**影线收暗至 45%**（柔和衬托实体），圆角细身实体保持 v1.5.52 比例；高/低胶囊、现价虚线胶囊、量区矮排、底部信息卡不变。fallback 11/11、styles 17/17 |
+| **v1.5.52** | **封面 K 线图比例修正：价格区拉高、量区压矮、细身圆角蜡烛**（用户反馈「蜡烛图太扁、不喜欢扁宽样式；量柱区域希望弄小一点」）：价格区高度 296px → **380px**（`y1 = H-236`），蜡烛纵向舒展；蜡烛实体宽度 0.62 → **0.55 步长**、圆角矩形绘制、去扁感；成交量区高度 192px → **66px**（`vy1 = H-150`）；最小实体高度 1.2px → **1.6px**（十字星也能看清）。fallback 11/11、styles 17/17 |
+| **v1.5.51** | **广场发文 K 线图美化：零新依赖、纯 Pillow 重绘**（用户反馈「生成的 K 线图希望更好看」；**不引 matplotlib**）。**封面主图（90d 蜡烛）**：背景纵向微渐变（深蓝黑 → 币安黑）告别死黑底 + 顶部金色描边呼应品牌色；网格虚线化 + 日期锚点补竖向淡网格；区间高/低虚线 + 胶囊标签（描边着色，深底可读）；蜡烛影线收暗一层、实体更立体；成交量柱收暗一档；「成交量」标签移左上；现价横线虚线化 + 右轴价格胶囊；底部信息条升级为**圆角卡片**（label/value 分层）。**24h 分时图**：面积填充改纵向渐变渐隐（贴线最亮 → 底部没入背景，mask 贴多边形）；折线**三层描边**（外圈辉光 → 中层过渡 → 亮芯）；高低点光晕圆点 + 胶囊标签；网格与现价线虚线化、与封面风格统一。fallback 11/11、styles 17/17、sizing 16/16、invalidation 10/10 |
+| **v1.5.50** | **止盈瞄准 SMC 流动性区域（摆动点 → FVG → OB 块阶梯）**（用户指示：止盈按 SMC 来不要乱改；但 SMC 目标太近、盈亏比不好时要换其他止盈方法，目标可以瞄向流动性区域 —— FVG、OB 块等。现场触发：SNDK 空单止盈 1,620.06 距入场仅 0.4%、盈亏比 ≈0.3，用户质问「这个盈亏比是认真的吗」）。**止盈阶梯 `_pick_tp`**：① **首选 SMC 摆动点**（前高/前低 = 裸露流动性池），RR ≥1.5 直接用；② **太近（RR<1.5）→ 换其他流动性目标**，按近 → 远依次尝试取第一个 RR 达标的：FVG 缺口中位（标签「FVG 缺口回补」）→ 对侧 OB 块边缘（只在止盈方向上才纳入）→ 近 30 根 4h 极值 → 90 日极值；③ **标签如实标注实际采用的目标类型、不伪装成摆动点**；④ 全不达标取最远目标、RR 如实回报，由 `_plan` 决定「小仓/劝退」话术（v1.5.49 逻辑保留）。**测试**：sizing 扩到 **16/16**（摆动点达标不换 / 摆动点太近换 90 日极值且标签如实 / RR<1 劝退 / 1~1.5 小仓注脚 / 强 RR 无注脚）；fallback 11/11、styles 17/17、invalidation 10/10 |
+| **v1.5.49** | **止盈呈现诚实化**：RR 从**入场参考价**如实计算（此前按现价算，挂单价接的单盈亏比全失真）；**RR<1**（目标贴入场、止损远 = 结构质量差）→ 如实劝退且**不再给仓位算法**；**1≤RR<1.5** → 标「盈亏比一般，只试小仓」；**RR≥1.5** → 正常计划 |
+| **v1.5.48** | **代币化股票出稿修复：市场自动纠偏（spot / futures 双向兜底）**。**用户实测**：SNDK（SanDisk 代币化股票）广场发文失败 —— 「square-rich-post 需要 K 线数据生成封面图，但 SNDKUSDT 无 K 线数据」。**根因**：SNDK **不在币安现货市场**（现货 `/api/v3/klines` 返回 **400**），但它在 **U 本位合约（fapi）有完整永续 K 线**（实测 90 根 1d、24h ticker 正常）；发文链路把代币化股票当 `spot` 处理 → 1d/4h/1h 三档降级全在打现货 API → 全 400 → 误报「无 K 线数据」。**数据一直在，只是查错了市场。** **修复 `_collect` 市场自动纠偏**：请求市场 **1d+4h 都不可用、而另一市场 1d 可用** → 整体切换市场再继续出稿；与既有 RAYUSDT 场景（合约平线 → 回退现货）**正交互补、双向都通**；切换后 `fallback` 记录 `market→futures/spot`，费率/OI/多空比等衍生品维度照常带上。真实行情验证：`SNDKUSDT` 传 `spot` → 自动切 `futures`、90 根 1d 正常。**测试**：`test_v1545_kline_fallback.py` 扩到 **11/11**（新增 spot→futures 切换、futures→spot 切换、另一市场平线不误切三用例）；styles 17/17、sizing 11/11、invalidation 10/10 |
 | **v1.5.47** | **SMC 止损定版 + 爆款标题池（用户多轮实测校准）**：① 止损**只锚结构失效位、不凑风险数**——废弃 v1.5.46「风险预算反推」（等价恒亏 10U，用户否决）；② **进价规则定版（用户指定）**：多头买 OB **上沿**、空头卖 OB **下沿**（第一触点保证成交），文案标明具体进价，止损锚对侧沿±0.5% 缓冲，距离=区宽+缓冲从进价算；③ 仓位回归演示口径（100U 本金=100U 保证金 10x→名义≈1000U），打止损亏损如实报数（数量按交易所步进取整，官方对账 78,542 做空止损 78,934.71 亏≈4.7U 与用户官方计算一致），超本金 10% 附「降名义」建议、**止损位永不为凑数而动**；④ **标题池**（调研爆款公式落地）：痛点拷问/数字+亲历教训/悬念留白/对比反差/身份共鸣/犀利引语/反常识 七类，四风格共享 `_pick_title` 方向池各 12~14 条随机 + 结构事件标题 60% 优先，同币连发不重样，≤25 字不承诺收益。**验证**：sizing **11/11**（官方对账口径+「恒亏/反推/放弃」旧措辞守卫）、styles **17/17**（40 抽≥5 种/事件标题必进候选/防串币）、invalidation 10/10、fallback 8/8；`py_compile` 0 |
 | **v1.5.46** | **仓位算法按 SMC 止盈止损重设计（用户实测：挂 OB 限价接却按现价算出止损距离 13.7%、亏 137% 再建议降到 1x）**：`_size_line` 改 SMC 风险口径——**距离从入场价算**（`_plan_levels` 新增 `entry_px`：OB/OTE 区限价取区中位、现价入场取现价）；**名义 = 单笔风险 10U ÷ 止损距离**、杠杆 = 名义÷本金封顶 10x（止损贴结构 ≈0.5% 时自然到 10x/1000U 演示口径；宽止损自动缩仓恒亏 ≈10U；>10% 连 1x 都装不下 → 如实建议放弃）；止盈行补**盈亏比**（从入场价算）。**验证**：`test_v1540_square_sizing.py` 整体重写 **11/11**（贴结构封顶/风险反推/宽止损缩仓/放弃分支/距离必须从入场价复算/盈亏比/旧文案含用户原文必须被拒/源码护栏/端到端止损一致）；styles 14/14、invalidation 10/10、kline_fallback 8/8 全绿；`py_compile` 0 |
 | **v1.5.45** | **rich 稿 90 日 K 线不足 → 4h/1h 降级保出稿（用户实测出图失败）**：`_collect` 新增可用性检测（`_k_usable`：≥5 根且非占位平线），1d×90 不可用 → **4h×540（≈90日）→ 1h×720（≈30日）** 逐级兜底；降级后 `k90_label` 记录实际周期，封面「90d 高/低」「90日区间位置」chips、文章走势段、页脚全部跟随（不再写死 90日）；三档全空（刚上线/已下架）才返回带指引错误。**数字照实计算只换周期，绝不伪造数据**。**验证**：新增 `tests/test_v1545_kline_fallback.py` **8/8**（桩 scanner 验证降级链/平线触发/全空不伪造/文案跟随护栏）；styles 14/14、sizing 12/12、invalidation 10/10 全绿；`py_compile` 0。**踩坑**：同消息批量并行 Edit 同一文件会互相覆盖（本版 square_rich 三处、PROJECT_STATUS 标题两次被吞）——**同一文件的多处修改必须逐条顺序 Edit** |
@@ -108,12 +124,57 @@
     其后工具一律不执行；per-call 异常兜底为错误结果，**严禁整批重放**（会重复下单/重复写文件）。
 14. **供应链锁版本**：`@binance/agentic-wallet@1.10.0`、`undici@6.21.1` 集中常量管理并防回滚；
     技能包不再后台静默升级，只保留手动入口并打印来源日志。
-15. **其它既有约束**：全 API 带 `X-BAZZ-Token` 鉴权（前端 fetch 必须走 `api.ts`）；SQLite WAL + RLock；
+15. **妖币雷达的触发层必须方向感知**（v1.6.2，勿回退）：`_trigger_hit` / `_radar_score` 里
+    任何对 `chg24` / `jump_L` / `speed5m` / `amp24` 取 `abs()` 的写法都会把雷达变成
+    **波动率探测器** —— 谁暴动最厉害就登记谁，而暴动之后正是均值回归概率最高的。
+    实测证据：19/22 单的触发依据含「24h 振幅 ≥15%」，dump 组登记时 24h 涨幅中位 18.1%。
+    「点火（启动前）」与「已拉升（EXTENDED）」必须分开：后者不进 ignition 组、不登记。
+    回归护栏见 `tests/test_v162_radar_select.py`（含 AST 断言：这两个函数内禁止对动量项取 abs）。
+16. **妖币雷达「登记即入场」，且只有「尚未启动」的币可登记**（v1.6.3，勿回退）：不再设候选观察期
+    （用户明确否决），所以过滤条件只能取自**登记时刻的快照特征**。定版：`change24_pct >= _TRIG_UP_CHG24(3.0)`
+    的行**不进 ignition 登记组**，改划 takeoff 仅展示（不删除，保留「看见但太晚」的可解释性）。
+    实测依据：3 笔 moon 登记依据全无「24h +X%」，9 笔「登记时已涨 7.4%~24.8%」全是 dump；
+    只留未启动 → +213.5U / 42.9%（原来 −1086.5U / 15.0%）。
+    同时 **`SHORT_AMBUSH` 不得回到登记组**（3 笔做空 3/3 全亏、最大有利仅 0.0/0.0/1.4%），
+    且**负费率禁止硬阻断做多**（VTHO −0.776% 却 +31.3% moon，只标注+扣分、不改 side）。
+    回归护栏见 `tests/test_v163_manip_guard.py`。
+17. **其它既有约束**：全 API 带 `X-BAZZ-Token` 鉴权（前端 fetch 必须走 `api.ts`）；SQLite WAL + RLock；
     更新器只认本仓库 Release 白名单；UI 版本 ≥1.3.7 代理池在设置页折叠卡片（无独立导航）。
 
 ---
 
 ## 四、待办 / 优化清单
+
+### 4.0 后续发展方向（2026-09-16 定版，完整版见 `outputs/roadmap-v1.5.61.html`）
+
+**P1 · 战绩回灌（价值最高，时间敏感 —— 7 天结算意味着不早点收数据就要再等一周）**
+1. `paper_orders` 表补 `style` / `rr` / `bias_source` 列（**当前只有 `status/pnl_pct/run_dir/post_id`，
+   所以只能统计总胜率、回答不了「哪种风格/哪类标题/哪个 RR 档更容易赢」**），历史单按 `run_dir` 回读
+   `meta.json` 回填；
+2. 分维度聚合（风格 × 标题类 × 方向 × RR 档 × 币种）+ **最小样本门槛（n<20 标「样本不足」、不参与调权）**；
+3. `_pick_style` / `_pick_title` 接权重表（高胜率加权、低胜率降权，**保留保底随机率**防只吃老路）；
+4. 周度战绩复盘稿（真实结算数据出稿，本身即广场选题）。
+
+**P2 · 交易闭环补齐（三个实测缺口 → 现只剩两个）**
+1. **撤单**：`desktop_app.py` 全文搜 `cancel` **命中 0 次**，无任何撤单接口 → 加路由 + 订单卡「撤单」按钮 + 二次确认；
+2. **接上 `place_oco_order()`**：`src/executor.py:69` 该函数**全仓无调用方** → 成交回调里自动挂保护单，
+   否则文章里的止损永远只是纸面；
+3. **trades 台账 + 已实现盈亏**：成交/手续费/已实现盈亏入库，接现有订单跟踪卡。
+
+**P3 · 产能与工程债**
+1. 草稿箱 / 定时发布（用户一天连发 3 篇，手动盯发很累）；
+2. 多币批量出稿（一次生成 N 个币，人工挑）；
+3. 启动加速（splash 保底 5.2s，可压到就绪即切换）；
+4. **代理「不偷偷连」**：`ensure_working_proxy()` 目前技能失败会自动切节点（v1.5.19 行为），
+   用户对此敏感 → 改成显式提示 + 开关。
+
+**❌ 明确不做（用户拍板，勿再提议）**
+- **熔断后端化 / 紧急熔断后端路由 —— 完全不需要**（2026-09-16 用户明确否决）。
+  `PanicHaltModal.tsx` 保持前端本地状态即可，不要再补 `POST /api/panic/halt`；
+- MCP / OAuth 全家桶、浏览器自动化全家桶、TTS、语义生图/视频、Hermes 旁问与 token 用量小件
+  （前者本文档早已标「低价值勿做」，后者用户此前已表态暂缓）。
+
+### 4.1 历史待办
 
 **✅ 第三方源码审查报告（提交 944ca16）已全部清零**：F01–F17 共 17 项缺陷 + 性能 5.1/5.2/5.3 已在
 v1.5.28（F01/F02/F04/F08/F10/F13）+ v1.5.29（F03/F05/F06/F07/F09/F11/F12/F14/F15/F16/F17 + 性能）修复完毕，无遗留。
@@ -131,11 +192,11 @@ fetch_url 增强（web_result_cache/url_safety/truncate）、turn_usage token �
 verification_stop 收尾验证门、思考小件（`<thinking>` 未闭合截断恢复 / 存储边界 think 标签清洗 / effort 三档旋钮）。
 低价值勿做：MCP/OAuth 全家桶、浏览器自动化全家桶、语音 TTS、kanban/discord/飞书/HA、image/video 生成、tirith 安全全家桶。
 
-**P2（下一版建议）**
+**P2（旧编号 · 已并入 4.0 的 P3）**
 1. 启动加速（splash 保底 5.2s，可压到就绪即切换）
 2. 广场发文草稿箱 / 定时发布
 
-**P3**
+**P3（旧编号 · 保留）**
 3. 多会话并行 Agent 任务
 4. 行情自选列表置顶
 5. 合约维度实时流恢复（若币安 fstream 对地区放开；或改用 fapi REST 短轮询 5-10s）
@@ -150,7 +211,7 @@ verification_stop 收尾验证门、思考小件（`<thinking>` 未闭合截断�
 
 | 文件 | 职责 |
 |---|---|
-| `desktop_app.py` | FastAPI 全部路由（**130 个端点**：approvals / bots / chat / conversations / cron / gateways / llm / market / mcp / memory / orders / plugins / proxies / rooms / settings / skills / square / status / update / upload / wallet / workspace / x402） |
+| `desktop_app.py` | FastAPI 全部路由（**137 个端点**：approvals / bots / chat / conversations / cron / gateways / llm / market / mcp / memory / orders / plugins / proxies / rooms / settings / skills / square / status / update / upload / wallet / workspace / x402） |
 | `launcher.py` | PyInstaller 桌面后端入口 |
 | `electron/main.cjs` · `preload.cjs` | 桌面壳（无边框 + 托盘 + 关窗询问 IPC） |
 | `installer.iss` | Inno Setup 安装器（含 `PrepareToInstall` 强杀文件锁进程） |
@@ -174,7 +235,9 @@ verification_stop 收尾验证门、思考小件（`<thinking>` 未闭合截断�
 | `src/x402_client.py` | x402 / B402 支付（Permit2 EIP-712 离线签名） |
 | `src/mcp_client.py` | Binance Agentic MCP（OAuth 2.0 RFC 9728 + PKCE + 运行时 tools/list） |
 | `src/skills_client.py` · `skill_updater.py` · `skill_launcher.mjs` | Skills Hub（安装/运行/移除 + 自动更新状态机 + 启动器） |
-| `src/square_rich.py` · `square_store.py` | 广场富媒体发文（封面+分时图+组稿）/ 本地台账 |
+| `src/square_rich.py` · `square_store.py` | 广场富媒体发文（封面 + 24h 分时 + 4h 结构图 + 组稿）/ 本地台账（发布成功入账钩子即在此建模拟挂单） |
+| `src/paper_tracker.py` | **v1.5.61 新增**：广场发文模拟挂单复查（纯函数 `_eval` 状态机 pending→open→win/loss/noentry、5m K 线驱动、60s daemon 复查、7 天强制结算）；`state.paper_add/list/stats/update/remove` 落 `paper_orders` 表 |
+| `frontend/src/views/SquarePostView.tsx` | 广场页双标签「发文台账 \| 模拟挂单」+ 7 张统计卡 + 订单卡列表（现价/入场区/止损止盈/盈亏着色/单条删除） |
 | `src/proxy_pool.py` · `proxy_kernel.py` | 代理池（多节点健康 failover + 三端点检测）/ mihomo 内核接化 |
 | `src/scheduler.py` · `reporter.py` | cron 守护 / 日报生成 |
 | `src/room.py` · `bot_host.py` | 多 Bot 群聊房间 / Bot 宿主 |
@@ -191,7 +254,7 @@ verification_stop 收尾验证门、思考小件（`<thinking>` 未闭合截断�
 | `desktop_app.py` `/api/workspace/raw` ↔ `api.ts` `workspaceRawBlob()` ↔ `ChatView.tsx` `openFile()` | **图片预览链路**（v1.5.34 接通）：`/raw` 是图片原文通道（20MB、扩展名白名单、`FileResponse`），与文本通道 `/read` 分离（`/read` 1.5MB 且含 NUL 即判二进制，PNG 头部就带 NUL 必被挡）。扩展名白名单**两端必须一致**，有交叉校验测试 |
 | `desktop_app.py` `POST /api/square/posts/delete` ↔ `api.ts` `squarePostsDelete()` ↔ `SquarePostView.tsx` `delPost` / `clearAllFailed` | **广场台账删除链路**（v1.5.35 接通）：仅删本地台账（`src/square_store.py::delete_records`），**不调币安 API**。端点签名必须写 `payload: dict = Body(default_factory=dict)` —— FastAPI **没有全局 `request` 对象**，写 `request.get_json()` 会 500 |
 | `electron/preload.cjs` `quitForUpdate()` ↔ `electron/main.cjs` `bazz:quit-for-update` ↔ `useUpdater.ts` | **程序性退出通道**（v1.5.35）：与「用户点 X」的 `bazz:win-close` / `bazz:answer-close` 询问链路**彻底分开**。更新走这条，直接 `app.quit()` 不弹窗；否则用户选「托盘」→ 进程不退 → 更新脚本等 180s 超时失败 |
-| `tests/` 9 个套件：`test_v150_market.py` · `test_v151_radar_track.py` · `test_v1528_fixes.py` · `test_v1529_hardening.py` · `test_v1530_local_backend.py` · `test_v1531_prompt_fixes.py` · `test_v1532_proxy_kernel_state.py` · `test_v1534_image_preview.py` · `test_v1535_square_delete.py` | 离线回归套件（AST/桩隔离，不联网不下单） |
+| `tests/` **17 个套件**（`test_*.py`）：`test_v150_market` · `test_v151_radar_track` · `test_v1528_fixes` · `test_v1529_hardening` · `test_v1530_local_backend` · `test_v1531_prompt_fixes` · `test_v1532_proxy_kernel_state` · `test_v1534_image_preview` · `test_v1535_square_delete` · `test_v1538_proxy_teardown` · `test_v1539_square_invalidation` · `test_v1540_square_sizing` · `test_v1540_square_styles` · `test_v1541_llm_auth` · `test_v1543_model_pickers` · `test_v1545_kline_fallback` · **`test_paper_orders`** | 离线回归套件（AST/桩隔离，不联网不下单） |
 
 ---
 
@@ -204,7 +267,7 @@ python -m py_compile desktop_app.py src/xxx.py
 # 前端类型 + 构建
 cd frontend; npx tsc --noEmit; npx vite build
 
-# 离线回归测试（10 个套件；用主目录自带 .venv 跑最省事 —— 它带 requests）
+# 离线回归测试（17 个套件；用主目录自带 .venv 跑最省事 —— 它带 requests）
 .venv/Scripts/python.exe tests/test_v150_market.py          # ✓ 全部通过（需 requests）
 .venv/Scripts/python.exe tests/test_v151_radar_track.py     # ✓ 全部通过（需 requests）
 .venv/Scripts/python.exe tests/test_v1528_fixes.py          # 15/15
@@ -215,6 +278,13 @@ cd frontend; npx tsc --noEmit; npx vite build
 .venv/Scripts/python.exe tests/test_v1534_image_preview.py  # 7/7（源码/AST + 前后端白名单交叉校验）
 .venv/Scripts/python.exe tests/test_v1535_square_delete.py  # 12/12（store 单元 + AST + TestClient 端到端含 401）
 .venv/Scripts/python.exe tests/test_v1538_proxy_teardown.py # 5/5（取消连接必须停内核 + 摘预加载 + 清 env）
+.venv/Scripts/python.exe tests/test_v1539_square_invalidation.py  # 10/10（反向剧本必须锚本单止损 + AST 护栏）
+.venv/Scripts/python.exe tests/test_v1540_square_sizing.py  # 16/16（SMC 风险口径 + 止盈阶梯 + 旧文案守卫）
+.venv/Scripts/python.exe tests/test_v1540_square_styles.py  # 17/17（四风格数字逐字一致 + 渲染器禁重算）
+.venv/Scripts/python.exe tests/test_v1541_llm_auth.py       # 22/22（PKCE/SSE/rotating 回存 + 授权页禁裸弹窗）
+.venv/Scripts/python.exe tests/test_v1543_model_pickers.py  # 5/5（模型下拉 + 保存 toast）
+.venv/Scripts/python.exe tests/test_v1545_kline_fallback.py # 14/14（90d→4h→1h 降级 + spot/futures 双向纠偏）
+.venv/Scripts/python.exe tests/test_paper_orders.py         # 17/17（模拟挂单 _eval 状态机 + 源码护栏）
 
 # 隔离 UI 预览 + 浏览器视觉验收（改前端视觉后必跑；不连真实后端）
 cd frontend; npx vite build --config preview.config.ts       # 产物落 outputs/ui-preview
@@ -234,7 +304,159 @@ git -c http.proxy=http://127.0.0.1:7899 push origin main v1.5.x
 
 ---
 
-## 七、本次核验结论（2026-09-12）
+## 七、本次核验结论（2026-09-16）
+
+### 7.0 本次校准（v1.5.47 → v1.5.61 全量补齐）
+
+- **文档此前落后 14 个版本**：头部与版本表停在 v1.5.47，实际 `package.json` / 最新 tag 均为 **v1.5.61**；
+  已补 **v1.5.48 ~ v1.5.61 共 14 行**版本说明。
+- **规模口径三处纠正**：`src/` **34** 个 py 模块（原文 32）；`desktop_app.py` **137** 条路由（原文 130）；
+  测试套件 **17 个** `test_*.py`（原文「10 个套件」，且原文只列出其中 10 个）。
+  实际清单：v150_market / v151_radar_track / v1528_fixes / v1529_hardening / v1530_local_backend /
+  v1531_prompt_fixes / v1532_proxy_kernel_state / v1534_image_preview / v1535_square_delete /
+  v1538_proxy_teardown / v1539_square_invalidation / v1540_square_sizing / v1540_square_styles /
+  v1541_llm_auth / v1543_model_pickers / v1545_kline_fallback / **paper_orders**。
+- **交易闭环缺口实测**（不是推测，均为 grep 结果）：
+  ① `src/executor.py:69` 的 `place_oco_order()` **全仓无调用方** —— 成交后从未挂过保护单；
+  ② `desktop_app.py` 全文搜 `cancel` **命中 0 次** —— 没有任何撤单接口；
+  ③ **无 trades 台账、无已实现盈亏** —— 真实战绩算不出来，只能看模拟单。
+  三条均已登记进 §4.0 P2。
+- **明确不做**：**熔断后端化 —— 用户拍板完全不需要**（原文 §七 结尾把「紧急熔断只有前端本地状态、
+  后端无路由」当遗留项记着，现正式作废该条，见 §4.0 末「明确不做」）。
+- **`.venv` 无 pytest**：v1.5.60 发布说明里的「全量回归 237 passed」应是另一环境跑的；
+  本机 `.venv`（Python 3.11 + requests 2.34）**没有 pytest**，套件均为手写 assert 脚本，
+  直接 `python tests/test_xxx.py` 跑即可（末尾会打印 `N/N`）。
+- 后续发展方向见 **`outputs/roadmap-v1.5.61.html`**。
+
+### 7.1 妖币「选币方法」修复（v1.6.2，代码已改 · **已随 v1.5.62 发版**）
+
+**用户判断**：止损 10% 与 10x 杠杆**均不动**，亏损的根因是**寻找妖币的方法错了**。数据支持这个判断。
+
+**真实战绩**（安装版 `F:\1\BAZZ.AGENT\workspace\state.db`，22 单已关单）：
+19 dump / 3 moon = 胜率 **13.6%**，模拟 **-1420.5U / 2200U 本金（-64.6%）**。
+
+**根因：触发层方向无关。** `_trigger_hit` 旧实现 11 条规则里 7 条用 `abs()` 或涨跌双向 ——
+命中率最高的是「24h 振幅 ≥15%」（**22 单里 19 单命中 = 86%**），
+雷达实际是个**波动率探测器**：谁当天暴动最厉害就登记谁，而暴动之后正是均值回归概率最高的。
+配套三处同源缺陷：`_radar_score` 所有动量项用 `abs()`（崩跌与拉升同分、振幅越大分越高）、
+候选池 `key=abs(chg24)` 取前 24（把追高写死在排序里）、`_stage_of` 把 3%~25% 全归「点火」。
+
+**改动（4 个文件）**：
+1. `src/scanner.py::_trigger_hit` → 三通道：机会型（**必须顺向**）/ 风险型（只产崩跌·做空语义）/
+   波动率通道（只用于取确认因子，**不构成做多机会**）；新增常量 `_TRIG_UP_CHG24=3.0`、
+   `_TRIG_MAX_CHG24=12.0`（追高线）、`_TRIG_DOWN_CHG24=-12.0`、`_TRIG_AMP_OK=20.0`；
+2. `_radar_score` → 动量项只认顺向；涨幅越过 12% 起**扣分**（12%→25% 扣满 18）、
+   振幅越过 20% 起**扣分**（20%→40% 扣满 10）、当日下跌倒扣；
+3. `_stage_of` → 新增 **EXTENDED（已拉升）**：`chg24 > 12%` 且未到 VERTICAL 时归此阶段
+   （旧实现误判为 IGNITION「启动前」）；`SHORT_AMBUSH` 增加**破位确认**
+   `chg1h <= -2.0 or chg3 <= -5.0`（旧实现只要「滞涨」，实测 3 单全被轧空）；
+4. `_cand_rank` 取代 `abs(chg24)` 排序；`state.RADAR_REENTRY_COOLDOWN = 24h`（关单后拒绝重登）；
+   前端 `MarketRows.tsx` STAGE_META + i18n 中英补 `EXTENDED`（顺带补上 en 缺失的 SHORT_AMBUSH 键）。
+
+**EXTENDED 只进 takeoff 组、不进 ignition 组** → 保持界面可见，但不再被登记进跟踪表。
+
+**历史回放（同一批 22 单）**：
+
+| | 单数 | 盈亏 |
+|---|---|---|
+| 现状（全部登记） | 22 | **-1420.5U** |
+| 新规则（保留 11 单） | 11 | **-323.9U** |
+| 被剔除的 | 11 | -1096.6U ← **全部是亏损单，3 个 moon 一个没误杀** |
+
+胜率 13.6% → **27.3%**，保本线是 28.6% —— **离转正只差 1.3 个百分点**。
+剩余 8 个亏损单全是「登记后直接破位下行（未启动即失败）」，光靠过滤救不回来。
+⚠️ 这里原本写的「下一刀动**入场确认**（等第一次上攻站稳再进）」**已被用户否决** ——
+用户定版 **登记即入场、不设候选态**（见 §7.2），改为在**登记时刻的快照特征**里找过滤条件。
+
+**验证**：新增 `tests/test_v162_radar_select.py`（触发方向化 / 评分去绝对值 / EXTENDED /
+做空破位 / 分组护栏 / 冷却期 / AST 护栏 / i18n 双语），**18 个套件全绿**；`tsc --noEmit` 退出码 0。
+
+### 7.2 妖币控盘代理 + 只登记未启动 + 扩池到合约全市场（v1.6.3，代码已改 · **已随 v1.5.62 发版**）
+
+**触发问题**：用户指出「你对于妖币的理解还不够，去搜一下什么是妖币，不然 rave 等代币」。
+补齐认知后确认：**妖币 = 庄家控盘 96%+ 的收割机器**，不是「适合抄底的波动怪物」。三个真实样本：
+
+- **RAVE**：0.25 → 27.9 美元（9 天 +10800%），24h 内 −90%；90% 供给在 3 个钱包；
+  **空头爆仓占全部爆仓 82%**；费率年化 −1000%~−4000%。
+- **LAB**：只上 Binance Alpha、**无币安现货**；ZachXBT 指内幕方控盘 **>95%**；链上持币 20,105；
+  市值 58 亿 vs 流动性 900 万（**≈640 倍**）；7/6 $18.45 → 7/10 $0.82（3 天 −94%）；
+  收割方式金句：「**只需维持横盘，做空者账户便会因费率清零**」。
+- **MNT（Mantle）**：用户核对后判定**不是妖币**（合规 L2、费率中性、无控盘报道）→ **本轮不管**。
+
+**链上接口核实**：币安公开 Web3 API **拿不到控盘率** —— `query-token-audit` 只有蜜罐/税率/合约验证，
+`query-token-info.dynamic` 的 `holders` 是**持币人数**（非集中度），`query-address-info` 只查单个地址。
+→ 改用**全链下代理**（`_manip_flags`，零新增接口）：① 现货成交占比 <5%（合约独大）
+② 合约成交/持仓 >10x（换手畸高）③ 费率 ≤−0.15%（空头付钱）④ 当日 ≥8% 但 5m 爆仓 <5 万（拉升无爆仓）。
+命中即扣分，并在前端出红标 `控盘 …`（hover 出 `manip_note`）。
+
+**真实关单回放把初版规则否掉了一半**（安装版 23 单已关单 = 20 笔做多 + 3 笔做空，胜率 13.0%，−1386.5U）：
+
+1. **「绝不做空」成立** —— 3 笔做空 3/3 全亏（CAKE +10.0% / THETA +10.3% / SAGA +11.0%），
+   而**最大有利仅 0.0% / 0.0% / 1.4%**（从未跌过），复盘原文都是「直接轧空上行（未给回踩）」
+   → `SHORT_AMBUSH` **移出 ignition 登记组**、改入 takeoff 仅展示组（顶部风险仍可见）。
+2. **负费率不是做空的判别信号** —— 初版想做「负费率硬降级做多」，被 **VTHO 反例**否掉
+   （费率 −0.776% 却 +31.3% moon）：合约里空头拥挤 → 费率为负，而**低负费率恰是挤空燃料**。
+   → 改为**只标注 + 扣分、不改 `side`**（避免重蹈「过滤过紧误杀赢家」）。
+   同时 `_radar_score` 的费率项由 `abs(funding)` 改为**方向化**（负费率不再加分）。
+3. **真正的判别信号是「登记时是否已经启动」** —— 3 笔 moon 的登记依据里**全无「24h +X%」**
+   （即 chg24 < 3%）；9 笔「登记时已涨 7.4%~24.8%」的**全是 dump**。
+   （拆 `reasons_json` 必须逐条前缀匹配 —— 全文正则 `24h\s*([+-][\d.]+)%` 会把
+   「OI 24h +8.3%」误读成 24h 涨跌，这个坑已踩过。）
+
+**定版规则（用户拍板「登记后就直接入场、不需要候选态」）**：
+
+```python
+_started = (lambda r: (r.get("change24_pct") or 0.0) >= _TRIG_UP_CHG24)   # 3.0
+rows_ign = [r for r in rows if r["stage"] in ("ACCUMULATION", "IGNITION") and not _started(r)]
+rows_tk += [r for r in rows if r["stage"] in ("ACCUMULATION", "IGNITION") and _started(r)]
+```
+
+已启动的行**不删除**，划归 takeoff（仅展示），保留「雷达看见但太晚」的可解释性；
+阈值复用 `_TRIG_UP_CHG24`，与依据生成同源，不会漂移。这是 v1.6.2「EXTENDED >12% 追高线」的**再收紧**
+—— 实测连 3%~12% 这一段也晚了。
+
+**回放**：
+
+| | 单数 | 胜率 | 盈亏 |
+|---|---|---|---|
+| 现状（20 笔做多全登记） | 20 | 15.0% | **−1086.5U** |
+| 只留未启动 | **7** | **42.9%** | **+213.5U** |
+
+**验证**：新增 `tests/test_v163_manip_guard.py`（控盘 4 信号 / 爆仓数据可用性守卫 / 评分方向化 /
+负费率只标注不阻断 / SHORT_AMBUSH 不登记 / 只登记未启动 / AST 护栏 / 链路护栏），
+`test_v162_radar_select.py` 分组断言同步更新；**全量 19 套件全绿**，`tsc --noEmit` 退出码 0。
+
+**扩池落地（用户拍板「扩到合约全市场」，已实现）**：雷达候选池由「只取现货」改为
+**现货 ∪ 合约全市场**，按 `max(现货成交额, 合约成交额)` 排序取前 110（用 max 是为了救
+「现货极浅但合约火热」的币，只看现货额它们会被 top_n 切掉，而那正是妖币的样子）。
+
+扩池当场暴露两个必须处理的新问题，都已解决：
+
+1. **TradFi 污染**：合约全市场混着近 200 个 `TRADIFI_PERPETUAL`（NVDA / TSLA / XAU / XAG / BZ /
+   QQQ / SPY / SKHYNIX / SAMSUNG / DRAM / MSTR / HOOD…）。实测会占掉 110 个池位里的 **57 个**，
+   且一大半是 TradFi —— 真正的加密纯合约币反而被挤出去。原先的 `EQUITY_PERPS` 白名单只有 31 条、
+   实测只捞到 11 个，**不够用**。改用合约接口的 `underlyingType == "COIN"`（`/fapi/v1/exchangeInfo`，
+   6 小时缓存）：权威字段、随上线自动更新，且 **Alpha 币（LAB 就是）与 meme/中文盘全在这一类里，必须保留**。
+   过滤后生产实测：**86 现货 + 24 加密纯合约、TradFi 零泄漏、LABUSDT 已进池**。
+2. **纯合约币会被静默丢弃**：`_klines_raw` 只打现货 K 线接口，纯合约币返回空 → 死在
+   `_daily2_fetch` 的「不足 25 根」与逐币的 `len(c15) < 30` 两处。已加 `fut_fallback` 回退合约 K 线。
+
+**新增口径字段（勿混用）**：`_radar_pool` 给每行打 `rank_qv`（排序/门槛）、`spot_qv`
+（**现货成交额独立口径，纯合约币为 0**）、`no_spot`。控盘代理必须读 `spot_qv` ——
+纯合约币的 `quote_volume` 是**合约口径**，拿它当现货额会算出「现货占比 50%」，
+恰好把最该报警的币放过（这个坑已用测试锁住）。
+
+**遗留观察（未动，待用户决策）**：扩池后生产实测**登记组只有 2 个币，且当日都在跌**
+（EIGEN −4.3% / XLM −9.63%，score 8 / 5）。「只登记未启动」只挡「已经涨起来的」，
+**不挡「已经跌下去的」** —— 而 §7.1 回放里剩余 8 个亏损单正是「登记后直接破位下行（未启动即失败）」。
+要不要再加一道「登记时不得已经破位下行」的过滤，需要用户拍板（样本仅 8 笔，有过度拟合风险）；
+另一个可选方向是给登记组设**最低分门槛**（本次实测两项分别为 8 / 5，接近常量下限）。
+
+**告警**：本机沙箱访问不到币安（直连与沙箱代理都 000），跑真实行情冒烟必须临时挂本机 Clash
+（`http_proxy/https_proxy = http://127.0.0.1:7897`，四个大小写变量都要设 —— 只设大写会被沙箱的
+小写变量盖掉，表现为池子静默为空）。
+
+### 7.3 v1.5.38 时期核验（2026-09-12，历史留档）
 
 - **主开发目录已确认为 `E:\hermes_app\binance-agent-os-scout`**（`main` 主工作树）；
   `C:\...\Worktrees\main-a919d7e7` 是链接工作树（分支 `workbuddy/main-a919d7e7`）。
@@ -293,5 +515,6 @@ git -c http.proxy=http://127.0.0.1:7899 push origin main v1.5.x
 - **⚠️ 打包版注意**：安装目录（如 `F:\1\BAZZ.AGENT`）的 Python 代码编译进
   `resources/scout-bundle/ScoutBackend/ScoutBackend.exe`，`_internal` 内无 `.py` 明文 ——
   **源码改动对已安装版本无效，必须重新构建发版**；只有 `.agents/skills/**/cli.mjs` 是明文
-- 遗留（非本次范围）：紧急熔断目前只是前端本地状态、后端无路由；`place_oco_order()` 无调用方；
-  无撤单接口、无 trades 台账 —— 交易闭环尚缺保护单/撤单/盈亏统计
+- 遗留（已登记进 §4.0 P2）：`place_oco_order()` 无调用方、无撤单接口、无 trades 台账 ——
+  交易闭环尚缺 **保护单 / 撤单 / 盈亏统计** 三块。
+  （原文此处还列了「紧急熔断后端无路由」，**该条已于 2026-09-16 作废**：用户拍板熔断后端化完全不需要。）

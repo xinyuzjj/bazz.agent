@@ -951,6 +951,12 @@ def paper_remove(pid: str) -> None:
 
 # ---------------- 妖币追踪（v1.5.2：启动前发现 → 后续暴涨/暴跌结局验证） ----------------
 
+# v1.6.2 同币冷却期：关单后 24h 内不再登记同一标的。
+# 旧实现只挡 pending —— 关单即可立刻重登，实测 MTLUSDT 被登记 4 次、4 次全 dump、
+# 每次都是一次完整爆仓，单一标的的失败被重复放大。
+RADAR_REENTRY_COOLDOWN = 24 * 3600
+
+
 def _radar_track_out(r):
     d = dict(r)
     d["reasons"] = json.loads(d.get("reasons_json") or "[]")
@@ -961,14 +967,21 @@ def _radar_track_out(r):
 @_serialized
 def radar_track_add(symbol: str, stage: str, found_price: float, found_score: int = 0,
                     reasons=None, found_at: float = 0, direction: str = "LONG") -> str:
-    """登记一条启动前发现记录；同币已在跟踪中（pending）则幂等返回已有 id。
+    """登记一条启动前发现记录；同币已在跟踪中（pending）则幂等返回已有 id；
+    同币刚关单不满 RADAR_REENTRY_COOLDOWN 则**拒绝登记**（返回空串，调用方据此跳过）。
     direction: LONG=做多 / SHORT=做空（决定结局语义，见 radar_tracker._judge_outcome）。"""
     now = time.time()
+    sym_u = str(symbol).upper()
     exist = _conn_get().execute(
         "SELECT id FROM radar_tracks WHERE symbol=? AND status='pending'",
-        (str(symbol).upper(),)).fetchone()
+        (sym_u,)).fetchone()
     if exist:
         return exist["id"]
+    last_closed = _conn_get().execute(
+        "SELECT closed_at FROM radar_tracks WHERE symbol=? AND status='closed' "
+        "AND closed_at IS NOT NULL ORDER BY closed_at DESC LIMIT 1", (sym_u,)).fetchone()
+    if last_closed and now - float(last_closed["closed_at"] or 0) < RADAR_REENTRY_COOLDOWN:
+        return ""
     tid = _uid()
     _conn_get().execute(
         "INSERT INTO radar_tracks (id,symbol,stage,direction,found_price,found_score,reasons_json,"

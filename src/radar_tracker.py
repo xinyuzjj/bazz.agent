@@ -2,6 +2,9 @@
 
 - 登记源：scanner.get_radar_v2 扫描完成后调用 record_from_radar(payload)，
   只登记 ignition 组（吸筹/点火/做空埋伏 = 启动前窗口）的币，同币在跟踪中自动幂等。
+  **v1.6.2 起**：① 「已拉升」（EXTENDED，当日涨幅越过 12% 追高线）不再进 ignition 组，
+  不再被登记；② 做空埋伏须已破位才成立；③ 同币关单后 24h 内拒绝重登
+  （`state.RADAR_REENTRY_COOLDOWN`，旧实现关单即可立刻重登，实测 MTLUSDT 被登记 4 次全 dump）。
 - 跟踪：daemon 线程 60s 轮询 pending 记录；价格取 market_ws.price("spot") 内存快照
   （WS 未覆盖时回退 scanner.get_snapshot 60s 缓存），不新增外网请求路径。
 - 结局（v1.5.8，按 10x 合约杠杆口径，仓位模拟 100U×10x）：逆向 ≥10%（近强平线）→ dump（失败）；

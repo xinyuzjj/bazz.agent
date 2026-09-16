@@ -391,6 +391,49 @@ def volume_heat(top: int = 15, quote: str = "USDT") -> list:
 # ================= 合约（USDT-M 永续） + 股票化代币合约 =================
 FUTURES_TTL = 20.0  # 秒
 _futures_cache = {"ts": 0.0, "rows": []}
+# v1.6.3：合约「标的是加密币」白名单（exchangeInfo 的 underlyingType == "COIN"），6 小时缓存
+FUT_CRYPTO_TTL = 6 * 3600.0
+_fut_crypto_cache = {"ts": 0.0, "syms": set()}
+
+
+def futures_crypto_syms(use_cache: bool = True) -> set:
+    """U 本位合约中**标的是加密币**的 symbol 集合（`underlyingType == "COIN"`）。
+
+    v1.6.3 扩池后才需要这层过滤：`/fapi/v1/ticker/24hr` 全市场里混着近 200 个
+    **代币化股票/大宗**（`contractType = TRADIFI_PERPETUAL`；NVDA / TSLA / XAU / XAG /
+    BZ / QQQ / SPY / SKHYNIX … 分属 underlyingType = EQUITY / COMMODITY / INDEX /
+    KR_EQUITY / HK_EQUITY / CN_EQUITY / PREMARKET）。它们是**跟踪真实标的**的合约，
+    不是庄家控盘的加密妖币，进池只会挤占 top_n 名额 —— 实测 110 个池位里 57 个是纯合约，
+    其中一大半是 TradFi，真正的加密纯合约币反而被挤出去。
+
+    用 `underlyingType == "COIN"` 而不是自己的 `EQUITY_PERPS` 白名单（只有 31 条，
+    实测只能捞到 11 个 TradFi），接口字段是**权威且随上线自动更新**的。
+    注意 **Alpha 币必须保留**（LAB 就是 Alpha 币，subType 带 `Alpha`，`underlyingType` 仍是 COIN），
+    meme / 中文盘（如 `龙虾USDT`）同理 —— 它们恰恰是最像妖币的一类。
+
+    拉取失败沿用旧缓存；没有缓存则返回空集 → 纯合约币全部不入池（安全退化为扩池前的行为）。
+    """
+    now = time.time()
+    if use_cache and _fut_crypto_cache["syms"] and now - _fut_crypto_cache["ts"] < FUT_CRYPTO_TTL:
+        return set(_fut_crypto_cache["syms"])
+    try:
+        r = _session.get(f"{FAPI}/fapi/v1/exchangeInfo", timeout=20)
+        r.raise_for_status()
+        payload = r.json()
+    except Exception:
+        return set(_fut_crypto_cache["syms"])
+    syms = set()
+    for c in payload.get("symbols", []) or []:
+        if not isinstance(c, dict):
+            continue
+        if str(c.get("underlyingType") or "") == "COIN":
+            s = str(c.get("symbol") or "")
+            if s:
+                syms.add(s)
+    if syms:
+        _fut_crypto_cache["syms"] = syms
+        _fut_crypto_cache["ts"] = now
+    return syms
 
 
 def futures_snapshot(use_cache: bool = True) -> list:
@@ -785,20 +828,36 @@ def _dedupe_fetch(cache_key, fetch_fn):
     return res
 
 
-def _klines_raw(sym: str, interval: str = "15m", limit: int = 288) -> list:
+def _klines_raw(sym: str, interval: str = "15m", limit: int = 288,
+                fut_fallback: bool = False) -> list:
     """拉 sym 的 K 线原始数组（旧→新，含当前未收 bar），失败返回 []。
-    5.1：经 _dedupe_fetch 按 (sym, interval, limit) 在途合并 —— 覆盖雷达日线池
+    5.1：经 _dedupe_fetch 按 (sym, interval, limit, fut_fallback) 在途合并 —— 覆盖雷达日线池
     （_daily2_fetch）、15m/5m 扫描扇出与 klines_closes/klines_ohlcv 的 spot 路径，
-    并发重复请求只发一次 REST。"""
+    并发重复请求只发一次 REST。
+
+    v1.6.3：`fut_fallback=True` 时，现货查不到该对（纯合约妖币 RAVE / LAB 只上合约不上现货）
+    回退 U 本位合约 K 线。雷达池已扩到合约全市场（见 `_radar_pool`），没有这层回退
+    这些币会在这两处被静默丢弃：`_daily2_fetch` 的「不足 25 根」与逐币的 `len(c15) < 30`。
+    """
     def _fetch():
         try:
             r = _session.get(f"{SPOT}/api/v3/klines",
                              params={"symbol": sym, "interval": interval, "limit": limit}, timeout=10)
             r.raise_for_status()
-            return r.json() or []
+            arr = r.json() or []
         except Exception:
-            return []
-    return _dedupe_fetch(("klines", sym, interval, limit), _fetch)
+            arr = []
+        if not arr and fut_fallback:
+            try:
+                r2 = _session.get(f"{FAPI}/fapi/v1/klines",
+                                  params={"symbol": sym, "interval": interval, "limit": limit},
+                                  timeout=10)
+                r2.raise_for_status()
+                arr = r2.json() or []
+            except Exception:
+                arr = []
+        return arr
+    return _dedupe_fetch(("klines", sym, interval, limit, fut_fallback), _fetch)
 
 
 def _ohlcv(arr: list):
@@ -928,40 +987,82 @@ def _short_sweep(o, c, v) -> dict:
     return res
 
 
+# ---------------- 触发层（v1.6.2 方向化） ----------------
+# 旧实现 11 条触发规则里 7 条方向无关（abs() 或涨跌双向），实测命中率最高的是
+# 「24h 振幅 ≥15%」（22 单里 19 单命中 = 86%）—— 雷达实际是个**波动率探测器**：
+# 谁当天暴动得最厉害就登记谁，而暴动之后的币正是均值回归概率最高的。
+# 新实现分三条通道：机会型（up，必须顺向）/ 风险型（down，只产崩跌·做空语义）/
+# 波动率通道（方向无关，仅用于取出确认因子与风险提示，**不构成做多机会**）。
+_TRIG_UP_CHG24 = 3.0       # 机会型顺向涨幅门槛（旧：|chg24| >= 10.0 双向）
+_TRIG_MAX_CHG24 = 12.0     # 追高线：涨幅越过它不再算「启动机会」，交 _stage_of 判 EXTENDED
+_TRIG_DOWN_CHG24 = -12.0   # 下跌侧风险触发
+_TRIG_AMP_OK = 20.0        # 振幅「活口线」：以内算有活口（加分），超过算接力末端（扣分）
+_TRIG_AMP_RISK = _TRIG_AMP_OK   # 波动率通道门槛（≥ 此值才取确认因子，但不进机会池）
+
+# ---- v1.6.3 妖币控盘代理（全链下、零新增接口） ----
+# 妖币的定义性特征是「现货控盘 96%+ / 只上合约不上现货 / 零基本面」，
+# 但 Binance 公开 Web3 接口**不提供前 N 大持币地址占比**（query-token-audit 只有蜜罐/税率，
+# query-token-info.dynamic 只有持币**人数**，query-address-info 只列单钱包持仓）。
+# 所以控盘率这个一票否决项拿不到，改用三个现成数据能算出来的代理信号：
+_MANIP_SPOT_SHARE_MIN = 0.05   # 现货成交额占比 < 5% → 现货无深度（庄家可少量资金撬动）
+_MANIP_CHURN_MAX = 10.0        # 合约24h成交额 / 持仓额 > 10x → 换手畸高（量能做出来的）
+_MANIP_NEG_FUNDING = -0.0015   # 费率 ≤ −0.15% → 空头在给多头付钱（挤空收割特征）
+
+
 def _trigger_hit(t: dict, row: dict, range_ratio: float = 0.0) -> tuple:
-    """触发层：任一命中进扫描池。返回 (命中?, 触发依据列表)。"""
-    rs = []
-    L = t.get("jump_L", 0.0)
-    if abs(L) > 3.0:
-        rs.append(f"跳跃检验 |L|={abs(L):.1f}")
-    if t.get("flow", 0.0) > 1000:
-        rs.append(f"泵度 flow={t['flow']:.0f}")
-    if abs(t.get("speed5m", 0.0)) >= 0.5 and t.get("accel"):
-        rs.append(f"速度 {t['speed5m']:+.2f}%/5m 加速")
-    if abs(t.get("chg24", 0.0)) >= 10.0:
-        rs.append(f"24h {t['chg24']:+.1f}%")
-    if t.get("pump5") or t.get("dump5"):
-        rs.append("5m ±3% 带量")
-    if t.get("pump1h") or t.get("dump1h"):
-        rs.append("1h ±5%")
-    if t.get("streak", 0) >= 2:
-        rs.append(f"连续 {t['streak'] + 1} 根同向放量")
-    if t.get("rvol15", 0.0) >= 2.0:
-        rs.append(f"RVOL={t['rvol15']:.1f}x")
-    if t.get("strongvol"):
-        rs.append("60min 量能 3x")
-    if t.get("amp24", 0.0) >= 15.0:
-        rs.append(f"24h 振幅 {t['amp24']:.0f}%")
+    """触发层（v1.6.2）：返回 (命中?, 依据列表)。
+    机会型命中必须在**顺向**上成立；振幅 / 量能等方向无关项只写进依据文本，不再单独触发。"""
+    rs, up, down = [], [], []
+    L = t.get("jump_L", 0.0) or 0.0
+    sp = t.get("speed5m", 0.0) or 0.0
+    chg24 = t.get("chg24", 0.0) or 0.0
+    accel = bool(t.get("accel"))
+    amp24 = t.get("amp24", 0.0) or 0.0
+
+    # —— 机会型（顺向向上）——
+    if L > 3.0:
+        up.append(f"跳跃检验 L={L:.1f}")
+    if (t.get("flow", 0.0) or 0.0) > 1000 and chg24 > 0:
+        up.append(f"泵度 flow={t['flow']:.0f}")
+    if sp >= 0.5 and accel:
+        up.append(f"速度 {sp:+.2f}%/5m 加速")
+    if chg24 >= _TRIG_UP_CHG24:
+        up.append(f"24h {chg24:+.1f}%")
+    if t.get("pump5") or t.get("pump1h"):
+        up.append("5m/1h 向上异动")
+    if (t.get("streak", 0) or 0) >= 2 and chg24 > 0:
+        up.append(f"连续 {t['streak'] + 1} 根同向放量")
+    if (t.get("rvol15", 0.0) or 0.0) >= 2.0 and chg24 > 0:
+        up.append(f"RVOL={t['rvol15']:.1f}x")
+
+    # —— 风险型（顺向向下 → 只产崩跌/做空语义，不产做多建议）——
+    if L < -3.0:
+        down.append(f"跳跃检验 L={L:.1f}")
+    if sp <= -0.5 and accel:
+        down.append(f"速度 {sp:+.2f}%/5m 加速")
+    if chg24 <= _TRIG_DOWN_CHG24:
+        down.append(f"24h {chg24:+.1f}%")
+    if t.get("dump5") or t.get("dump1h"):
+        down.append("5m/1h 向下异动")
+
+    # —— 佐证（方向无关，只作正文依据）——
+    if amp24 >= 15.0:
+        rs.append(f"24h 振幅 {amp24:.0f}%")
     if range_ratio >= 4.0:
         rs.append(f"振幅比 {range_ratio:.1f}x")
-    return (len(rs) > 0, rs)
+    if t.get("strongvol"):
+        rs.append("60min 量能 3x")
+
+    hit = bool(up or down or amp24 >= _TRIG_AMP_RISK)
+    return (hit, up + down + rs)
 
 
 # ---------------- 日线特征（过滤层 + 语义层底料） ----------------
 
 def _daily2_fetch(sym: str):
-    """日线 → (o,h,l,c,v,first_ms)；不足 25 根返回 None。"""
-    arr = _klines_raw(sym, "1d", 110)
+    """日线 → (o,h,l,c,v,first_ms)；不足 25 根返回 None。
+    v1.6.3：带合约回退 —— 纯合约妖币（无现货）改取 U 本位日线。"""
+    arr = _klines_raw(sym, "1d", 110, fut_fallback=True)
     if len(arr) < 25:
         return None
     o, h, l, c, v = _ohlcv(arr)
@@ -974,12 +1075,65 @@ def _daily2_fetch(sym: str):
     return (o, h, l, c, v, first_ms)
 
 
+def _radar_pool(top_n: int, min_qv: float) -> list:
+    """v1.6.3 妖币候选池 = **现货 ∪ 合约**（按 `rank_qv` 降序，取前 top_n）。
+
+    用户拍板把池子扩到合约全市场：此前池子只取自现货快照，而 **RAVE / LAB 都是只上合约、
+    不上现货** —— 纯合约妖币根本进不了池子，排序规则再准也看不见。
+
+    每行带三个派生字段：
+
+    - `rank_qv`：排序/门槛用 `max(现货成交额, 合约成交额)`。用 max 而不是现货额，是为了救
+      「现货极浅但合约火热」的币 —— 只看现货额它们会被 top_n 切掉，而那正是妖币的样子。
+    - `spot_qv`：**现货成交额独立口径**（纯合约币为 0）。控盘代理必须读它，
+      不能读 `quote_volume` —— 纯合约币的 `quote_volume` 是合约额，拿来当现货额会算出
+      「现货占比 50%」，恰好把最该报警的币放过。
+    - `no_spot`：该币无现货市场（RAVE / LAB 的真实画像）。
+    """
+    merged: dict = {}
+    for r in get_snapshot():
+        m = dict(r)
+        qv = float(m.get("quote_volume") or 0.0)
+        m["rank_qv"] = qv
+        m["spot_qv"] = qv
+        m["no_spot"] = False
+        merged[m["symbol"]] = m
+    try:
+        fut_rows = futures_snapshot()
+    except Exception:
+        fut_rows = []
+    crypto_fut = None                     # 懒加载：只有在真的遇到「合约独有」的币时才拉白名单
+    for r in fut_rows:
+        sym = r["symbol"]
+        fq = float(r.get("quote_volume") or 0.0)
+        if sym in merged:
+            merged[sym]["rank_qv"] = max(merged[sym]["rank_qv"], fq)
+            continue                      # 现货已覆盖：保持现货口径（含成交笔数）
+        if crypto_fut is None:
+            try:
+                crypto_fut = futures_crypto_syms()
+            except Exception:
+                crypto_fut = set()
+        if sym not in crypto_fut:
+            continue                      # 代币化股票/大宗（TradFi）不是妖币，不进池
+        m = dict(r)
+        m["rank_qv"] = fq
+        m["spot_qv"] = 0.0
+        m["no_spot"] = True
+        m["count"] = 0                    # 合约 ticker 无成交笔数 → 刷量检查自然跳过
+        merged[sym] = m
+    rows = [r for r in merged.values()
+            if (r.get("rank_qv") or 0) >= min_qv and _is_eligible(r["symbol"])]
+    rows.sort(key=lambda x: x["rank_qv"], reverse=True)
+    return rows[:top_n]
+
+
 def _daily2_bars(top_n: int, min_qv: float, force: bool = False, workers: int = 10) -> dict:
     """并发拉扫描池日线（30 分钟缓存；妖币 v2 专用，与 v1 _bars_cache 分离）。"""
     now = time.time()
     if not force and _daily2_cache["bars"] and now - _daily2_cache["ts"] < 1800:
         return _daily2_cache["bars"]
-    rows = [r for r in get_snapshot() if r["quote_volume"] >= min_qv and _is_eligible(r["symbol"])][:top_n]
+    rows = _radar_pool(top_n, min_qv)
     out = {}
     with _cf.ThreadPoolExecutor(max_workers=workers) as ex:
         futs = {ex.submit(_daily2_fetch, r["symbol"]): r["symbol"] for r in rows}
@@ -1095,7 +1249,8 @@ def _funding_hist(sym: str, limit: int = 21) -> list:
 def _confirm_factors(sym: str, funding_now: float) -> dict:
     """确认层因子：OI 四象限/脉冲、funding 极值、大户/散户多空比、taker 买卖比、爆仓流。
     任一接口失败安全降级（0/None），绝不因确认层挂掉丢触发信号。"""
-    f = {"oi_chg24": 0.0, "oi_chg48": 0.0, "oi_pulse15": 0.0, "funding": funding_now,
+    f = {"oi_chg24": 0.0, "oi_chg48": 0.0, "oi_pulse15": 0.0, "oi_last": 0.0,
+         "funding": funding_now,
          "funding_peak": funding_now, "funding_prev": None, "top_ratio": None,
          "top_mean48": None, "global_ratio": None, "taker_ratio": None,
          "taker_drop": False, "liq_5m": 0.0, "liq_side": "", "liq_n5m": 0}
@@ -1105,6 +1260,7 @@ def _confirm_factors(sym: str, funding_now: float) -> dict:
             vals = [float(x.get("sumOpenInterest") or 0) for x in oi]
             last = vals[-1]
             if last > 0:
+                f["oi_last"] = last          # v1.6.3：持仓量原值（币本位），×price 得 OI 美元额
                 if len(vals) >= 97 and vals[-97] > 0:
                     f["oi_chg24"] = (last / vals[-97] - 1.0) * 100
                 if vals[0] > 0:
@@ -1154,10 +1310,83 @@ def _confirm_factors(sym: str, funding_now: float) -> dict:
     return f
 
 
-# ---------------- 语义层（生命周期六阶段） ----------------
+# ---------------- v1.6.3 妖币控盘代理层 ----------------
 
-def _stage_of(d: dict) -> tuple:
-    """语义层：吸筹→点火→垂直拉升→派发顶部→崩跌→沉寂（先到先得）。
+def _manip_flags(d: dict) -> tuple:
+    """妖币控盘代理（v1.6.3，全链下、零新增接口）。返回 (flags, note, penalty)。
+
+    为什么是代理而不是控盘率：公开接口拿不到持币集中度（见 `_MANIP_*` 常量注释）。
+    但妖币的收割机制在**盘面**上留了三个可算的指纹：
+
+    ① 「现货无深度」（`无现货` / `合约独大`）：现货成交额占现货+合约总额 < 5%；
+       **连现货市场都没有的（`no_spot`，RAVE / LAB 就是）单列 `无现货`**。
+       妖币的原话是「现货缺乏流动性意味着无抛压、无深度监管」——现货簿薄，
+       少量资金就能把价格推起来，再从合约端兑现。
+    ② 「换手畸高」：合约 24h 成交额 ÷ 持仓额 > 10x。
+       RAVE 合约 24h 成交 69 亿 vs 持仓 3 亿（≈23x），且拉 10 倍一个大额爆仓单都没有
+       —— 量能是两边对冲做出来的，不是真金白银的方向性押注。
+    ③ 「空头付钱」：费率 ≤ −0.15%。**负费率的含义是空头给多头付钱**，
+       这正是庄家挤空收割空头的标志（RAVE 年化 −1000%~−4000%）。
+       此刻的拉升是挤空，不是趋势 —— 绝不可在此做空，长仓也应视为随时反手。
+
+    任一命中即扣分；`空头付钱` 额外强制把做多降到 WATCH（顺剧本骑①②：特征一现即离场）。"""
+    flags, notes = [], []
+    penalty = 0.0
+    price = d.get("price", 0.0) or 0.0
+    fut_qv = d.get("fut_qv", 0.0) or 0.0
+    # v1.6.3：现货成交额必须读**独立口径** `spot_qv`（纯合约币为 0），
+    # 不能读 `quote_volume` —— 池子扩到合约全市场后，纯合约币的 `quote_volume` 是合约口径，
+    # 拿它当现货成交额会算出「现货占比 50%」，恰好把最该报警的币放过。
+    spot_qv = d.get("spot_qv", 0.0) or 0.0
+    oi_usd = d.get("oi_usd", 0.0) or 0.0
+    fu = d.get("funding", 0.0) or 0.0
+    chg24 = d.get("chg24", 0.0) or 0.0
+    liq5 = d.get("liq_5m", 0.0) or 0.0
+    liq_n = d.get("liq_n5m", 0) or 0
+
+    # ① 现货无深度：最极端的一档就是**压根没有现货市场**（RAVE / LAB 的真实画像）
+    if d.get("no_spot"):
+        flags.append("无现货")
+        notes.append(f"只上合约、无现货市场（合约 {fut_qv / 1e6:.0f}M，无现货抛压与价格锚）")
+        penalty += 6.0
+    else:
+        tot = spot_qv + fut_qv
+        if fut_qv >= 5e6 and tot > 0:
+            share = spot_qv / tot
+            if share < _MANIP_SPOT_SHARE_MIN:
+                flags.append("合约独大")
+                notes.append(f"现货成交仅占 {share * 100:.1f}%（合约 {fut_qv / 1e6:.0f}M）")
+                penalty += 6.0
+
+    # ② 换手畸高
+    if oi_usd > 0 and fut_qv > 0:
+        churn = fut_qv / oi_usd
+        if churn > _MANIP_CHURN_MAX:
+            flags.append("换手畸高")
+            notes.append(f"合约成交/持仓 {churn:.0f}x（OI {oi_usd / 1e6:.1f}M）")
+            penalty += 6.0
+
+    # ③ 空头付钱（挤空收割特征）
+    if fu <= _MANIP_NEG_FUNDING:
+        flags.append("空头付钱")
+        notes.append(f"费率 {fu * 100:+.3f}% = 空头在给多头付钱（挤空特征，严禁做空）")
+        penalty += 10.0
+
+    # ④ 拉升无爆仓（数据可疑 / 假突破诱多）
+    if chg24 >= 8.0 and liq_n > 0 and liq5 < 5e4:
+        flags.append("拉升无爆仓")
+        notes.append(f"当日 {chg24:+.0f}% 但 5m 爆仓仅 ${liq5 / 1e3:.0f}K（拉升未见对手盘出清）")
+        penalty += 4.0
+
+    return (flags, "；".join(notes), penalty)
+
+
+# ---------------- 语义层（生命周期阶段） ----------------
+
+def _stage_of_raw(d: dict) -> tuple:
+    """语义层：吸筹→点火→**已拉升**→垂直拉升→派发顶部→崩跌→沉寂（先到先得）。
+    v1.6.2 新增 EXTENDED（已拉升）：当日涨幅越过 `_TRIG_MAX_CHG24` 但未到垂直拉升 ——
+    旧实现把 3%~25% 全归「点火（启动前）」，实测 dump 组登记时 24h 涨幅中位 18.1% 全落在这段。
     返回 (stage, stage_label, tag, side, note)。"""
     chg24 = d.get("chg24", 0.0) or 0.0
     chg1h = d.get("chg1h", 0.0) or 0.0
@@ -1194,12 +1423,27 @@ def _stage_of(d: dict) -> tuple:
         return ("VERTICAL", "垂直拉升", "起飞 · 垂直拉升", "LONG",
                 "短时暴力拉升 + 放量（留意 funding 过热与点差扩大）；追高风险大，仅持仓者带移动止损")
     # 3.5) 做空埋伏：高位滞涨 + 拥挤过热（费率/大户） + 买盘衰竭 → 崩跌前预警（吸筹的镜像）
+    # v1.6.2：**必须已有破位迹象**才成立。旧实现只要求「滞涨」，实测 3 单全被轧空
+    # （CAKE +10.0% / THETA +10.3% / SAGA +11.0%）—— 高位滞涨在妖币上常是二次拉升前的换手，
+    # 等破位确认再空，而不是在强势币上左侧逆势。
     sam = (pos >= 0.75 and (chg30 >= 30.0 or chg3 >= 15.0) and chg24 <= 5.0 and chg1h <= 1.0)
     sam_sig = (fund_pk >= 0.003 and tr <= 1.10) or tdrop \
         or (top >= 2.0 and tr <= 1.20) or (oi24 <= -3.0 and chg24 >= 0.0)
-    if sam and sam_sig:
-        return ("SHORT_AMBUSH", "做空埋伏", "做空 · 崩跌前", "WATCH_SHORT",
-                "高位滞涨 + 费率/大户拥挤过热 + taker 买盘衰竭 = 拉升衰竭嫌疑；做空仅小仓试错、创新高即走，现货持有者逢反弹减仓")
+    sam_break = chg1h <= -2.0 or chg3 <= -5.0
+    # v1.6.3：「空头付钱」时禁止做空。负费率 = 空头给多头送钱，而做空正是妖币剧本里被挤的位置
+    # （RAVE 空头爆仓占全部爆仓 82%、多头仅 18%）。宁可不做，也不去当那个对手盘。
+    sam_ok = fund > _MANIP_NEG_FUNDING
+    if sam and sam_sig and sam_break and sam_ok:
+        return ("SHORT_AMBUSH", "做空埋伏", "做空 · 破位确认", "WATCH_SHORT",
+                "高位滞涨 + 费率/大户拥挤过热 + **已出现破位**（1h 跌幅 / 3 日转跌）= 拉升衰竭确认；"
+                "做空仅小仓试错、创新高即走")
+    # 3.8) 已拉升（v1.6.2 新增）：越过追高线但未到垂直拉升 —— 启动窗口已过
+    # 旧实现把 3%~25% 全归「点火（启动前）」，实测 dump 组登记时 24h 涨幅中位 18.1%
+    # 全部落在这段里。这段不是「启动前」，是「已经拉升」，进场等于接力末端。
+    if chg24 > _TRIG_MAX_CHG24:
+        return ("EXTENDED", "已拉升", "已拉升 · 追高区", "WATCH",
+                f"当日已涨 {chg24:.0f}%，越过 {_TRIG_MAX_CHG24:.0f}% 追高线：启动窗口已过，"
+                "此处进场即接力末端；等回踩平台不破再谈，不追")
     # 4) 点火：破位放量 / OI 脉冲 / taker 买比飙升
     if (d.get("breakout20") and (d.get("rvol_d", 0) or 0) >= 2.0) \
             or (oi15 >= 5.0 and chg24 >= 3.0) \
@@ -1223,18 +1467,56 @@ def _stage_of(d: dict) -> tuple:
     return (None, "", "", "", "")
 
 
+def _stage_of(d: dict) -> tuple:
+    """语义层 + 控盘代理注释（v1.6.3 包装 `_stage_of_raw`，调用方签名不变）。
+
+    定位（用户确认）＝「顺剧本骑①②」：承认妖币是庄家剧本，只做控盘后的首次拉升，
+    **绝不做空**；顶部/派发特征出现时对持仓者是离场信号。
+
+    **为什么控盘标记只注释、不硬降级（v1.6.3 实测修正）**：
+    初版把「空头付钱」（费率 ≤ −0.15%）当作硬性离场条件，结果拿安装版 23 笔已关单回放，
+    反例立刻出现 —— VTHOUSDT 登记时费率 **−0.776%**，却是 +31.3% 的 moon。
+    原因：币安永续上**空头拥挤本身就会把费率压成负值**，低位负费率反而是轧空燃料。
+    所以负费率是「风险标记」而非「离场信号」，硬拦会误杀赢家。
+    真正的离场信号在 `DISTRIBUTION` 与 `radar_tracker._reversal_now`（费率自极值回落 /
+    OI 顶背离 / 爆仓潮后 OI 骤降），那套是拿 float 极值相对变化判断的，不受此影响。
+
+    硬性规则只保留一条：**SHORT_AMBUSH 不再进入可下注/登记组**（见 `get_radar_v2` 分组）。
+    """
+    stage, slabel, tag, side, note = _stage_of_raw(d)
+    if not stage:
+        return (stage, slabel, tag, side, note)
+    flags, mnote, _pen = _manip_flags(d)
+    if not flags:
+        return (stage, slabel, tag, side, note)
+    # 只做标注（分数由 `_radar_score` 扣），不改 side —— 避免重蹈「过滤过紧误杀赢家」
+    return (stage, slabel, tag, side, f"{note}；控盘代理（{'/'.join(flags)}）：{mnote}")
+
+
 def _radar_score(t: dict, f: dict, d: dict, cooldown: bool) -> int:
-    """合成 0-99 妖币度：flow_price 归一化为核心权重 + 触发层各因子 + 确认层加减分。"""
+    """合成 0-99 妖币度（v1.6.2 方向化）。
+    旧实现用 abs() 打所有动量项 —— 崩跌与拉升得分完全相同，且振幅越大分越高。
+    实测 dump 组 24h 涨幅中位 18.1%、日振幅中位 27.5%，正是被这套打分挑出来的。
+    新实现：动量项只认顺向；涨幅越过追高线、振幅越过活口线，一律改为**扣分**。"""
     s = 0.0
+    chg24 = d.get("chg24", 0.0) or 0.0
     s += min(28.0, (t.get("flow", 0.0) or 0.0) / 1000.0 * 28.0)
-    s += min(12.0, abs(t.get("jump_L", 0.0) or 0.0) / 6.0 * 12.0)
-    s += min(8.0, abs(t.get("speed5m", 0.0) or 0.0))
-    s += min(10.0, abs(d.get("chg24", 0.0) or 0.0) / 25.0 * 10.0)
+    s += min(12.0, max(0.0, t.get("jump_L", 0.0) or 0.0) / 6.0 * 12.0)   # 只认向上跳跃
+    s += min(8.0, max(0.0, t.get("speed5m", 0.0) or 0.0))                # 只认向上加速
+    if chg24 > 0:
+        s += min(10.0, chg24 / _TRIG_MAX_CHG24 * 10.0)                   # 启动窗口内线性加分
+        if chg24 > _TRIG_MAX_CHG24:
+            s -= min(18.0, (chg24 - _TRIG_MAX_CHG24) / 13.0 * 18.0)      # 12%→25% 扣满 18
+    else:
+        s -= min(10.0, abs(chg24) / 25.0 * 10.0)                         # 当日下跌倒扣
     vr = max((t.get("rvol15", 0.0) or 0.0) - 1.0, (d.get("rvol_d", 0.0) or 0.0) - 1.0)
     s += min(12.0, max(0.0, vr) / 4.0 * 12.0)
-    s += min(5.0, (d.get("amp24", 0.0) or 0.0) / 30.0 * 5.0)
+    amp24 = d.get("amp24", 0.0) or 0.0
+    if amp24 <= _TRIG_AMP_OK:
+        s += min(5.0, amp24 / _TRIG_AMP_OK * 5.0)                        # 20% 内算「有活口」
+    else:
+        s -= min(10.0, (amp24 - _TRIG_AMP_OK) / 20.0 * 10.0)             # 20%→40% 扣满 10
     # 确认层加减
-    chg24 = d.get("chg24", 0.0) or 0.0
     oi24 = f.get("oi_chg24", 0.0) or 0.0
     if chg24 >= 3.0 and oi24 >= 5.0:
         s += 6.0                                   # 价↑OI↑ 新钱趋势
@@ -1242,10 +1524,14 @@ def _radar_score(t: dict, f: dict, d: dict, cooldown: bool) -> int:
         s += 3.0                                   # 价↑OI↓ 轧空虚涨（顶前兆）
     if (f.get("oi_pulse15", 0.0) or 0.0) >= 5.0:
         s += 4.0
-    af = abs(f.get("funding", 0.0) or 0.0)
-    if af >= 0.003:
+    # v1.6.3 费率**方向化**：旧实现 `abs(funding)` 把「负费率」也当拥挤度加分 ——
+    # 但负费率的含义是**空头在给多头付钱**，这是妖币挤空收割空头的标志（RAVE 年化 −1000%~−4000%）。
+    # 负费率下的拉升是挤空而非趋势，不该加分。只有**正**费率（多头拥挤）才算热度；
+    # 负费率的扣分统一由 `_manip_flags` 的「空头付钱」负责，避免同一件事扣两次。
+    fu = f.get("funding", 0.0) or 0.0
+    if fu >= 0.003:
         s += 4.0
-    elif af >= 0.0015:
+    elif fu >= 0.0015:
         s += 2.0
     tr_ = f.get("top_ratio") or 0.0
     if tr_ >= 1.5 or 0 < tr_ <= 0.7:
@@ -1257,6 +1543,9 @@ def _radar_score(t: dict, f: dict, d: dict, cooldown: bool) -> int:
         s += 5.0
     elif lq >= 3e5:
         s += 2.0
+    # v1.6.3 控盘代理扣分（见 `_manip_flags`）：命中即说明这是庄家剧本盘，不是趋势盘
+    _mflags, _mnote, mpen = _manip_flags(d)
+    s -= mpen
     if d.get("beta_damped"):
         s *= 0.6                                   # BTC β 残差：普涨普跌打折
     if cooldown:
@@ -1272,21 +1561,27 @@ def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_F
     if not force and _radar2_cache["data"] and now - _radar2_cache["ts"] < RADAR2_TTL:
         return _radar2_cache["data"]
     cycle_ts = now
-    snap_all = get_snapshot()
-    snap = {r["symbol"]: r for r in snap_all}
+    # v1.6.3：候选池扩到 **现货 ∪ 合约全市场**（纯合约妖币 RAVE / LAB 此前不可见，见 `_radar_pool`）。
     floor = max(min_qv or 0, RADAR2_FLOOR)
-    pool_syms = [r["symbol"] for r in snap_all
-                 if r["quote_volume"] >= floor and _is_eligible(r["symbol"])][:top_n]
+    pool_rows = _radar_pool(top_n, floor)
+    snap = {r["symbol"]: r for r in pool_rows}
+    pool_syms = [r["symbol"] for r in pool_rows]
+    # 合约成交额（算「现货无深度」与「换手畸高」两个控盘代理，一次全市场请求，有 20s 缓存）
+    try:
+        futq = {r["symbol"]: float(r.get("quote_volume") or 0.0) for r in futures_snapshot()}
+    except Exception:
+        futq = {}
     if not pool_syms:
         raise RuntimeError("empty pool (snapshot unavailable)")
     d2 = _daily2_bars(top_n, floor, force=force)
     rates = get_funding_rates()
 
     # —— 短时窗 K 线并发（15m 结构 + 5m 速度） ——
+    # v1.6.3：带合约回退 —— 池里已含纯合约妖币，必须走 fut_fallback 才拿得到 K 线。
     k15, k5 = {}, {}
     with _cf.ThreadPoolExecutor(max_workers=10) as ex:
-        f15 = {ex.submit(_klines_raw, s, "15m", 288): s for s in pool_syms}
-        f5 = {ex.submit(_klines_raw, s, "5m", 96): s for s in pool_syms}
+        f15 = {ex.submit(_klines_raw, s, "15m", 288, True): s for s in pool_syms}
+        f5 = {ex.submit(_klines_raw, s, "5m", 96, True): s for s in pool_syms}
         for fut in _cf.as_completed(f15):
             arr = fut.result()
             if arr:
@@ -1313,6 +1608,10 @@ def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_F
         d = {"chg24": r["change_pct"],
              "amp24": (r["high"] - r["low"]) / r["low"] * 100 if r["low"] > 0 else 0.0,
              "price": r["price"], "quote_volume": r["quote_volume"],
+             # v1.6.3：现货成交额读 `_radar_pool` 标好的**独立口径** spot_qv（纯合约币为 0），
+             # 不能拿 r["quote_volume"] 冒充 —— 纯合约币那里是合约口径。
+             "spot_qv": float(r.get("spot_qv") or 0.0),
+             "no_spot": bool(r.get("no_spot")),
              "funding": rates.get(sym, 0.0)}
         # 过滤层：新币 / 刷量 / 假量（单笔均额过低）
         b = d2.get(sym)
@@ -1382,7 +1681,19 @@ def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_F
 
     cands = {s for s, f in feats.items() if f["hit"]} | {s for s, f in feats.items() if _accum_evid(f)}
     if len(cands) > 24:
-        cands = set(sorted(cands, key=lambda s: abs(feats[s]["d"]["chg24"]), reverse=True)[:24])
+        # v1.6.2：旧实现 `key=abs(chg24)` 取前 24 —— 把「当日涨跌幅度最大」的币优先送进确认层，
+        # 等于把追高写死在排序里。改为按「启动窗口优先级」：顺向未过热 > 低位吸筹 > 已拉升 > 其余。
+        def _cand_rank(sym_: str) -> int:
+            c = feats[sym_]["d"].get("chg24", 0.0) or 0.0
+            if 0 < c <= _TRIG_MAX_CHG24:
+                return 0
+            if _accum_evid(feats[sym_]):
+                return 1
+            if c > _TRIG_MAX_CHG24:
+                return 2
+            return 3
+        cands = set(sorted(cands, key=lambda s: (
+            _cand_rank(s), -float(feats[s]["d"].get("quote_volume", 0.0) or 0.0)))[:24])
     confirms: dict = {}
     if cands:
         with _cf.ThreadPoolExecutor(max_workers=10) as ex:
@@ -1402,8 +1713,12 @@ def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_F
         cf = confirms.get(sym) or {}
         d.update({k: cf[k] for k in ("oi_chg24", "oi_chg48", "oi_pulse15", "top_ratio",
                                      "top_mean48", "global_ratio", "taker_ratio", "taker_drop",
-                                     "liq_5m", "liq_side", "funding_peak", "funding_prev")
+                                     "liq_5m", "liq_side", "liq_n5m", "oi_last",
+                                     "funding_peak", "funding_prev")
                   if k in cf})
+        # v1.6.3 控盘代理底料：合约成交额 + 持仓美元额（`_manip_flags` 直接读 d）
+        d["fut_qv"] = futq.get(sym, 0.0)
+        d["oi_usd"] = (d.get("oi_last") or 0.0) * (d.get("price") or 0.0)
         prev = _radar_prev.get(sym)
         stage, slabel, tag, side, note = _stage_of(d)
         if not f["hit"] and not stage:
@@ -1431,8 +1746,13 @@ def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_F
                 reasons.append(f"大户比 {cf['top_ratio']:.2f}")
             if (cf.get("liq_5m", 0) or 0) >= 3e5:
                 reasons.append(f"爆仓 ${cf['liq_5m'] / 1e6:.1f}M/5m")
+        # v1.6.3 控盘代理：命中即写进依据，让「为什么被降级」可解释
+        mflags, mnote, _mpen = _manip_flags(d)
+        if mflags:
+            reasons.append("控盘异常 " + "/".join(mflags))
         rows.append({
             "symbol": sym, "price": d["price"],
+            "manip": mflags, "manip_note": mnote,
             "change24_pct": round(d.get("chg24", 0.0), 2),
             "change1h_pct": round(d.get("chg1h", 0.0) or 0.0, 2),
             "change3d_pct": round(d.get("chg3d", 0.0) or 0.0, 2),
@@ -1473,8 +1793,23 @@ def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_F
         stage_counts[stage] = stage_counts.get(stage, 0) + 1
 
     rows.sort(key=lambda x: x["score"], reverse=True)
-    rows_ign = [r for r in rows if r["stage"] in ("ACCUMULATION", "IGNITION", "SHORT_AMBUSH")]
-    rows_tk = [r for r in rows if r["stage"] in ("VERTICAL", "DISTRIBUTION", "CRASH")]
+    # v1.6.3：**只有「尚未启动」的币才可登记**（登记即入场，不设候选态）。
+    # 实测（安装版 20 笔 LONG 已关单）：3 笔 moon 的登记依据里**全都没有「24h +X%」**，
+    # 即登记时 chg24 < _TRIG_UP_CHG24；而 9 笔「登记时已涨 7.4%~24.8%」的**全是 dump**。
+    # 回放：现状 20 笔 −1086.5U / 胜率 15.0% → 只留未启动 7 笔 **+213.5U / 胜率 42.9%**。
+    # 注意这条与 v1.6.2 的 EXTENDED（>12% 追高线）是同一条思路的收紧：
+    # 实测连 3%~12% 这段也晚了 —— 「已启动」不该再算机会。
+    # 已启动的行不删除，划归 takeoff（仅展示），让「雷达看见但太晚」这件事仍可解释。
+    _started = (lambda r: (r.get("change24_pct") or 0.0) >= _TRIG_UP_CHG24)
+    rows_ign = [r for r in rows if r["stage"] in ("ACCUMULATION", "IGNITION") and not _started(r)]
+    # v1.6.3：**SHORT_AMBUSH 移出 ignition（登记）组，改入 takeoff（仅展示）组**。
+    # 实测证据（安装版已关单 3 笔做空全亏）：CAKE +10.0% / THETA +10.3% / SAGA +11.0%
+    # 全部逆向轧空击穿 10% 强平线，而**最大有利仅 0.0% / 0.0% / 1.4%** —— 从一开始就没跌过，
+    # 复盘原文都是「直接轧空上行（未给回踩）」。RAVE 里空头爆仓占全部爆仓 82%、LAB 更是
+    # 「只需维持横盘，做空者账户便会因费率清零」。用户定位：**绝不做空**。
+    # 顶部风险仍需可见（派发/做空意图对持仓者是离场信号），所以只降级、不删除。
+    rows_tk = [r for r in rows if r["stage"] in ("VERTICAL", "DISTRIBUTION", "CRASH", "EXTENDED", "SHORT_AMBUSH")]
+    rows_tk += [r for r in rows if r["stage"] in ("ACCUMULATION", "IGNITION") and _started(r)]
     rows_tk += [r for r in rows if r["stage"] == "DORMANT"
                 and (r.get("change30d_pct") or 0) >= 30.0]
     rows_tk.sort(key=lambda x: x["score"], reverse=True)
@@ -1581,7 +1916,7 @@ def _get_ignition_v1(force: bool = False, top_n: int = 120, min_qv: float = 2e6)
 
 def get_monster_coins(force: bool = False, top_n: int = 110, min_qv: float = 2e6) -> dict:
     """起飞中·追涨高风险（妖币雷达 v2 四层模型；异常回退 v1 日K 兜底）。
-    v2 阶段映射：垂直拉升/派发顶部/崩跌/沉寂(泵后) → takeoff 列表。"""
+    v2 阶段映射：垂直拉升/已拉升(EXTENDED)/派发顶部/崩跌/沉寂(泵后) → takeoff 列表。"""
     try:
         v2 = get_radar_v2(force=force, top_n=top_n if top_n and top_n > 0 else 110)
         return {"mode": "takeoff",
