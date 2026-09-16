@@ -1,0 +1,41 @@
+name: ✨ 功能建议
+description: 提议一个新功能或对现有能力的改进。涉及真实下单/钱包签名等高风险变更，请先在 Discussions 讨论。
+title: "[Feature] "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你想解决什么问题？
+      description: 描述当前痛点或你期望的工作流。可以引用具体的页面或命令名。
+      placeholder: |
+        当前在 X 页面做 Y 时需要 ...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 你的建议
+      description: 描述具体的产品行为或交互。如果有参考截图/链接请附上。
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: 影响范围
+      options:
+        - 仅 UI 调整
+        - 仅后端 / 技能 / CLI
+        - 前端 + 后端联动
+        - 安装包 / 更新链路
+        - 文档 / 翻译
+  - type: textarea
+    id: risk
+    attributes:
+      label: 风险与边界
+      description: 是否有真实下单、钱包签名、密钥管理等敏感面？是否破坏既有用户的工作流？
+  - type: textarea
+    id: alt
+    attributes:
+      label: 备选方案
+      description: 你考虑过的其他做法，以及为什么当前提议更合适。

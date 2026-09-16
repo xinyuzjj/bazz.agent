@@ -1,0 +1,75 @@
+name: 🐞 Bug 报告
+description: 报告一个明确的缺陷或错误行为。请先在 Issue 列表里确认没有重复。
+title: "[Bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 发生了什么？
+      description: 描述你执行的操作、实际看到的结果、期望看到的结果。
+      placeholder: |
+        1. 打开 ... 页面
+        2. 点击 ... 按钮
+        3. 实际看到 ...
+        期望看到 ...
+    validations:
+      required: true
+  - type: dropdown
+    id: view
+    attributes:
+      label: 出问题的视图
+      options:
+        - 对话 (Chat)
+        - 行情 (Markets)
+        - Agent 钱包 / 链上钱包
+        - Binance CEX
+        - 广场 (Square)
+        - 技能库 (Skills)
+        - 设置 / 记忆
+        - 安装包 / 更新
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      description: 最小可复现的步骤序列；如果无法稳定复现请说明触发条件。
+      placeholder: |
+        1. …
+        2. …
+        3. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 应用版本
+      description: 设置 → 关于 里看到的版本号，或安装包文件名上的版本号。
+      placeholder: v1.5.x
+    validations:
+      required: true
+  - type: dropdown
+    id: env
+    attributes:
+      label: 运行环境
+      options:
+        - Windows 11 + 已安装的 .exe
+        - Windows 11 + 开发模式 (npm run dev)
+        - macOS / Linux（仅浏览器模式）
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志 / 截图
+      description: 粘贴相关日志（Python 后端 / Electron 主进程 / 浏览器控制台）或拖入截图。
+      placeholder: |
+        后端日志（`%APPDATA%\BAZZ.AGENT\workspace\logs\` 或 `workspace/logs/`）：
+        ```
+        …
+        ```
+  - type: textarea
+    id: extra
+    attributes:
+      label: 其他信息
+      description: 任何你认为有必要的补充：网络环境、代理、是否首次复现、是否影响真实下单等。

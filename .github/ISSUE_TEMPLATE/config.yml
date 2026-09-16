@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Discussions（建议先聊聊）
+    url: https://github.com/xinyuzjj/bazz.agent/discussions
+    about: 涉及真实下单、钱包签名、密钥改造等敏感面之前，请先在 Discussions 同步思路，避免做了一半才发现方向不对。
+  - name: 发布与历史
+    url: https://github.com/xinyuzjj/bazz.agent/releases
+    about: 查看历史版本说明与已修复问题，确认问题是否已在最新版本解决。
