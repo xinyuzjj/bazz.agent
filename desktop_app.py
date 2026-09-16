@@ -1566,6 +1566,25 @@ def get_wallet(force: bool = False):
     return wallet_client.get_wallet_state(force=force)
 
 
+@app.get("/api/wallet/status")
+def get_wallet_status():
+    """Agent 钱包的**登录态**（扁平的 status 子对象）。
+
+    为什么单独开这条（2026-09-16 补）——
+    管理页「Agent 4 通道」面板（`frontend/src/views/AdminPanels.tsx::ChannelPanel`）
+    每 30s 轮询一次钱包通道，它只要登录态，却在 fetch `/api/wallet/status`，
+    而这条路由**以前根本不存在** → 真实 app 里 404 → 该卡片恒显示「未连接」。
+    之所以几个版本没被发现：`frontend/src/preview/mock.ts` 里**恰好 mock 了**
+    `/api/wallet/status`，于是隔离预览里一切正常 —— mock 把真实缺陷盖住了。
+
+    语义上与 `/api/wallet/cex/status`、`/api/wallet/web3/status` 对称；
+    且比 `/api/wallet` 轻（后者还带 COMMAND_TREE / daily_caps，30s 轮询没必要带）。
+    拆包口径：`get_wallet_state()` 是 `{cli, status, commands, daily_caps, ...}`，
+    这里只取 `.status`（即 `{connected, address, detail, ...}`）。
+    """
+    return wallet_client.get_wallet_state().get("status") or {}
+
+
 @app.post("/api/wallet/run")
 async def wallet_run(req: Request):
     b = await req.json()

@@ -7,6 +7,11 @@ export const zh: Dict = {
   // ===== 通用 =====
   "common.opFailed": "操作失败",
   "common.copyFail": "复制失败",
+  // v1.5.67 补：这两个键此前缺失 —— common.cancel 两本字典都没有（订阅授权弹窗
+  // 在 zh/en 下都显示裸 key「common.cancel」），common.saved 只有 en 有
+  // （中文是默认语言，保存成功 toast 直接显示「common.saved」）。
+  "common.cancel": "取消",
+  "common.saved": "已保存",
 
   // ===== 顶部主导航（Shell NAV）=====
   "nav.chat": "对话",
@@ -531,6 +536,11 @@ export const zh: Dict = {
   "markets.trackTitle": "妖币追踪 · Monster Tracks",
   "markets.trackSub": "启动前（吸筹/点火/做空埋伏）发现的币自动登记（模拟 100U 本金 × 10x 合约）：逆向 ≥10%（近强平线）判失败；顺向 ≥25% 达标后判动能——反转即落袋，否则继续持有移动止盈（峰值回撤 12% 落袋）；7 天未触发记未兑现",
   "markets.trackStats": "进行中 @{p} · 暴涨 @{moon} · 暴跌 @{dump} · 未兑现 @{expired}",
+  // v1.5.67 补：这个键此前只有 en 有，中文（默认语言）界面上
+  // MarketsView 的战绩条会直接把「markets.trackWin」当文案显示出来。
+  // 注意别误用上面那组 `markets.track.*`（record / winRate / avgPeak）——
+  // 那是更早的一版遗留键，前端已无任何调用方，不要拿它来当这里的正字。
+  "markets.trackWin": "胜率",
   "markets.trackHistory": "历史战绩",
   "markets.trackMore": "仅显示最近 8 条，共 @{n} 条历史",
   "markets.trackFoundPrice": "发现价",
@@ -1413,6 +1423,7 @@ export const en: Dict = {
   // ===== Common =====
   "common.opFailed": "Operation failed",
   "common.saved": "Saved",
+  "common.cancel": "Cancel",
   "common.copyFail": "Copy failed",
 
   // ===== Top navigation (Shell NAV) — designed on top of the Chinese baseline =====
@@ -1867,6 +1878,32 @@ export const en: Dict = {
   "markets.fundTab.ext": "Extremes",
   "markets.fundTab.crowd": "Crowding",
   "markets.fundFlipTitle": "Funding rate flip (positive ↔ negative) often signals a turning point",
+
+  // v1.4.0 订单跟踪（v1.5.67 补：这 22 个键此前只有 zh 有，英文界面下
+  // 「订单跟踪」面板整块显示裸 key —— 该面板 v1.5.63 才挂到 Exchange 视图，
+  // 挂上去时只补了中文，英文侧一直空着）
+  "track.title": "Order Tracking",
+  "track.hint": "Auto-registered after you confirm an order in chat · status flow / alert as SL·TP approach",
+  "track.empty": "No tracked orders yet — added automatically once you confirm an order in chat",
+  "track.status": "Status",
+  "track.qtyEntry": "Qty @ entry",
+  "track.qty": "Qty",
+  "track.live": "Live",
+  "track.pnl": "Unrealized PnL",
+  "track.sl": "Stop Loss",
+  "track.tp": "Take Profit",
+  "track.remove": "Stop tracking",
+  "track.cancel": "Cancel order",
+  "track.cancelTip": "Actually pull this open order off the exchange. Unlike Stop tracking, which only stops following it locally — the order stays on the book.",
+  "track.cancelLabel": "Cancel",
+  "track.cancelDone": "Canceled",
+  "track.cancelFail": "Cancel failed: @{msg}",
+  "track.stNew": "New",
+  "track.stPart": "Partially filled",
+  "track.stFilled": "Filled",
+  "track.stCanceled": "Canceled",
+  "track.stRejected": "Rejected",
+  "track.stExpired": "Expired",
 
   // v1.4.0 alert events (missing in en before v1.5.0)
   "alert.slNear": "Approaching Stop Loss",

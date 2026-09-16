@@ -1,6 +1,59 @@
-# BAZZ.AGENT v1.5.66
+# BAZZ.AGENT v1.5.67
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.5.67 更新要点（四处「两侧契约漂移」修复 + 一致性回归护栏）
+
+**你问「还有哪里有问题」—— 这一轮不是找逻辑 bug，而是找「两侧对不上」。**
+这四个缺陷的共同点是：跑一遍看不出来、报错也不红，**只有真・切函数的 UI 是会错的**。
+所以除了修，还补了一套专门守这类漂移的回归测试。
+
+### ① 钱包的 4 通道面板：Agent 钱包那一格一直是坏的
+- 管理页「Agent 4 通道」面板 raw fetch 了 `/api/wallet/status`，但后端**只有一个
+  `/api/wallet`**（返回 `{cli, status, commands, daily_caps, …}`），没有这条路由 →
+  真实 app 里就是 **404** → `Promise.allSettled` 把它当失败 → 那一格**恒显示「未连接」**，
+  哪怕你的 baw 其实已经扫码登录过了。
+- **为什么几个版本都没发现**：`frontend/src/preview/mock.ts` 里**恰好 mock 了**
+  `/api/wallet/status` —— 隔离预览里一切正常。**mock 把真实缺陷盖住了**。
+- **修**：新增薄路由 `GET /api/wallet/status`，只回 `get_wallet_state()["status"]`
+  （扁平的 `{connected, address, detail}`）。与 `/wallet/cex/status`、`/wallet/web3/status`
+  对称；且那条链路是 **30s 轮询**，不必每次带 COMMAND_TREE / daily_caps 那一坨。
+
+### ② i18n 键漂移四处 —— 中文是默认语言，所以几处中文界面直接显示裸 key
+`locales.ts` 第 2 行写着契约：**所有 key 必须同时存在于 zh 与 en**，
+而 `i18n.tsx` 的实现是 `dict[key] ?? key` —— **没有 zh 兜底**，缺键 = 界面把 key 当文案印出来。
+实测漂移如下（均已修复，`zh` 与 `en` 键集合现已**完全相等，各 1335 个**）：
+
+| # | 键 | 缺在哪 | 用户实际看到什么 |
+|---|---|---|---|
+| ① | 22 个 `track.*` | 只有 zh，**en 全缺** | 英文界面下「订单跟踪」面板整块显示 `track.title` / `track.stFilled` … |
+| ② | `common.saved` | 只有 en | **中文**设置保存成功的 toast 显示「common.saved」 |
+| ③ | `common.cancel` | **两本都没有** | 订阅授权弹窗的取消按钮，中英文都显示「common.cancel」 |
+| ④ | `markets.trackWin` | 只有 en | **中文**行情页战绩条的胜率标签显示「markets.trackWin」 |
+
+- ① 是 v1.5.63 把订单跟踪面板挂到交易所视图时**只补了中文**留下的。
+- ④ 特别说明：别把它「改成」那个长得对的 `markets.track.winRate` ——
+  后者是更早一版的遗留键，**前端已无任何调用方**；这次修的是把使用中的那个键补进 zh。
+
+### ③ 新增一致性回归测试 `tests/test_v168_i18n_parity.py`
+这类问题靠肉眼永远查不出来，必须机器守。四组检测：
+- **键集合**：zh 与 en 必须完全相等，且各自**无重复键**（重复键会静默覆盖）。
+- **使用侧覆盖**：前端全部 1164 个 `t("...")` 用到的键，必须两本字典都有。
+- **API 端点**：`api.ts` 里 98 个端点 + 非 api.ts 的裸 `fetch("/api/…")`，都必须能在后端找到路由。
+- **mock 反查**：预览 mock **不得伪造后端不存在的端点**（这正是 ① 能藏几个版本的机制）；
+  已登记 2 条历史占位（`/api/admin`、`/api/stats`，前端无调用方），新增任何一条都会红。
+
+⚠️ **后端路由一律走 AST 提取，不做子串匹配** —— 这次新加的路由，
+其 **docstring 本身就在解释 `/api/wallet/status` 为什么存在**，
+子串匹配会让「路由存在」这条断言**永远通过**，正好把这个 bug 放过去。
+
+已做**变异验证**（不是一个改不红的测试）：把四个修复逐个「退回」到修复前状态，
+四组检测各自都能抓到并报错；恢复后全绿。
+
+### 验证
+- 新增 `tests/test_v168_i18n_parity.py` **ALL PASS**（4 组 20 断言 + 4 组变异验证）。
+- **全量 24 套件**（原 23 + 本轮新增 1）全通过；`frontend tsc --noEmit` 退出码 **0**。
+- 未触碰止损 10% / 10x 杠杆；未改任何引擎判据。
 
 ## 🆕 v1.5.66 更新要点（妖币「控盘度 / 燃料」不再每只币都一样 —— 三个叠加缺陷）
 
