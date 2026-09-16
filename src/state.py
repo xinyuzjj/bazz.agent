@@ -1230,6 +1230,166 @@ def radar_snapshot_crosstab(direction: str = "LONG") -> dict:
     return out
 
 
+# ---------------- v1.6.6：两个挂起决策的自动复核 ----------------
+# 决策 2（设不设最低分门槛）与决策 3（挡不挡「登记时已下跌」）当时的结论都是「等样本再来」。
+# **「挂着等」是最糟糕的形态** —— 没人记得为什么等、等到多少笔算够、什么时候该回头看。
+# 所以把它仪表化：每次调用重算一遍证据，样本不够就如实说「还差几笔」，够了就直接给结论。
+DECISION_BUCKET_MIN_N = 5      # 单个分数桶至少这么多笔，才有资格看它的胜率
+DECISION_DOWN_MIN_N = 5        # 「登记时已下跌」至少这么多笔，才敢下「挡/不挡」
+# 与 scanner 同源（只写数值不 import，避免循环依赖）：OPT-04 的价格硬挡线 / OI 堆积线。
+# 决策 2 的关键在于**先剔除 OPT-04 会挡掉的那批样本再看 score 还有没有判别力** ——
+# 不剔除的话 score 只是 chg24 的影子（高分样本恰好都是「已涨」的 dump），重复计数。
+_OPT04_LATE_CHG24 = 10.0
+_OPT04_PILED_OI24 = 5.0
+
+_SCORE_BUCKETS = (("0-9", 0, 9), ("10-14", 10, 14), ("15-19", 15, 19),
+                  ("20-24", 20, 24), ("25+", 25, 10 ** 9))
+_SCORE_BUCKET_LABELS = tuple(b[0] for b in _SCORE_BUCKETS)
+
+
+def _score_bucket(score) -> str:
+    if score is None:
+        return ""
+    try:
+        s = int(score)
+    except (TypeError, ValueError):
+        return ""
+    for lab, lo, hi in _SCORE_BUCKETS:
+        if lo <= s <= hi:
+            return lab
+    return ""
+
+
+def _score_bucket_table(sample: list) -> list:
+    acc = {lab: {"label": lab, "n": 0, "moon": 0, "dump": 0, "expired": 0, "win_rate": 0.0}
+           for lab in _SCORE_BUCKET_LABELS}
+    for r in sample:
+        lab = _score_bucket(r["found_score"])
+        if not lab:
+            continue
+        nd = acc[lab]
+        nd["n"] += 1
+        if r["outcome"] in nd:
+            nd[r["outcome"]] += 1
+    for nd in acc.values():
+        nd["win_rate"] = round(nd["moon"] / nd["n"] * 100, 1) if nd["n"] else 0.0
+    return [acc[lab] for lab in _SCORE_BUCKET_LABELS]
+
+
+def radar_recheck_decisions(direction: str = "LONG") -> dict:
+    """重算两个挂起决策的证据，明确回答「还差几笔」或「结论是什么」。
+
+    这是给「待拍板」那两件事收尾用的：当初写的是「等 OPT-04 落地后的新样本」和
+    「等 XLMUSDT 这类攒到 5 笔」，但**没有人会记得回来复查**。本函数把这个复查变成
+    随时可调的一次计算 —— 挂在 /api/radar/decisions 上，也是它唯一的正确用法。
+
+    与 `radar_tracks_stats` / `radar_snapshot_crosstab` 的分工：
+      · stats 答「战绩如何」
+      · crosstab 答「哪个轴有判别力」（OPT-08 的敲门砖，门禁 n≥20）
+      · **本函数答「那两个决策能不能拍了」**（门禁更低：桶内 n≥5，因为它只问两件事）
+
+    返回 {ok, decision2:{...}, decision3:{...}, direction, note}。
+    `status="ready"` 才表示可以拍板；`waiting` 时 `gap` 是还差的笔数。
+    """
+    try:
+        rows = _conn_get().execute(
+            "SELECT outcome, direction, found_score, snap_chg24, snap_oi24 "
+            "FROM radar_tracks WHERE status='closed'").fetchall()
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    want = str(direction or "LONG").upper()
+    closed = [r for r in rows if (r["direction"] or "LONG") == want
+              and r["outcome"] in ("moon", "dump", "expired")]
+
+    def _still_registers(r) -> bool:
+        """OPT-04 之后这笔还会不会被登记？（价格硬挡线 / OI 堆积线）"""
+        c, o = r["snap_chg24"], r["snap_oi24"]
+        if c is not None and float(c) >= _OPT04_LATE_CHG24:
+            return False
+        if o is not None and float(o) >= _OPT04_PILED_OI24:
+            return False
+        return True
+
+    after = [r for r in closed if _still_registers(r)]
+    no_snap = [r for r in closed if r["snap_chg24"] is None and r["snap_oi24"] is None]
+    dropped = len(closed) - len(after)
+    b_all = _score_bucket_table(closed)
+    b_after = _score_bucket_table(after)
+    usable = [b for b in b_after if b["n"] >= DECISION_BUCKET_MIN_N]
+
+    # ---- 决策 2：设不设最低分门槛 ----
+    if len(usable) >= 2:
+        d2_status = "ready"
+        usable_sorted = sorted(usable, key=lambda b: b["win_rate"], reverse=True)
+        best, worst = usable_sorted[0], usable_sorted[-1]
+        if best["win_rate"] - worst["win_rate"] >= 20.0:
+            d2_reco = (f"可以设了：剔除 OPT-04 会挡掉的那批之后，{best['label']} 分桶仍有判别力"
+                       f"（{best['moon']}/{best['n']}，胜率 {best['win_rate']}%），"
+                       f"而 {worst['label']} 桶只有 {worst['win_rate']}%（{worst['moon']}/{worst['n']}）。"
+                       f"门槛可设在 {best['label']} 的下沿。")
+        else:
+            d2_reco = (f"仍然**不建议**设：各桶胜率差距只有 {best['win_rate'] - worst['win_rate']:.1f} 个百分点"
+                       f"（最高 {best['label']} {best['win_rate']}%，最低 {worst['label']} {worst['win_rate']}%），"
+                       f"不构成判别力。score 目前更像 chg24 的影子，不是独立信号。")
+        d2_gap = 0
+    else:
+        d2_status = "waiting"
+        d2_gap = max(0, DECISION_BUCKET_MIN_N * 2 - len(after))
+        d2_reco = (f"还不能设。OPT-04 之后只剩 {len(after)} 笔可分析"
+                   f"（被 OPT-04 挡掉的 {dropped} 笔已剔除），"
+                   f"要形成「至少两个桶各有 {DECISION_BUCKET_MIN_N} 笔」的判断还差 ≈ {d2_gap} 笔。")
+    d2_note = (f"另有 {len(no_snap)} 笔老样本没落登记快照（OPT-02 之前登记的），"
+               f"只能按 reasons 文本口径估算，回放严格性略低。") if no_snap else ""
+
+    # ---- 决策 3：挡不挡「登记时已下跌」 ----
+    down = [r for r in closed if r["snap_chg24"] is not None and float(r["snap_chg24"]) < 0]
+    down_moon = sum(1 for r in down if r["outcome"] == "moon")
+    try:
+        pen = _conn_get().execute(
+            "SELECT COUNT(*) AS n FROM radar_tracks WHERE status='pending' "
+            "AND direction=? AND snap_chg24 IS NOT NULL AND snap_chg24 < 0", (want,)).fetchone()
+        pend_down = int(pen["n"]) if pen else 0
+    except Exception:
+        pend_down = 0
+    if len(down) >= DECISION_DOWN_MIN_N:
+        d3_status = "ready"
+        wr = round(down_moon / len(down) * 100, 1)
+        if wr <= 20.0:
+            d3_reco = (f"该挡：登记时已下跌的 {len(down)} 笔里只有 {down_moon} 笔走出 moon"
+                       f"（胜率 {wr}%）—— 反例攒够了，可以加这道闸门。")
+        else:
+            d3_reco = (f"不该挡：登记时已下跌的 {len(down)} 笔里有 {down_moon} 笔走出 moon"
+                       f"（胜率 {wr}%）—— 「跌到位了」的直觉站得住，加闸门会误杀。")
+        d3_gap = 0
+    else:
+        d3_status = "waiting"
+        d3_gap = DECISION_DOWN_MIN_N - len(down)
+        d3_reco = (f"还不能挡。已关单的「登记时已下跌」样本只有 {len(down)} 笔"
+                   f"（另有 {pend_down} 笔还在 pending），"
+                   f"再攒 {d3_gap} 笔才有反例可依据 —— 0 样本下加闸门就是纯拍脑袋。")
+
+    return {
+        "ok": True, "direction": want,
+        "n_closed": len(closed), "n_after_opt04": len(after), "n_dropped_by_opt04": dropped,
+        "n_no_snapshot": len(no_snap),
+        "decision2": {
+            "question": "登记要不要设最低分门槛？",
+            "status": d2_status, "gap": d2_gap,
+            "buckets_all": b_all, "buckets_after_opt04": b_after,
+            "min_bucket_n": DECISION_BUCKET_MIN_N,
+            "recommend": d2_reco, "note": d2_note,
+        },
+        "decision3": {
+            "question": "登记后「已经跌下去」的币，挡不挡？",
+            "status": d3_status, "gap": d3_gap,
+            "n_down_closed": len(down), "n_down_moon": down_moon,
+            "n_down_pending": pend_down, "min_n": DECISION_DOWN_MIN_N,
+            "recommend": d3_reco,
+        },
+        "note": "本函数只给证据与建议，**不改任何规则**。加闸门是产品决策，要用户拍板。",
+    }
+
+
 if __name__ == "__main__":
     print("conversations:", len(list_conversations()))
     print("memory keys:", len(list_memory()))

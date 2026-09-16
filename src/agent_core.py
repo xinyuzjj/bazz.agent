@@ -387,19 +387,31 @@ def _system_prompt(locale: str = "zh") -> str:
             "   多步任务拆解/『加个任务/任务完成/清单』→ todo_write（建/勾/删任务，完成一条立刻勾一条）；\n"
             "   **妖币 / 启动前 / 埋伏 / 蓄势 / meme / 百倍币 → 立即用 meme_watch（**直接调取行情模块 Monster Radar 同源数据**——scanner.get_ignition_coins/get_monster_coins，与「行情→妖币雷达」展示内容 100% 一致），"
             "**不要**自己用价量/费率二次筛；拿到候选后可用 market_quote 查某币实时行情、propose_trade 给方案。\n"
-            "   **mode 必须按用户语义传**：用户说『启动前/埋伏/蓄势/点火前/吸筹/二买点』→ `mode='ignition'`；说『起飞中/追涨/已爆发/拉升中/暴涨中/加速/起飞』→ `mode='takeoff'`；说『妖币/meme/百倍币/十倍币』等无明确阶段 → `mode='both'`。\n"
-            "   **发币安广场 / Square 发文 → 绝不走 mcp_call（MCP 网关没有发广场能力），按形态二选一：\n"
-            "   a) 【默认】生成文章/行情文/深度分析发文/图文帖/发图文/行情快报/SMC 拆解——用户让『写文章发广场』"
-            "『把这篇分析发出去』『发行情文』且没给现成正文 → 一律 run_skill(skill_name='square-rich-post', "
-            "args='<SYMBOL> [futures|spot] --publish')：自动取数+Pillow 封面+固定结构组稿"
-            "（开头行情人话段 → 合约+情绪 → 我的看法竖排 SMC 推理链 结构/BOS・CHoCH/OTE 0.618-0.705/OB/FVG → "
-            "操作计划竖排点位+100U 仓位算法 → 风险提示+GitHub 链接 github.com/xinyuzjj/bazz.agent）+ $cashtag/#hashtag。"
-            "**发布形态默认短贴多图**（封面+24h 走势图直接显示在正文里，用户指定要长文才加 --article；"
+            "   **mode 必须按用户语义传**：用户说『启动前/埋伏/蓄势/点火前/吸筹/二买点』→ `mode='ignition'`；说『起飞中/追涨/已爆发/拉升中/暴涨中/加速/起飞』→ `mode='takeoff'`；说『妖币/meme/百倍币/十倍币』等无明确阶段 → `mode='both'`；"
+            "问『妖币雷达规则该不该改 / 判据体检 / 登记门槛要不要设 / 那条规则还有效吗 / 战绩回放』→ `mode='audit'`"
+            "（**判据体检**：回报两条挂起规则与交叉表门禁的当前证据，样本不够会明说还差几笔；只给证据不改规则）。\n"
+            "   **发币安广场 / Square 发文 → 绝不走 mcp_call（MCP 网关没有发广场能力）。先按**标的**分流，再按形态二选一：\n"
+            "   a0) **代币 vs 妖币必须先分流 —— 这是两套分析技巧，不是同一个工具的两组参数**：\n"
+            "      · **普通代币 / 主流币 / 有现货深度的币** → run_skill(skill_name='square-rich-post', "
+            "args='<SYMBOL> [futures|spot] --publish')，用 **SMC**（结构 / BOS・CHoCH / 扫流动性 / OTE 0.618-0.705 / OB / FVG）；\n"
+            "      · **妖币 / meme / 百倍币 / 十倍币 / 异动币 / 出现在「行情→妖币雷达」里的币** → "
+            "run_skill(skill_name='square-monster-post', args='<SYMBOL> [futures|spot] --publish')，用 **剧本三轴**"
+            "（① 位阶：庄家剧本演到第几格 ② 控盘度：盘在谁手里 ③ 燃料：油从哪来）。\n"
+            "      **为什么必须分开**：SMC 成立的前提是「结构位背后真的有人挂单」，而妖币是**控盘盘、K 线是画出来的** —— "
+            "你看到的 OB 就是诱多区，你看到的「扫流动性」就是专门去点你止损的那一下。用 SMC 分析妖币等于拿散户的地图找庄家的门。"
+            "**两者绝不可互相替代，也不要因为一个技能报错就换另一个硬发**。\n"
+            "      判断不了 → 先跑 monster：该币不在妖币雷达视野内时它会**明确报错并提示改用 rich**，不会硬编一篇。\n"
+            "   a) 【默认形态】生成文章/行情文/深度分析发文/图文帖/发图文/行情快报：用户让『写文章发广场』"
+            "『把这篇分析发出去』『发行情文』且没给现成正文 → 走 a0 选定技能，args 带 --publish："
+            "自动取数 + Pillow 封面 + 固定结构组稿"
+            "（开头人话段 → 三轴/SMC 推理链 → 操作计划竖排点位 + 100U 仓位算法 → "
+            "风险提示 + GitHub 链接 github.com/xinyuzjj/bazz.agent）+ $cashtag/#hashtag。"
+            "**发布形态默认短贴多图**（封面+走势图直接显示在正文里，用户指定要长文才加 --article；"
             "长文 API 不支持正文插图）；"
-            "**严禁绕过它自己手写简版文直接 square-post 发**——那会丢 SMC 推理链/仓位算法/GitHub 链接/封面，不合规；\n"
-            "   b) 例外：用户**给了现成正文**（『把这段文字发出去』/发短帖/发视频）或 rich 稿改稿重发 → "
+            "**严禁绕过它自己手写简版文直接 square-post 发**——那会丢分析推理链/仓位算法/GitHub 链接/封面，不合规；\n"
+            "   b) 例外：用户**给了现成正文**（『把这段文字发出去』/发短帖/发视频）或稿子改稿重发 → "
             "run_skill(skill_name='square-post', args='<text|article|image|video 子命令 + 参数>')；"
-            "改 rich 稿重发用 square-rich-post args='<SYMBOL> --publish --reuse <目录>'**。\n"
+            "改稿重发用对应技能 args='<SYMBOL> --publish --reuse <目录>'**。\n"
             "   **『帮我做个定时任务 / 每天 9 点分析妖币 / 每天早上定时扫描 / 每隔 30 分钟扫一次 / 加个日报 / 加个定时提醒 / cron / 自动定时』→ 立即用 schedule_task(action='create', name=…, time=…, task=…) 在后台真实注册 cron / interval 任务（不是给一句手动话术，也不要走 mcp_call 写系统级 cron）**。time 支持 `09:00`/`9 点`/`0 9 * * *`/`interval:30m`；task 默认 daily_scan_report，做妖币雷达传 meme_scan_report；**用户给出自定义周期指令（如『每天 9 点总结 BTC 行情并给关键位』）→ task='custom_prompt' 且把完整指令写进 prompt 参数（Agent 到点带全部工具无头真实执行）**。内置任务结果写『BAZZ Agent 日报』会话，custom_prompt 写专属会话「定时任务 · <name>」（都不需要用户在场）。**\n"
             "   **需求存在关键分叉（币种/周期/方向/预算不明且猜错代价高）→ 用 clarify 工具发结构化选择题让用户点选；能用合理默认值继续就不要问**。\n"
             "   **币种识别 — 严禁猜交易对**：用户用中文名/展示名/别名指代币种（如『牛市』『未来』『小狗币』）→ 把『<名字>USDT』原样传给技能；\n"
@@ -615,6 +627,88 @@ def _run_risk():
     return {"reply": format_risk_report(best.get("symbol", "?"), tips), "tools": tools}
 
 
+def _run_radar_audit() -> dict:
+    """妖币雷达**判据体检**：把「哪条规则该改、哪条还不该改」的证据一次算清。
+
+    存在的理由：v1.6.5 之后还有两个决策挂着「等样本」，而**没有人会记得回来复查**。
+    这个体检把复查变成一次可随时调用的计算 —— 样本不够就如实说还差几笔，
+    够了就直接给结论。**只给证据与建议，绝不自动改规则**（改规则是产品决策）。
+    """
+    import state
+    try:
+        d = state.radar_recheck_decisions("LONG")
+    except Exception as e:
+        return {"reply": f"⚠️ 判据体检失败：{e}",
+                "tools": [{"icon": "📋", "name": "妖币判据体检", "status": "error",
+                           "detail": str(e)[:140]}]}
+    if not d.get("ok"):
+        return {"reply": f"⚠️ 判据体检失败：{d.get('error')}",
+                "tools": [{"icon": "📋", "name": "妖币判据体检", "status": "error"}]}
+
+    try:
+        ct = state.radar_snapshot_crosstab("LONG")
+    except Exception:
+        ct = {"n": 0, "ready": False, "min_n": 0, "axes": {}}
+    try:
+        stats = state.radar_tracks_stats()
+    except Exception:
+        stats = {}
+
+    def _bucket_line(buckets, minn=1):
+        parts = [f"{b['label']} → {b['moon']}/{b['n']}" for b in buckets if b["n"] >= minn]
+        return " · ".join(parts) if parts else "（无样本）"
+
+    d2, d3 = d["decision2"], d["decision3"]
+    lines = [
+        "📋 **妖币雷达判据体检**（只给证据，不改任何规则）",
+        "",
+        f"已关单样本（LONG）：**{d['n_closed']} 笔** —— 其中 OPT-04 会挡掉 "
+        f"**{d['n_dropped_by_opt04']} 笔**，剩下 **{d['n_after_opt04']} 笔**可用于判据分析；"
+        f"另有 {d['n_no_snapshot']} 笔老样本没落登记快照（OPT-02 之前登记的，口径略松）。",
+        "",
+        f"**① {d2['question']}** —— "
+        + ("✅ 样本够了" if d2["status"] == "ready" else f"⏳ 还差 ≈ {d2['gap']} 笔"),
+        f"　{d2['recommend']}",
+        f"　分数桶（全部已关单）：{_bucket_line(d2['buckets_all'])}",
+        f"　分数桶（**OPT-04 之后**，这才是该看的）：{_bucket_line(d2['buckets_after_opt04'])}",
+    ]
+    if d2.get("note"):
+        lines.append(f"　⚠️ {d2['note']}")
+    lines += [
+        "",
+        f"**② {d3['question']}** —— "
+        + ("✅ 样本够了" if d3["status"] == "ready" else f"⏳ 还差 {d3['gap']} 笔"),
+        f"　{d3['recommend']}",
+        f"　已关单的「登记时已下跌」：{d3['n_down_closed']} 笔（其中 moon {d3['n_down_moon']} 笔）"
+        f" · 还在 pending：{d3['n_down_pending']} 笔",
+        "",
+        f"**③ 交叉表门禁（OPT-08）** —— n={ct.get('n', 0)} / 门禁 {ct.get('min_n', 0)}"
+        + ("　✅ 已就绪，可以按轴改规则了" if ct.get("ready")
+           else "　⏳ 未就绪：**门禁没到之前，任何按轴设的阈值都是拍脑袋**"),
+    ]
+    for key, nodes in (ct.get("axes") or {}).items():
+        live = [n for n in nodes if n["n"] > 0]
+        if live:
+            lines.append("　· " + key + "：" + " · ".join(f"{n['label']} {n['moon']}/{n['n']}"
+                                                          for n in live))
+    stages = stats.get("stages") or []
+    if stages:
+        lines += ["", "**④ 当前战绩分组（对照用）**"]
+        for s in stages[:4]:
+            lines.append(f"　· {s.get('stage', '?')}：{s.get('moon', 0)}/{s.get('closed', 0)}"
+                         f"（胜率 {s.get('win_rate', 0)}%）")
+    lines += ["", d.get("note", "")]
+    return {
+        "reply": "\n".join(lines),
+        "tools": [{"icon": "📋", "name": "妖币判据体检",
+                   "status": "success" if (d2["status"] == "ready" or d3["status"] == "ready") else "info",
+                   "detail": f"决策2 {d2['status']} · 决策3 {d3['status']} · 交叉表 "
+                             f"{ct.get('n', 0)}/{ct.get('min_n', 0)}"}],
+        "data": {"decisions": d, "crosstab_ready": ct.get("ready"),
+                 "crosstab_n": ct.get("n")},
+    }
+
+
 def _run_meme_watch(mode: str = "both"):
     """「妖币 / 启动前 / 埋伏 / meme」：直接调行情模块 Monster Radar 同源数据
     (scanner.get_ignition_coins + get_monster_coins)，与「行情→妖币雷达」展示
@@ -624,7 +718,11 @@ def _run_meme_watch(mode: str = "both"):
       - "ignition" → 仅启动前·埋伏（用户说"启动前/埋伏/蓄势/点火前/吸筹"）
       - "takeoff"  → 仅起飞中·追涨（用户说"起飞中/追涨/已爆发/拉升中/暴涨中/加速"）
       - "both"     → 两组都给（默认）
+      - "audit"    → **判据体检**：不列币，只回报两条挂起规则该不该改的证据（见 _run_radar_audit）
     """
+    # 体检不需要雷达数据（也不该为它多扫一次全市场），所以放在取数之前先分流。
+    if (mode or "").strip().lower() == "audit":
+        return _run_radar_audit()
     from scanner import get_radar_v2
 
     # v1.5.0：直接取雷达 v2 全量（四层模型），一次调用拆 ignition/takeoff；

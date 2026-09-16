@@ -551,14 +551,18 @@ TOOLS: List[Dict[str, Any]] = [
                             "- ignition：用户说『启动前/埋伏/蓄势/点火前/吸筹/二买点』→ 仅返回 ignition(埋伏候选)\n"
                             "- takeoff：用户说『起飞中/追涨/已爆发/拉升中/暴涨中/加速/起飞』→ 仅返回 takeoff(已爆发跟踪)\n"
                             "- both：『妖币/meme/百倍币/十倍币/妖币雷达』等无明确阶段 → 两组都给\n"
+                            "- audit：用户问『妖币雷达规则该不该改 / 判据体检 / 登记门槛要不要设 / 战绩回放 / 那条规则还有效吗』"
+                            "→ **判据体检**：不列币，回报两条挂起规则（最低分门槛、挡住已下跌）与交叉表门禁的当前证据，"
+                            "样本不够时明确说还差几笔。**只给证据不改规则**。\n"
                             "**不要**自己拿全市场数据二次筛，也**不要**给 scan_market 的 24h 涨跌幅榜"
                             "（那是已爆发币）。拿到列表后可继续用 market_quote 查某币实时行情、"
                             "propose_trade 给带止损/止盈的下单方案（需用户确认才真实下单）。"),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "mode": {"type": "string", "enum": ["ignition", "takeoff", "both"],
-                             "description": "按用户语义选 ignition/takeoff/both；无明确阶段默认 both"},
+                    "mode": {"type": "string",
+                             "enum": ["ignition", "takeoff", "both", "audit"],
+                             "description": "按用户语义选；妖币判据/规则体检用 audit；无明确阶段默认 both"},
                 },
             },
         },

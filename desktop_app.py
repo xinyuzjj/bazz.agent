@@ -315,13 +315,41 @@ def api_market_klines_ohlcv(symbol: str, interval: str = "1d", limit: int = 90, 
 
 @app.get("/api/square/rich/compose")
 def api_square_rich_compose(symbol: str, market: str = "futures"):
-    """广场富媒体发文合成：全维度取数 → Pillow 画封面图（90d K线+成交量）+ 24h 分时图
+    """广场富媒体发文合成（**代币引擎 · SMC**）：全维度取数 → Pillow 画封面图（90d K线+成交量）+ 24h 分时图
     → 组稿（含 $cashtag/#hashtag）→ 落盘 workspace/square_rich/<SYM>_<ts>/。
     返回 {dir, title_file, text_file, cover, extra_chart, stats}，发文交给 square-post 技能。"""
     import square_rich
     sym = (symbol or "").strip().upper()
     try:
         return square_rich.compose(sym, market if market in ("spot", "futures") else "futures")
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/square/monster/compose")
+def api_square_monster_compose(symbol: str, market: str = "futures", style: str = ""):
+    """广场发文合成（**妖币引擎 · 剧本三轴**）：位阶/控盘/燃料三轴 → 剧本进度带封面 + 竖版剧本卡
+    → 组稿（4 套妖币专属风格）→ 落盘 workspace/square_monster/<SYM>_<ts>/。
+
+    **与 /api/square/rich/compose 是两套引擎，不是同一套的参数**：
+    代币用 SMC（结构/BOS・CHoCH/OB/FVG），妖币用剧本位阶 —— 因为控盘盘的 K 线结构是画出来的，
+    用 SMC 分析妖币等于拿散户的地图找庄家的门。symbol 不在妖币雷达视野内会明确报错，
+    并提示改用 rich 引擎。"""
+    import square_monster
+    sym = (symbol or "").strip().upper()
+    try:
+        return square_monster.compose(sym, market if market in ("spot", "futures") else "futures",
+                                     style or None)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/square/monster/analyze")
+def api_square_monster_analyze(symbol: str):
+    """只做妖币三轴分析（不出图不落盘）—— 给「先看结论再决定要不要发」用。"""
+    import square_monster
+    try:
+        return square_monster.analyze((symbol or "").strip().upper())
     except Exception as e:
         return {"ok": False, "error": str(e)}
 

@@ -926,7 +926,7 @@ export const zh: Dict = {
   "square.paperClosed": "结算",
   "square.paperSettledAtExpiry": "到期结算",
   "square.paperEmpty": "还没有模拟挂单",
-  "square.paperEmptyHint": "发布一篇代币分析文章（square-rich-post 且方向非观望）后会自动在这里生成模拟单。",
+  "square.paperEmptyHint": "发布一篇分析文章（代币走 square-rich-post / 妖币走 square-monster-post，且给出了点位）后会自动在这里生成模拟单。妖币在「不该进场」的位阶不会给点位，那时不会建单。",
   "square.paperDelTip": "删除这条模拟单？（仅本地数据，不影响真实资金）",
   "square.paperDel": "删除",
   "square.keyEmpty": "OpenAPI Key 不能为空。",
@@ -2302,7 +2302,7 @@ export const en: Dict = {
   "square.paperClosed": "Settled",
   "square.paperSettledAtExpiry": "settled at expiry",
   "square.paperEmpty": "No paper orders yet",
-  "square.paperEmptyHint": "Publish a token analysis article (square-rich-post with a non-neutral direction) and a paper order will appear here automatically.",
+  "square.paperEmptyHint": "A paper order appears here automatically after you publish an analysis with a price plan (tokens via square-rich-post, anomaly coins via square-monster-post). Anomaly-coins posts give no levels at stages where entering is wrong, so no order is created then.",
   "square.paperDelTip": "Delete this paper order? (local data only, no real funds)",
   "square.paperDel": "Delete",
 
