@@ -5,8 +5,100 @@
 
 const DEMO = "演示 fixture · 非真实市场/账户数据";
 const FIXTURE_MS = Date.UTC(2026, 8, 1, 8);
+
+
+
 const FIXTURE_SEC = FIXTURE_MS / 1000;
 const META = { preview: true, source: DEMO, fixture_at: FIXTURE_MS, network: "offline" };
+
+/* ---------------- v1.6.5 妖币追踪 / 订单跟踪 演示 fixture ----------------
+   存在的意义：Tracks 面板的「按阶段分组胜率」与「疑似假启动」徽章、订单卡的撤单按钮，
+   都只有在有数据时才渲染 —— 空数组会让视觉验收看不见它们，等于没验。
+   数据全是编的（数字对得上形态即可），不连接任何真实账户。 */
+const previewTracks = {
+  ts: FIXTURE_SEC,
+  pending: [
+    { id: "p1", symbol: "RUNEUSDT", stage: "IGNITION", direction: "LONG",
+      found_price: 0.512, found_score: 22, reasons: ["涨幅已温 +4.2%（3~10% 段降分不挡）", "RVOL=2.3x"],
+      status: "pending", outcome: "", max_gain_pct: 4.0, max_drop_pct: 7.1,
+      peak_price: 0.532, trough_price: 0.476, last_price: 0.505, outcome_price: 0,
+      holding: 0, fake_start: true, age_h: 127.6, found_at: FIXTURE_SEC - 127.6 * 3600,
+      closed_at: null, updated_at: FIXTURE_SEC - 60 },
+    { id: "p2", symbol: "BCHUSDT", stage: "ACCUMULATION", direction: "LONG",
+      found_price: 512.4, found_score: 13, reasons: ["低位放量 1.8x"],
+      status: "pending", outcome: "", max_gain_pct: 4.4, max_drop_pct: 4.7,
+      peak_price: 535.0, trough_price: 488.3, last_price: 524.9, outcome_price: 0,
+      holding: 0, fake_start: true, age_h: 127.6, found_at: FIXTURE_SEC - 127.6 * 3600,
+      closed_at: null, updated_at: FIXTURE_SEC - 60 },
+    { id: "p3", symbol: "NEWTUSDT", stage: "IGNITION", direction: "LONG",
+      found_price: 0.881, found_score: 26, reasons: ["OI 24h -8.2%", "跳跃检验 L=4.1"],
+      status: "pending", outcome: "", max_gain_pct: 11.5, max_drop_pct: 5.0,
+      peak_price: 0.982, trough_price: 0.837, last_price: 0.952, outcome_price: 0,
+      holding: 0, fake_start: false, age_h: 6.2, found_at: FIXTURE_SEC - 6.2 * 3600,
+      closed_at: null, updated_at: FIXTURE_SEC - 60 },
+    { id: "p4", symbol: "REZUSDT", stage: "IGNITION", direction: "LONG",
+      found_price: 0.0341, found_score: 28, reasons: ["速度 +0.82%/5m 加速", "RVOL=3.1x"],
+      status: "pending", outcome: "", max_gain_pct: 30.2, max_drop_pct: 2.4,
+      peak_price: 0.0444, trough_price: 0.0333, last_price: 0.0431, outcome_price: 0,
+      holding: 1, fake_start: false, age_h: 26.4, found_at: FIXTURE_SEC - 26.4 * 3600,
+      closed_at: null, updated_at: FIXTURE_SEC - 60 },
+  ],
+  history: [
+    { id: "h1", symbol: "VTHOUSDT", stage: "IGNITION", direction: "LONG",
+      found_price: 0.00102, found_score: 30, reasons: ["费率 -0.776%", "低振幅横盘"],
+      status: "closed", outcome: "moon", max_gain_pct: 31.3, max_drop_pct: 7.9,
+      peak_price: 0.00134, trough_price: 0.00094, last_price: 0, outcome_price: 0.00134,
+      holding: 1, found_at: FIXTURE_SEC - 40 * 3600, closed_at: FIXTURE_SEC - 16.2 * 3600,
+      updated_at: FIXTURE_SEC - 16.2 * 3600 },
+    { id: "h2", symbol: "MTLUSDT", stage: "IGNITION", direction: "LONG",
+      found_price: 1.42, found_score: 43, reasons: ["24h +21.9%", "OI 24h +98.7%"],
+      status: "closed", outcome: "dump", max_gain_pct: 2.1, max_drop_pct: 10.1,
+      peak_price: 1.45, trough_price: 1.277, last_price: 0, outcome_price: 1.277,
+      review: "做多失败：自发现价 1.42 逆向下跌 -10.1%（≥10% ≈ 10x 强平线），历时 10h42m。",
+      holding: 0, found_at: FIXTURE_SEC - 30 * 3600, closed_at: FIXTURE_SEC - 19.3 * 3600,
+      updated_at: FIXTURE_SEC - 19.3 * 3600 },
+    { id: "h3", symbol: "KATUSDT", stage: "ACCUMULATION", direction: "LONG",
+      found_price: 0.0621, found_score: 21, reasons: ["低位放量 2.2x"],
+      status: "closed", outcome: "dump", max_gain_pct: 3.3, max_drop_pct: 10.4,
+      peak_price: 0.0641, trough_price: 0.0556, last_price: 0, outcome_price: 0.0556,
+      review: "做多失败：吸筹证伪，低位放量并非吸筹而是派发出货。",
+      holding: 0, found_at: FIXTURE_SEC - 80 * 3600, closed_at: FIXTURE_SEC - 15.2 * 3600,
+      updated_at: FIXTURE_SEC - 15.2 * 3600 },
+    { id: "h4", symbol: "CAKEUSDT", stage: "SHORT_AMBUSH", direction: "SHORT",
+      found_price: 2.31, found_score: 19, reasons: ["高位过热", "空头付钱"],
+      status: "closed", outcome: "dump", max_gain_pct: 10.0, max_drop_pct: 0.2,
+      peak_price: 2.541, trough_price: 2.305, last_price: 0, outcome_price: 2.541,
+      review: "做空失败：直接轧空上行（未给回踩）。",
+      holding: 0, found_at: FIXTURE_SEC - 60 * 3600, closed_at: FIXTURE_SEC - 44 * 3600,
+      updated_at: FIXTURE_SEC - 44 * 3600 },
+  ],
+  stats: {
+    total: 55, pending: 31, moon: 3, dump: 21, expired: 0,
+    by_stage: {
+      IGNITION: { pending: 5, moon: 3, dump: 13, expired: 0, closed: 16, win_rate: 18.8 },
+      ACCUMULATION: { pending: 12, moon: 0, dump: 4, expired: 0, closed: 4, win_rate: 0 },
+      SHORT_AMBUSH: { pending: 14, moon: 0, dump: 4, expired: 0, closed: 4, win_rate: 0 },
+    },
+    stages: [
+      ["IGNITION", { pending: 5, moon: 3, dump: 13, expired: 0, closed: 16, win_rate: 18.8 }],
+      ["ACCUMULATION", { pending: 12, moon: 0, dump: 4, expired: 0, closed: 4, win_rate: 0 }],
+      ["SHORT_AMBUSH", { pending: 14, moon: 0, dump: 4, expired: 0, closed: 4, win_rate: 0 }],
+    ],
+  },
+};
+
+// 订单跟踪：一条可撤的真实委托（交易所通道、NEW）+ 一条已成交（不可撤），
+// 用来验收 v1.6.5 的撤单按钮「只对还在挂着的单显示」。
+const previewOrders = [
+  { id: "o1", order_id: "88120031", symbol: "SOLUSDT", route: "exchange", direction: "BULLISH",
+    quantity: "0.42", entry: 178.2, stop_loss: 160.4, take_profit: 222.8,
+    status: "NEW", active: true, note: "", created_at: FIXTURE_SEC - 3 * 3600, updated_at: FIXTURE_SEC - 120 },
+  { id: "o2", order_id: "88119987", symbol: "BTCUSDT", route: "exchange", direction: "BULLISH",
+    quantity: "0.006", entry: 104500, stop_loss: 94050, take_profit: 130625,
+    status: "FILLED", active: true, note: "", created_at: FIXTURE_SEC - 30 * 3600, updated_at: FIXTURE_SEC - 25 * 3600 },
+];
+
+/* ---------------- fixture 结束 ---------------- */
 const MODEL = "preview-demo（演示，非真实模型）";
 const REPLY = "**演示回复 · 离线预览**\n\n当前内容来自固定 fixture，不是模型分析，也不是真实行情或账户数据。\n\n可以浏览八个页面、切换行情图表、删除演示记忆及失败帖子。不会调用任何 API、交易、钱包签名、技能安装或文件操作。";
 const INSTALL_KEY = Symbol.for("bazz.preview.mock.installed");
@@ -321,14 +413,14 @@ export function installPreview(): void {
       case "/api/market/radar": return json({ ...META, ignition: radar.slice(0, 2), takeoff: radar.slice(2), stage_counts: { IGNITION: 2, VERTICAL: 1 }, engine: "演示 fixture", env: { regime: "DEMO / OFFLINE" } });
       case "/api/market/ignition": return json({ ...META, items: radar.slice(0, 2), ignition: radar.slice(0, 2) });
       case "/api/market/monsters": return json({ ...META, items: radar.slice(2), monsters: radar.slice(2) });
-      case "/api/market/radar/tracks": return json({ ...META, pending: [], history: [], stats: { total: 0, pending: 0, moon: 0, dump: 0, expired: 0 }, ts: FIXTURE_SEC });
+      case "/api/market/radar/tracks": return json({ ...META, ...previewTracks });
       case "/api/market/liquidations": return json({ ...META, rows: [], items: [], total: 0 });
       case "/api/wallet/cex/status": return json(cexStatus);
       case "/api/wallet/cex/summary": return json({ ...META, status: "ok", account: { total_usdt: 1450.57, assets: cexAssets, can_trade: false, can_withdraw: false, can_deposit: false } });
       case "/api/wallet/cex/openorders":
       case "/api/wallet/cex/allorders": return json({ ...META, status: "ok", orders: orders.filter((o) => !query.get("symbol") || o.symbol === query.get("symbol")) });
       case "/api/wallet/cex/trades": return json({ ...META, status: "ok", trades: trades.filter((r) => !query.get("symbol") || r.symbol === query.get("symbol")), aggregated: !query.get("symbol"), scanned: trades.map((r) => r.symbol) });
-      case "/api/orders/track": return json({ ...META, status: "ok", orders: [] });
+      case "/api/orders/track": return json({ ...META, status: "ok", orders: previewOrders });
       case "/api/wallet": return json({ ...META, cli: { installed: true, version: "DEMO（演示）" }, npm_available: false, status: walletStatus,
         daily_caps: { swap: "0 · 演示禁用", defi: "0 · 演示禁用", x402: "0 · 演示禁用" }, commands: [], install_cmd: "演示模式禁止安装" });
       case "/api/wallet/runtime": return json(walletRuntime);
