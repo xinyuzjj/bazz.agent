@@ -1031,6 +1031,20 @@ _MANIP_SPOT_SHARE_MIN = 0.05   # 现货成交额占比 < 5% → 现货无深度�
 _MANIP_CHURN_MAX = 10.0        # 合约24h成交额 / 持仓额 > 10x → 换手畸高（量能做出来的）
 _MANIP_NEG_FUNDING = -0.0015   # 费率 ≤ −0.15% → 空头在给多头付钱（挤空收割特征）
 
+# ---- v1.5.66 「买盘主导」阈值：修一条从上线起就没触发过的死规则 ----
+# 原阈值 **1.85** 是拍出来的，实际取不到。2026-09-16 实测：拉 40 个最高成交额合约的
+# `takerlongshortRatio` 最新值 → min 0.439 / 中位 1.110 / p90 1.426 / **max 1.790**，
+# `>= 1.85` 命中 **0 个**。而这条信号同时挂在四个地方（`_stage_of` 的点火判据、
+# `_radar_score` 的 +3、雷达依据文案、妖币引擎的「买盘主导」燃料项）——
+# 也就是说它**自上线起一次都没生效过**。这不是「市场没出现」，是阈值压根够不着。
+#
+# 改 **1.30**（主动买 ≈ 主动卖的 1.3 倍，实测命中 10/40 = top 25%）：
+# 既表示「确实有明显买盘在推」，又不会把日常波动误当信号。
+# ⚠️ 这是一处**会产生行为变化**的修正（点火判定更易命中、评分 +3 可能开始加分），
+# 不是纯显示修复 —— 之所以必须一起改，是因为同一个数在四个地方必须同义，
+# 只改一处等于制造口径漂移。
+_TAKER_BUY_DOMINANT = 1.30
+
 
 def _trigger_hit(t: dict, row: dict, range_ratio: float = 0.0) -> tuple:
     """触发层（v1.6.2）：返回 (命中?, 依据列表)。
@@ -1333,6 +1347,29 @@ def _confirm_factors(sym: str, funding_now: float) -> dict:
     return f
 
 
+def confirm_factors(sym: str, funding_now: float = None) -> dict:
+    """公开入口：给**单个币**补一次确认层因子（OI 四象限 / 大户比 / taker / 爆仓流）。
+
+    为什么需要这个入口 —— 雷达 v2 的确认层有 **24 币封顶**
+    （见 `get_radar_v2` 里 `cands = ...[:24]`，那是为了控制 REST 调用量）。
+    但雷达最终会输出 40+ 行，于是**过半的行根本没有 oi_chg24 / top_ratio / taker_ratio**，
+    而 `get_radar_v2` 又用 `cf.get(k, 0.0)` 兜底把它们写成了字面 **0.0** ——
+    消费方无法区分「真的没变化」和「压根没测」。
+
+    妖币引擎分析的是**单只币**，按需补这一次的代价只有 3~4 个 REST 调用，
+    却能让控盘度/燃料两轴从「大面积读成中性」变成有真实依据。
+    """
+    sym = (sym or "").strip().upper()
+    if not sym:
+        return {}
+    if funding_now is None:
+        try:
+            funding_now = float((get_funding_rates() or {}).get(sym) or 0.0)
+        except Exception:
+            funding_now = 0.0
+    return _confirm_factors(sym, funding_now)
+
+
 # ---------------- v1.6.3 妖币控盘代理层 ----------------
 
 def _manip_flags(d: dict) -> tuple:
@@ -1411,6 +1448,17 @@ def _manip_flags(d: dict) -> tuple:
     return (flags, "；".join(notes), penalty)
 
 
+def manip_flags(d: dict) -> tuple:
+    """公开别名：`_manip_flags`。
+
+    供妖币引擎在**按需补完确认层因子之后重算控盘指纹**。为什么需要重算 ——
+    雷达确认层有 24 币封顶，未被覆盖的行 `oi_usd` 为 0，于是
+    「换手畸高」（合约成交额 ÷ 持仓额 > 10x）与「拉升无爆仓」**永远算不出来**，
+    控盘轴就只能落到「未见控盘指纹」这一档，看起来像「每只币都一样」。
+    """
+    return _manip_flags(d)
+
+
 # ---------------- 语义层（生命周期阶段） ----------------
 
 def _stage_of_raw(d: dict) -> tuple:
@@ -1477,7 +1525,7 @@ def _stage_of_raw(d: dict) -> tuple:
     # 4) 点火：破位放量 / OI 脉冲 / taker 买比飙升
     if (d.get("breakout20") and (d.get("rvol_d", 0) or 0) >= 2.0) \
             or (oi15 >= 5.0 and chg24 >= 3.0) \
-            or (tr >= 1.85 and (d.get("rvol15", 0) or 0) >= 2.0 and chg24 >= 2.0):
+            or (tr >= _TAKER_BUY_DOMINANT and (d.get("rvol15", 0) or 0) >= 2.0 and chg24 >= 2.0):
         return ("IGNITION", "点火", "点火 · 破位启动", "LONG",
                 "放量突破平台 + 买盘主导（taker 买比 / OI 加速）；启动初期，小仓试错、破位即走")
     # 5) 吸筹：价平量升 / funding 转正 / OI 蓄力
@@ -1566,7 +1614,7 @@ def _radar_score(t: dict, f: dict, d: dict, cooldown: bool) -> int:
     tr_ = f.get("top_ratio") or 0.0
     if tr_ >= 1.5 or 0 < tr_ <= 0.7:
         s += 3.0
-    if (f.get("taker_ratio") or 0.0) >= 1.85:
+    if (f.get("taker_ratio") or 0.0) >= _TAKER_BUY_DOMINANT:
         s += 3.0
     lq = f.get("liq_5m", 0.0) or 0.0
     if lq >= 1e6:
@@ -1782,7 +1830,7 @@ def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_F
                 reasons.append(f"OI 24h {cf['oi_chg24']:+.1f}%")
             if abs(cf.get("funding", 0) or 0) >= 0.0015:
                 reasons.append(f"费率 {cf['funding'] * 100:+.3f}%")
-            if (cf.get("taker_ratio") or 0) >= 1.85:
+            if (cf.get("taker_ratio") or 0) >= _TAKER_BUY_DOMINANT:
                 reasons.append(f"taker {cf['taker_ratio']:.2f}")
             if (cf.get("top_ratio") or 0) >= 1.5 or 0 < (cf.get("top_ratio") or 1) <= 0.7:
                 reasons.append(f"大户比 {cf['top_ratio']:.2f}")
@@ -1795,6 +1843,14 @@ def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_F
         rows.append({
             "symbol": sym, "price": d["price"],
             "manip": mflags, "manip_note": mnote,
+            # v1.5.66：控盘代理的**原始底料**也出行。雷达确认层有 24 币封顶，未被覆盖的行
+            # `oi_usd` 恒为 0，于是「换手畸高 / 拉升无爆仓」两个指纹永远算不出来。
+            # 妖币引擎在按需补完确认层因子（oi_last）后，需要拿这几个原始值**重算**指纹；
+            # 不带上它们，那一半行就只能停在「未见控盘指纹」——这正是「每只币都一样」的来源。
+            "fut_qv": round(futq.get(sym, 0.0) or 0.0, 0),
+            "spot_qv": round(d.get("spot_qv", 0.0) or 0.0, 0),
+            "no_spot": bool(d.get("no_spot")),
+            "oi_usd": round(d.get("oi_usd", 0.0) or 0.0, 0),
             "change24_pct": round(d.get("chg24", 0.0), 2),
             # v1.6.4：OI 24h 提到行顶层（原来只在 factors 里），供登记判据与快照落库直接读。
             # 确认为空时写 **None（未测到）而不是 0** —— 0 会被判据误读成「持仓没动」。

@@ -65,6 +65,9 @@ LATE_CHG24 = 10.0   # == scanner._TRIG_LATE_CHG24：涨幅硬挡线，越过 = �
 MAX_OI24 = 5.0      # == scanner._TRIG_MAX_OI24：OI 24h 堆积线，越过 = 「你来晚了」
 MAX_CHG24 = 12.0    # == scanner._TRIG_MAX_CHG24：追高线，越过 → 剧本进 EXTENDED
 WARM_CHG24 = 3.0    # == scanner._TRIG_WARM_CHG24：暖启动段下沿 [3, 10)
+# == scanner._TAKER_BUY_DOMINANT：主动买 ≈ 主动卖 ×1.3 = 「买盘主导」燃料。
+# 原值 1.85 是条**死规则**（实测 40 个合约 max 1.79、命中 0），连同 scanner 四处一起修正。
+TAKER_BUY_DOMINANT = 1.30
 
 # ---------------- 剧本位阶表 ---------------- #
 # 主剧本七格，顺序即剧本顺序；SHORT_AMBUSH / ACTIVE 是旁支，不占格。
@@ -181,6 +184,106 @@ def _num(v):
 
 # ---------------- 取数：从雷达全量行里摘出这只币 ---------------- #
 
+# —— 确认层因子：按需补取（v1.5.66）—— #
+# 雷达 v2 的确认层**只覆盖前 24 个候选**（`get_radar_v2` 里 `cands = ...[:24]`，
+# 为了控 REST 调用量），而它最终会输出 40+ 行。没被覆盖的行里
+# `top_ratio` / `taker_ratio` 是 None、`oi_chg24` / `oi_pulse15` / `liq_5m` 被
+# `cf.get(k, 0.0)` 兜底写成字面 **0.0** —— 消费方分不清「真的没变化」和「压根没测」。
+#
+# 后果就是本引擎的燃料轴在这一半行上只能看到资金费率，于是**永远输出「中性」**，
+# 看起来像「每只币都一样」。本模块分析的是单只币，按需补一次确认层（3~4 个
+# REST 调用）就能拿到真实依据，代价可忽略。
+_CONFIRM_KEYS = ("oi_chg24", "oi_chg48", "oi_pulse15", "oi_last", "top_ratio",
+                 "top_mean48", "global_ratio", "taker_ratio", "taker_drop",
+                 "funding_peak", "funding_prev", "liq_5m", "liq_side", "liq_n5m")
+_confirm_cache: dict = {}
+_CONFIRM_TTL = 180.0        # 秒：同一只币 3 分钟内不重复补取
+
+
+def _ensure_factors(row: dict) -> str:
+    """确保这一行的确认层因子可用。返回来源：'radar' | 'fetched' | 'unavailable'。
+
+    判定「雷达已覆盖」的依据：`taker_ratio` / `top_ratio` 至少有一个不是 None。
+    这两个字段**只有确认层会写**，且不会被 `cf.get(k, 0.0)` 兜底成 0.0，所以是干净的信号。
+    """
+    f = row.setdefault("factors", {})
+    if f.get("taker_ratio") is not None or f.get("top_ratio") is not None:
+        row["_factors_source"] = "radar"
+        return "radar"
+    sym = (row.get("symbol") or "").upper()
+    if not sym:
+        row["_factors_source"] = "unavailable"
+        return "unavailable"
+    now = time.time()
+    hit = _confirm_cache.get(sym)
+    if hit and now - hit[0] < _CONFIRM_TTL:
+        f.update(hit[1])
+        row["_factors_source"] = "fetched"
+        return "fetched"
+    try:
+        import scanner
+        cf = scanner.confirm_factors(sym, _num(f.get("funding")) or 0.0)
+    except Exception:
+        row["_factors_source"] = "unavailable"
+        return "unavailable"
+    # `_confirm_factors` 永远返回一份带默认值的 dict —— 判「有没有真取到」
+    # 要看 taker/大户比/OI 持仓额这些**只在成功时才非空**的字段。
+    got = {k: cf.get(k) for k in _CONFIRM_KEYS if cf.get(k) is not None}
+    ok = (cf.get("taker_ratio") is not None or cf.get("top_ratio") is not None
+          or bool(cf.get("oi_last")))
+    if not ok:
+        # 区分「补取失败」与「这只币压根没有合约市场」——后者的 OI / 大户比 / taker
+        # **本就不存在**（现货盘不产生这些数据）。一律说「没测到」会让读者以为数据源坏了。
+        on_fut = True
+        try:
+            import scanner as _sc
+            on_fut = any((r.get("symbol") or "").upper() == sym
+                         for r in (_sc.futures_snapshot() or []))
+        except Exception:
+            pass
+        row["_no_futures"] = not on_fut
+        row["_factors_source"] = "unavailable"
+        return "unavailable"
+    f.update(got)
+    # 控盘指纹必须拿补到的 oi_last 重算一遍（否则「换手畸高」永远不成立）
+    row["oi_usd"] = round((cf.get("oi_last") or 0.0) * (_num(row.get("price")) or 0.0), 0)
+    row["oi_chg24"] = f.get("oi_chg24")
+    _recompute_manip(row)
+    _confirm_cache[sym] = (now, got)
+    row["_factors_source"] = "fetched"
+    return "fetched"
+
+
+def _recompute_manip(row: dict) -> None:
+    """补到确认层因子后**重算控盘指纹**（原地改 row 的 manip / manip_note）。
+
+    为什么要重算 —— 雷达行里的 `manip` 是在「最多 24 币走确认层」的前提下算出来的。
+    未被覆盖的行 `oi_usd` 恒为 0，而「换手畸高」的判据是 `合约成交额 ÷ 持仓额 > 10x`，
+    分母为 0 就**永远不成立**；`拉升无爆仓` 又依赖爆仓计数。
+    补到 `oi_last` 之后 `oi_usd = oi_last × price` 才有意义，必须重算 ——
+    否则控盘轴会**系统性漏报**，全落到「未见控盘指纹」这一档。
+    """
+    try:
+        import scanner
+        f = row.get("factors") or {}
+        mf, mn, _pen = scanner.manip_flags({
+            "price": _num(row.get("price")) or 0.0,
+            "fut_qv": _num(row.get("fut_qv")) or 0.0,
+            "spot_qv": _num(row.get("spot_qv")) or 0.0,
+            "oi_usd": _num(row.get("oi_usd")) or 0.0,
+            "funding": _num(f.get("funding")) or 0.0,
+            "chg24": _num(row.get("change24_pct")) or 0.0,
+            "liq_5m": _num(f.get("liq_5m")) or 0.0,
+            "liq_n5m": f.get("liq_n5m") or 0,
+            "no_spot": bool(row.get("no_spot")),
+        })
+    except Exception:
+        return
+    row["manip"] = mf
+    row["manip_note"] = mn
+    row["_manip_refreshed"] = True
+
+
 def _row_of(symbol: str) -> dict:
     """从 scanner.get_radar_v2 全量行里取 symbol 的行。
 
@@ -266,34 +369,70 @@ def _axis_control(row: dict) -> dict:
     """
     flags = list(row.get("manip") or [])
     note = row.get("manip_note") or ""
+    src = row.get("_factors_source") or "radar"
     STRUCT = ("无现货", "合约独大", "换手畸高")     # 结构性控盘指纹（盘本身被攥住）
     POSITION = ("空头付钱", "拉升无爆仓")           # 持仓结构指纹（对手盘被收割中）
     hit_struct = [f for f in flags if f in STRUCT]
     hit_pos = [f for f in flags if f in POSITION]
+    # 每个指纹的「人话」，用来说清**为什么算控盘**（只说名字等于没说）
+    WHY = {
+        "无现货": "只上合约、无现货抛压与价格锚",
+        "合约独大": "现货没深度，少量资金就能推价",
+        "换手畸高": "量能是做出来的，不是真金白银的方向押注",
+        "空头付钱": "空头在给多头交钱，拉升靠挤空",
+        "拉升无爆仓": "拉上去却没有对手盘出清，像假突破",
+    }
 
     if len(hit_struct) >= 2:
         grade, color = "重度控盘", (246, 70, 93)
-        reading = "盘本身被攥住了，价格是想画成什么就画成什么"
+        base = "盘本身被攥住了，价格是想画成什么就画成什么"
     elif hit_struct:
         grade, color = "明确控盘", (247, 147, 30)
-        reading = f"有结构性控盘指纹：{'、'.join(hit_struct)}"
+        base = "有结构性控盘指纹"
     elif hit_pos:
         grade, color = "持仓侧控盘", (240, 185, 11)
-        reading = f"盘面结构正常，但对手盘在挨打：{'、'.join(hit_pos)}"
+        base = "盘面结构正常，但对手盘在挨打"
+    elif row.get("_no_futures"):
+        grade, color = "未能判定", (148, 163, 184)
+        base = "该币只有现货、没有合约市场 —— 这是「不适用」，不是没测到"
+    elif src == "unavailable" and not flags:
+        grade, color = "未能判定", (148, 163, 184)
+        base = "确认层（OI / 持仓额）没补到，算不出换手畸高 —— 这是「没测」不是「没控盘」"
     else:
         grade, color = "未见控盘指纹", (148, 163, 184)
-        reading = "没有算出控盘痕迹 —— 可能是正常异动，也可能是代理指标看不到的控法"
+        base = "没算出控盘痕迹（也可能是代理指标看不到的控法）"
+
+    # —— 证据行 —— #
+    # 命中就列出命中的指纹及含义；没命中就**列出查了哪五项**。
+    # 「未见控盘指纹」这个档位原本所有币共用一句死文案，是「每只币都一样」的主因之一。
+    if flags:
+        evidence = "命中 " + " / ".join(f"{f}（{WHY.get(f, '')}）" for f in flags)
+    elif row.get("_no_futures"):
+        evidence = "OI / 持仓额 / 大户比 / 费率 本就不存在（无合约市场）"
+    else:
+        evidence = "未命中 无现货 / 合约独大 / 换手畸高 / 空头付钱 / 拉升无爆仓"
 
     # 数据缺失要如实说：缺了现货口径就算不出「现货无深度」，不能默认「没控盘」
     missing = []
-    if row.get("factors", {}).get("top_ratio") is None:
-        missing.append("大户多空比")
-    if not flags and (row.get("oi_chg24") is None):
-        missing.append("OI（确认因子未取到）")
+    if row.get("_no_futures"):
+        missing.append("合约口径数据（该币无合约市场，OI / 大户比 / taker 不适用）")
+    else:
+        if row.get("factors", {}).get("top_ratio") is None:
+            missing.append("大户多空比")
+        if not flags and (row.get("oi_chg24") is None):
+            missing.append("OI（确认因子未取到）")
+        if not row.get("oi_usd"):
+            missing.append("持仓额（换手畸高无法判定）")
+
+    # 现货币那条 base 里已经把「本就不存在」说透了，别再叠一句「未判定」
+    if missing and not row.get("_no_futures"):
+        evidence += "；" + "、".join(missing) + " 未判定"
 
     return {
         "flags": flags, "note": note, "grade": grade, "color": color,
-        "reading": reading, "struct": hit_struct, "pos": hit_pos,
+        "reading": f"{base}｜{evidence}",
+        "evidence": evidence,
+        "struct": hit_struct, "pos": hit_pos,
         "exit_discipline": "重度控盘/明确控盘" if hit_struct else "常规",
         "missing": missing,
     }
@@ -311,9 +450,16 @@ def _axis_fuel(row: dict) -> dict:
     f = row.get("factors") or {}
     fund = _num(f.get("funding"))
     fund_pk = _num(f.get("funding_peak"))
+    # ⚠️ 雷达对**未走确认层**的行会把 `factors.oi_chg24 / oi_pulse15` 写成字面 **0.0**
+    # （`cf.get(k, 0.0)` 兜底），而顶层 `oi_chg24` 是诚实的 None。
+    # 以顶层为准 —— 否则会把「压根没测」读成「持仓没动」，OI 相关燃料项全部静默失效。
     oi24 = _num(f.get("oi_chg24"))
+    if oi24 == 0.0 and row.get("oi_chg24") is None:
+        oi24 = None
     oi48 = None
     oi15 = _num(f.get("oi_pulse15"))
+    if oi15 == 0.0 and row.get("oi_chg24") is None:
+        oi15 = None
     top = _num(f.get("top_ratio"))
     glob = _num(f.get("global_ratio"))
     taker = _num(f.get("taker_ratio"))
@@ -350,7 +496,7 @@ def _axis_fuel(row: dict) -> dict:
         items.append(("大户拥挤", f"大户比 {top:.2f}（{side}）", 0,
                       "拥挤方向一旦反向就是连环爆，别跟大户站同一侧"))
 
-    if taker is not None and taker >= 1.85:
+    if taker is not None and taker >= TAKER_BUY_DOMINANT:
         items.append(("买盘主导", f"taker {taker:.2f}", +1, "主动买占优，突破有人真金白银在推"))
     if rvol15 is not None and rvol15 >= 3.0:
         items.append(("量能放大", f"RVOL15 {rvol15:.1f}x", +1, "短时窗量能显著放大"))
@@ -363,6 +509,10 @@ def _axis_fuel(row: dict) -> dict:
                       "空头在被清 —— 轧空的典型画面"))
 
     score = sum(x[2] for x in items)
+    # 「没测」和「测了是中性」必须分开说 —— 否则燃料轴会在没数据时也输出「中性」，
+    # 读者会以为「这只币真的没有燃料」，实际可能只是雷达确认层（24 币封顶）没覆盖到它。
+    src = row.get("_factors_source") or "radar"
+    fired = [i for i in items if i[2] != 0]
     if score >= 3:
         grade, color, gread = "满油", (14, 203, 129), "往上推的油是足的，且来源偏「对手盘在挨打」"
     elif score >= 1:
@@ -371,11 +521,51 @@ def _axis_fuel(row: dict) -> dict:
         grade, color, gread = "油尽（在放油）", (246, 70, 93), "燃料侧在反向，这是离场读数而非进场读数"
     elif score <= -1:
         grade, color, gread = "在放油", (234, 88, 12), "出现反向读数，仓位要更谨慎"
+    elif row.get("_no_futures") and not fired:
+        grade, color, gread = "未能判定", (148, 163, 184), (
+            "该币只有现货 —— 资金费率 / OI / 大户比**本就不存在**，燃料只能看量能与买盘")
+    elif src == "unavailable" and not fired:
+        grade, color, gread = "未能判定", (148, 163, 184), (
+            "确认层（OI / 大户比 / taker）没补到 —— 这是「没测」，不是「这只币没有燃料」")
     else:
         grade, color, gread = "中性", (148, 163, 184), "看不出明确的燃料结构"
 
+    # —— 证据行 —— #
+    # 无论命中与否都把**实测读数**写出来：这是「每只币看起来都一样」的解药。
+    # 同样一档「中性」，费率 +0.005% 的币和 −0.089% 的币在读数上一眼可辨。
+    #
+    # 「关注」= 记 0 分的条目（如大户拥挤）。它不构成燃料、不改档位，
+    # 但「检测到了却不显示」正是用户觉得「什么都没发生」的原因之一，所以单列出来。
+    watch = [i for i in items if i[2] == 0 and i[0] != "费率中性"]
+    watch_labels = {i[0] for i in watch}
+    measured = []
+    if fund is not None:
+        measured.append(f"费率 {fund * 100:+.3f}%")
+    if taker is not None:
+        measured.append(f"taker {taker:.2f}")
+    if rvol15:
+        measured.append(f"RVOL15 {rvol15:.1f}x")
+    if oi15 is not None:
+        measured.append(f"OI15 {oi15:+.1f}%")
+    if oi24:
+        measured.append(f"OI24 {oi24:+.1f}%")
+    if top is not None and "大户拥挤" not in watch_labels:
+        measured.append(f"大户比 {top:.2f}")
+
+    parts = []
+    if fired:
+        parts.append("命中 " + " / ".join(f"{lab} {rd}" for lab, rd, _s, _w in fired))
+    if watch:
+        parts.append("关注 " + " / ".join(f"{lab} {rd}" for lab, rd, _s, _w in watch))
+    if not fired:                       # 没命中燃料时把实测读数摊开
+        parts.append(("实测 " + " · ".join(measured)) if measured else "连费率都没取到")
+    evidence = "；".join(parts)
+    if src == "unavailable":
+        evidence += "（无合约市场）" if row.get("_no_futures") else "（确认层未覆盖本币）"
+
     return {"items": items, "score": score, "grade": grade, "color": color,
-            "reading": gread,
+            "reading": f"{gread}｜{evidence}",
+            "evidence": evidence,
             "raw": {"funding": fund, "funding_peak": fund_pk, "oi_chg24": oi24,
                     "oi_pulse15": oi15, "top_ratio": top, "global_ratio": glob,
                     "taker_ratio": taker, "rvol15": rvol15,
@@ -486,6 +676,10 @@ def analyze(symbol: str, market: str = "futures") -> dict:
             f"{sym} 不在妖币雷达视野内（未触发任何妖币特征、或被流动性/新币/刷量/冷却过滤层剔除）。"
             "本引擎只分析**真的异动币**；它是普通代币请改用 square-rich-post（SMC 引擎）。")}
 
+    # 雷达确认层有 24 币封顶，超过的行拿不到 OI/大户/taker —— 那些行会让燃料轴
+    # 永远读成「中性」。分析的是单只币，这里按需补一次（3~4 个 REST 调用）。
+    factors_source = _ensure_factors(row)
+
     sa = _axis_stage(row)
     ca = _axis_control(row)
     fa = _axis_fuel(row)
@@ -499,10 +693,14 @@ def analyze(symbol: str, market: str = "futures") -> dict:
     if not (row.get("factors") or {}).get("funding"):
         missing.append("资金费率")
     missing += ca["missing"]
+    if factors_source == "unavailable":
+        missing.append("确认层（OI / 大户比 / taker）补取失败 → 控盘与燃料只按能算的项判，"
+                       "「中性 / 未见控盘指纹」此时可能是「没测」而不是「真没有」")
 
     return {
         "ok": True, "symbol": sym, "market": market, "engine": "monster-v1",
         "row": row,
+        "factors_source": factors_source,
         "stage_axis": sa, "control_axis": ca, "fuel_axis": fa,
         "verdict": vkey, "verdict_line": vline, "verdict_color": vcolor,
         "verdict_label": VERDICTS[vkey][0],
@@ -1044,6 +1242,7 @@ def compose(symbol: str, market: str = "futures", style: str = None) -> dict:
     with open(meta_f, "w", encoding="utf-8") as fh:
         json.dump({"symbol": sym, "market": market, "ts": int(time.time()),
                    "engine": "monster", "stats": stats, "tags": art["tags"],
+                   "factors_source": an.get("factors_source"),
                    "title": art["title"], "style": art["style"],
                    "style_label": art["style_label"], "plan": plan,
                    "axes": {"stage": sa["stage"], "stage_label": sa["label"],
