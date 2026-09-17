@@ -20,7 +20,7 @@
 > （`HTTP_PROXY/HTTPS_PROXY/http_proxy/https_proxy = http://127.0.0.1:7897`），
 > 不挂会报 `schannel: failed to receive handshake` / `CONNECT tunnel failed 502`。
 >
-> ⚠️ 上一版本文档停留在 v1.5.47，与代码实际差 14 个版本。**本文档已按 v1.5.66 全量校准（2026-09-16）。**
+> ⚠️ 更早的文档曾长期停留在 v1.5.47。**本文档已按 v1.7.1 全量校准（2026-09-17）。**
 > 后续发展方向见 **`outputs/roadmap-v1.5.61.html`**（P0 校准收口 → P1 战绩回灌 → P2 交易闭环 → P3 产能与工程债；
 > `outputs/` 已在 `.gitignore` 里，属本地产物、不入库）。
 
