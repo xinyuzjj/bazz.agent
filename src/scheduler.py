@@ -195,8 +195,10 @@ def _run_meme_scan():
         from scanner import get_ignition_coins, get_monster_coins
         # v1.5.28（F13 修复）：此前误传 limit=8（实参是 force/top_n/min_qv）→ TypeError，
         # 且返回值是 dict{coins:[...]} 而非 list，直接迭代取不到行。现按真实契约调用。
-        ign = (get_ignition_coins() or {}).get("coins") or []
-        tkf = (get_monster_coins() or {}).get("coins") or []
+        ign_p = get_ignition_coins() or {}
+        tkf_p = get_monster_coins() or {}
+        ign = ign_p.get("coins") or []
+        tkf = tkf_p.get("coins") or []
     except Exception as e:
         return f"（妖币雷达暂不可用：{e}）"
 
@@ -208,13 +210,38 @@ def _run_meme_scan():
             sym = r.get("symbol", "?")
             px = r.get("price", "n/a")
             qv = r.get("quote_volume", 0) or 0
-            ch = r.get("change_pct", 0) or 0
-            head.append(f"- **{sym}** · 价 {px} · 24h {ch:+.2f}% · 量 {qv:,.0f} USDT")
+            # v1.6.6 修复：此前读 `change_pct`，但**两个引擎都不产出这个字段** ——
+            # v2 雷达行写的是 `change24_pct`（scanner.py 雷达行构造），v1 兜底行
+            # （`_analyze_takeoff` / `_analyze_ignition`）**压根没有 24h 字段**，
+            # 只有 change7d_pct / change30d_pct。于是每一行的 24h 涨幅恒显示 +0.00%，
+            # 而「24h 涨幅」正是妖币判读的核心读数（硬挡线就是 chg24 ≥ 10%）。
+            # 现按引擎分别取数，并把「没有该口径」显式写成 n/a，不再伪装成 0。
+            ch24 = r.get("change24_pct")
+            if isinstance(ch24, (int, float)):
+                ch_s = f"24h {float(ch24):+.2f}%"
+            else:
+                ch7 = r.get("change7d_pct")
+                ch_s = f"7d {float(ch7):+.2f}%" if isinstance(ch7, (int, float)) else "24h n/a"
+            head.append(f"- **{sym}** · 价 {px} · {ch_s} · 量 {qv:,.0f} USDT")
         return "\n".join(head)
+
+    # v1.6.6（问题清单 #8）：v2 引擎异常时会**静默降级** v1 兜底，而 v1 是完全不同的
+    # 算法（日 K 35/90 日窗口，且没有涨幅硬挡线与 OI 堆积线）。此前消费方只读 coins、
+    # 从不检查 engine，用户看不出这一天的简报换了口径。现在显式标注。
+    degraded = any((p.get("engine") or "v2") == "v1" for p in (ign_p, tkf_p))
 
     lines = [
         "### 🐸 妖币雷达日报 · " + time.strftime("%Y-%m-%d %H:%M"),
         "",
+    ]
+    if degraded:
+        lines += [
+            "> ⚠️ **已回退日 K 兜底口径（engine=v1）**：本次 v2 四层模型未产出，"
+            "下列结果来自 v1 日 K 窗口算法，**没有涨幅硬挡线与 OI 堆积线**，"
+            "口径与页面/对话中的 v2 雷达不一致，请勿混用。",
+            "",
+        ]
+    lines += [
         "**启动前埋伏（ignition）**",
         _fmt(ign, "启动前"),
         "",

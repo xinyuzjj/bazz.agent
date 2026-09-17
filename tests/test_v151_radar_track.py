@@ -196,11 +196,51 @@ def test_view_and_stats():
     check("stats: 对账 total=各态之和",
           st["total"] == st["pending"] + st["moon"] + st["dump"] + st["expired"], str(st))
     check("stats: moon/dump/expired 各 ≥1", st["moon"] >= 1 and st["dump"] >= 1 and st["expired"] >= 1)
-    check("view: 结构完整", set(v) == {"pending", "history", "stats", "ts"}
-          and len(v["history"]) == 6 and len(v["pending"]) == 2, str(st))
+    # ---- v1.6.6（问题清单 #3）：stats 默认只统计 LONG，历史空单不再污染总胜率 ----
+    # 本文件建了 2 笔 SHORT（SHRTUSDT → dump / SHRT2USDT → moon）。修复前它们会被计入
+    # moon/dump 总数，使总胜率与 IGNITION 档胜率系统性偏低，而 crosstab / decisions
+    # 走的是纯 LONG 口径 —— 三个「体检」数字对不上且用户无法判断原因。
+    check("stats: 默认口径 direction=LONG", st.get("direction") == "LONG", str(st.get("direction")))
+    check("stats: LONG 口径已排除空单（moon=1 而非 2）", st["moon"] == 1, str(st["moon"]))
+    bd = st.get("by_direction") or {}
+    check("stats: by_direction 把被排除的 SHORT 显式列出（1 moon / 1 dump）",
+          (bd.get("SHORT") or {}).get("total") == 2
+          and (bd.get("SHORT") or {}).get("moon") == 1
+          and (bd.get("SHORT") or {}).get("dump") == 1, str(bd))
+    st_all = state.radar_tracks_stats("ALL")
+    check("stats: direction=ALL 回到全量口径（= LONG + SHORT）",
+          st_all["total"] == st["total"] + 2, f'{st_all["total"]} vs {st["total"]}')
+    check("stats: direction=None 等价于全量",
+          state.radar_tracks_stats(None)["total"] == st_all["total"])
+    check("view: 结构完整", {"pending", "history", "stats", "ts"} <= set(v)
+          and len(v["history"]) == 6 and len(v["pending"]) == 2, str(sorted(v)))
+    # ---- v1.6.6（问题清单 #12）：展示条数与统计口径必须能对账 ----
+    check("view: history 展示数与全量数一并给出",
+          v.get("history_total") == 6 and v.get("history_shown") == 6
+          and v.get("history_shown_limit") == 50,
+          str({k: v.get(k) for k in ("history_total", "history_shown", "history_shown_limit")}))
+    check("view: pending_total 与 pending 列表一致",
+          v.get("pending_total") == len(v["pending"]), str(v.get("pending_total")))
     check("view: history 按 closed_at 降序",
           all(v["history"][i]["closed_at"] >= v["history"][i + 1]["closed_at"]
               for i in range(len(v["history"]) - 1)))
+
+
+def test_pending_list_uncapped():
+    """v1.6.6（问题清单 #13）：pending 查询必须**不受 LIMIT 约束**。
+
+    修复前 `radar_tracks_list` 无条件 `LIMIT 200` + `ORDER BY found_at DESC`：
+    pending 超过 200 笔时被截掉的恰好是**最早登记**的（最接近 7 天到期），
+    而 `_tick` 也走这个查询 → 被截断的单永不更新、到期也不会被判 expired。
+    这里直接验契约：显式 limit 生效，默认（0）不限制。
+    """
+    check("list: 显式 limit 生效",
+          len(state.radar_tracks_list("pending", limit=1)) == 1)
+    check("list: 默认 limit=0 不限制（≥ 全量）",
+          len(state.radar_tracks_list("pending")) >= len(state.radar_tracks_list("pending", limit=1)))
+    check("list: 计数函数与列表一致",
+          state.radar_tracks_count("pending") == len(state.radar_tracks_list("pending"))
+          and state.radar_tracks_count("closed") == len(state.radar_tracks_list("closed")))
 
 
 if __name__ == "__main__":
@@ -212,6 +252,7 @@ if __name__ == "__main__":
     test_expired()
     test_closed_not_tracked()
     test_view_and_stats()
+    test_pending_list_uncapped()
     print()
     if FAILS:
         print(f"✗ {len(FAILS)} 项失败：{FAILS}")

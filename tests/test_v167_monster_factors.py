@@ -20,9 +20,12 @@
 
 运行：.venv/Scripts/python.exe tests/test_v167_monster_factors.py
 """
+import ast
+import io
 import os
 import sys
 import tempfile
+import tokenize
 
 # 必须在 import 任何 src 模块之前：workspace.py import 时读该 env 决定库位置
 os.environ["BAZZ_WORKSPACE"] = tempfile.mkdtemp(prefix="bazz_test_v167_")
@@ -66,18 +69,59 @@ def test_taker_threshold_mirror():
           f"当前 {M.TAKER_BUY_DOMINANT}")
 
 
+def _docstring_lines(src: str) -> set:
+    """模块/类/函数级 docstring 覆盖的行号集合。"""
+    lines = set()
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return lines
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            body = getattr(node, "body", None) or []
+            if (body and isinstance(body[0], ast.Expr)
+                    and isinstance(body[0].value, ast.Constant)
+                    and isinstance(body[0].value.value, str)):
+                v = body[0].value
+                lines.update(range(v.lineno, (v.end_lineno or v.lineno) + 1))
+    return lines
+
+
+def _dead_185_hits(src: str) -> list:
+    """找出**仍在用** 1.85 的位置（注释与 docstring 属文档，允许保留历史说明）。
+
+    判据基于 token 而非行文本，避免把文档里的历史说明误判为「还在用」；
+    同时比按行切 `#` 更严：字符串里的配置/默认值（如 `"1.85"`）也算命中。
+      · NUMBER 字面量 == 1.85          → 命中（真的当阈值在用）
+      · 非 docstring 的字符串含 1.85   → 命中（配置串里在用）
+      · COMMENT / docstring            → 放过（只是解释「原来为什么是 1.85」）
+    """
+    doc_lines = _docstring_lines(src)
+    hits = []
+    for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+        if tok.type == tokenize.NUMBER and tok.string.strip() == "1.85":
+            hits.append(f"{tok.start[0]}: {tok.line.strip()[:90]}")
+        elif (tok.type == tokenize.STRING and "1.85" in tok.string
+                and tok.start[0] not in doc_lines):
+            hits.append(f"{tok.start[0]}: {tok.line.strip()[:90]}")
+    return hits
+
+
 def test_no_dead_185_left():
-    sc = _src("scanner.py")
-    # 允许出现在注释/文档里（解释「原来为什么是 1.85」），但**代码里不许再有**
-    bad = []
-    for i, ln in enumerate(sc.splitlines(), 1):
-        code = ln.split("#", 1)[0]
-        if "1.85" in code:
-            bad.append(f"{i}: {ln.strip()[:90]}")
+    # 护栏自检：先证明这把尺子既抓得住、又不误伤（防止「为了让测试过而放水」）
+    check("护栏自检：代码里的 1.85 字面量会被抓到",
+          len(_dead_185_hits("def f():\n    return 1.85\n")) == 1)
+    check("护栏自检：配置串里的 \"1.85\" 会被抓到",
+          len(_dead_185_hits('X = float("1.85")\n')) == 1)
+    check("护栏自检：docstring 里的 1.85 被放过（属文档）",
+          _dead_185_hits('def f():\n    """原阈值 1.85 是拍出来的"""\n    return 1.0\n') == [])
+    check("护栏自检：注释里的 1.85 被放过（属文档）",
+          _dead_185_hits("# 1.85 是拍出来的\nX = 1.0\n") == [])
+
+    bad = _dead_185_hits(_src("scanner.py"))
     check("scanner 代码里不再出现在用的 1.85 阈值", not bad, " | ".join(bad))
-    check("monster 代码里不再出现在用的 1.85 阈值",
-          not [ln for ln in _src("square_monster.py").splitlines()
-               if "1.85" in ln.split("#", 1)[0]])
+    bad_m = _dead_185_hits(_src("square_monster.py"))
+    check("monster 代码里不再出现在用的 1.85 阈值", not bad_m, " | ".join(bad_m))
 
 
 # ============================================================

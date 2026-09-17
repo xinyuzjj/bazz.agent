@@ -203,6 +203,22 @@ def _liq_burst_check() -> None:
                       top=[{"symbol": s, "quote": round(q, 0)} for s, q in top])
 
 
+def liq_available() -> bool:
+    """强平流是否**真的在推数据**（v1.6.6，问题清单 D1）。
+
+    判据是「收到过帧」而不是「连接建立成功」—— 2026-09 实测：`fstream.binance.com`
+    上 `!forceOrder@arr` **连得上但不推流**（观察 109 秒 0 帧；同域 `btcusdt@depth@100ms`
+    10 秒收 5 帧，对照组正常）。也就是 `connected=True` 并不代表有数据。
+
+    这条判据存在的意义：`liq_5m` 被用在**三个**地方（reasons 的「爆仓 $X M/5m」、
+    `_radar_score` 的加分、`radar_tracker._reversal_now` 的反转因子），而它在不可用时
+    恒为 `0.0` —— 与「真的没有爆仓」**完全无法区分**，属于静默失效。
+    此前注释写「面板显示重连中即可，无副作用」，但消费方把它当成 0 用，并不是无副作用。
+    """
+    with _lock:
+        return int((_stats.get("liq") or {}).get("msgs") or 0) > 0
+
+
 def liq_recent(limit: int = 80) -> list:
     """最近强平单（新→旧）。"""
     if limit <= 0:
@@ -211,10 +227,14 @@ def liq_recent(limit: int = 80) -> list:
 
 
 def liq_stats(window: int = 300) -> dict:
-    """窗口内强平统计（默认 5 分钟）：多/空爆笔数与金额。"""
+    """窗口内强平统计（默认 5 分钟）：多/空爆笔数与金额。
+
+    v1.6.6：附 `available` —— 为 False 时上述各字段**无意义**（不是「零爆仓」，
+    是「数据源没推流」），消费方必须据此区分「没测到」与「测得是 0」。
+    """
     now = time.time()
     out = {"long_count": 0, "short_count": 0, "long_quote": 0.0, "short_quote": 0.0,
-           "total_quote": 0.0, "window": window}
+           "total_quote": 0.0, "window": window, "available": liq_available()}
     for rec in reversed(_liq_buf):
         if now - rec["ts"] > window:
             break
@@ -231,9 +251,16 @@ def liq_stats(window: int = 300) -> dict:
 
 
 def liq_symbol_stats(symbol: str, window: int = 300) -> dict:
-    """单币窗口内强平统计（scanner v2 确认层消费）：count/quote/side（主导方向）。"""
+    """单币窗口内强平统计（scanner v2 确认层消费）：count/quote/side（主导方向）。
+
+    v1.6.6：附 `available`（见 `liq_available`）。`quote` 为 `None` 表示**未测到**，
+    与 `0.0`（测得没有爆仓）严格区分 —— 上游据此决定写 None 还是写数字。
+    """
     sym = str(symbol).upper()
     now = time.time()
+    avail = liq_available()
+    if not avail:
+        return {"count": 0, "quote": None, "side": "", "available": False}
     count = 0
     lq = sq = 0.0
     for rec in reversed(_liq_buf):
@@ -251,7 +278,7 @@ def liq_symbol_stats(symbol: str, window: int = 300) -> dict:
         side = "long"
     elif sq > lq and sq > 0:
         side = "short"
-    return {"count": count, "quote": round(lq + sq, 0), "side": side}
+    return {"count": count, "quote": round(lq + sq, 0), "side": side, "available": True}
 
 
 # ---------------- 解析 ----------------

@@ -36,7 +36,51 @@ export type RadarRow = {
   reasons?: string[];
   // v1.6.3 控盘代理（妖币识别）：命中即说明这是庄家剧本盘 —— 做多侧已被后端降级为 WATCH
   manip?: string[]; manip_note?: string;
+  // v1.6.9（#6）：确认层只覆盖前 24 个候选 —— 未覆盖的行 oi_last=None → oi_usd=0，
+  // 于是「换手畸高」判据分母为 0、永不成立。带上 fut_qv 才能在 UI 上把
+  // 「没测到」与「真没有」分开（oi_usd==0 且 fut_qv>0 ⇒ 控盘未测）。
+  oi_usd?: number; fut_qv?: number; spot_qv?: number; no_spot?: boolean;
+  // v1.6.9（#5）：已越过 _TRIG_LATE_CHG24 启动窗口 —— 后端只在展示层改写
+  // tag/stage_label/side，stage 状态机键不动，前端据此单独渲染 pill。
+  late?: boolean;
+  // v1.6.9（D1）：爆仓流是否真的接上了。false ⇒ 爆仓类因子一律「未测」，不得当 0。
+  liq_available?: boolean | null;
 };
+// v1.6.9（#2）：阈值由后端 payload 单一来源下发，前端不再硬编码。
+// 病根：后端 v1.5.66 把 _TAKER_BUY_DOMINANT 从 1.85 修到 1.30，前端摘要行仍写 1.5 →
+// taker ∈ [1.30, 1.50) 的币「买盘主导」信号在 UI 上完全不可见（后端 reasons 有、前端 bits 没有，
+// 而 `bits.length ? bits.join() : note` 的短路又让 note 也不显示）→「分数为什么高」解释不通。
+export type RadarThresholds = Record<string, number | undefined>;
+// 兜底值：仅在 payload 缺 thresholds（旧后端 / 预览 mock）时使用，取值与后端常量保持一致
+export const FALLBACK_TAKER_BUY_DOMINANT = 1.30;
+
+// v1.6.9（档一 §16）：阈值命中率监控快照（后端 scanner.threshold_hitrate()）。
+// `dead_rules` 非空 = 样本已够（≥ min_rows 行）但某阈值一次都没命中 ——
+// 这正是 `_TAKER_BUY_DOMINANT = 1.85` 当年的形态（自上线起命中 0 个却在四处被使用）。
+// 这类规则不报错、不让测试变红，只能靠命中率暴露，所以必须在界面上说出来。
+export type RadarThresholdHits = {
+  scans?: number; rows?: number; since?: number; min_rows?: number;
+  dead_rules?: string[];
+  rules?: Record<string, { desc?: string; hits?: number; rows?: number; rate?: number; dead?: boolean }>;
+};
+
+// v1.6.9（档二 C6）：本地时序库体检快照（后端 scanner.ts_store_view() / state.ts_stats()）。
+// 存在的意义与 §16 同源：**让「到底存没存下来」可见**。
+// 只写不看的落盘等于没有落盘 —— 出问题时（表建了但一直写 0 行）没有任何地方会说。
+// `last_written` 是最近一轮扫描真正写入的行数；`rows` 是库里累计行数。
+export type RadarTsStore = {
+  rows?: number; symbols?: number; oldest?: number; newest?: number;
+  keep_days?: number; last_written?: number; last_ts?: number;
+};
+
+// v1.7.1（C3 延迟治理）：雷达数据的**新鲜度**（后端 `_with_age()` 下发）。
+// 为什么不让前端自己拿 `Date.now() - updated_at*1000` 算：
+//   ① 本地时钟与服务端有偏差时直接算错，而错的方向不固定；
+//   ② 前端不知道**本轮生效的** TTL（可被 env `BAZZ_RADAR2_TTL` 覆盖），
+//      于是无法判断「这个数字是不是已经过期」，只能一直显示得像新鲜的；
+//   ③ 三处消费点各算各的，迟早不一致。
+// `age_sec` = 读的时刻 − 本轮扫描时刻；`stale` = `age_sec` 是否超过本轮 TTL。
+export type RadarFresh = { age_sec?: number; stale?: boolean; ttl?: number };
 export type OrderMode = "spot-long" | "futures-long" | "futures-short";
 
 // v1.5.0 语义层阶段 → pill 样式（吸筹/点火=绿，垂直拉升=金，派发顶/崩跌=红，沉寂/异动=灰）
@@ -83,7 +127,12 @@ export type TrackStats = {
   total?: number; pending?: number; moon?: number; dump?: number; expired?: number;
   by_stage?: Record<string, StageStat>; stages?: [string, StageStat][];
 };
-export type TracksData = { pending: TrackRow[]; history: TrackRow[]; stats?: TrackStats; ts?: number; error?: string };
+export type TracksData = {
+  pending: TrackRow[]; history: TrackRow[]; stats?: TrackStats; ts?: number; error?: string;
+  // v1.6.9（#12/#13）：pending/history 的**全量**条数 vs 实际下发的展示条数。
+  // 顶部计数基于全量，历史表只列 HISTORY_SHOWN 条 —— 两个数必须都能拿到才能注明口径。
+  pending_total?: number; history_total?: number; history_shown?: number; history_shown_limit?: number;
+};
 export const OUTCOME_META: Record<string, { label: string; cls: string }> = {
   moon:    { label: "markets.outcomeMoon", cls: "pill-green" },
   dump:    { label: "markets.outcomeDump", cls: "pill-red" },
@@ -131,6 +180,22 @@ export const fmtVol = (v: number) => {
   return `$${v.toFixed(0)}`;
 };
 export const fmtRate = (r?: number) => r === undefined ? "—" : `${r > 0 ? "+" : ""}${(r * 100).toFixed(4)}%`;
+// v1.6.9（档二 C6）：**计数**用的紧凑格式。刻意不复用 `fmtVol` —— 后者带 `$` 前缀（金额口径），
+// 拿它显示「时序库行数」会把行数印成美元，正是本项目反复出现的「口径被静默换掉」那类毛病。
+export const fmtCount = (v: number) => {
+  const n = Number(v) || 0;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  return String(Math.round(n));
+};
+// v1.7.1（C3）：陈旧时长（秒）→ 人读的紧凑串。0/负 → "0s"（刚算完，不是「无数据」）。
+// 只做单位换算，不在这里判「算不算陈旧」—— 那是后端 `stale` 的职责（它才知道本轮 TTL）。
+export const fmtAge = (sec?: number) => {
+  const s = Math.max(0, Math.round(Number(sec) || 0));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60), r = s % 60;
+  return r ? `${m}m${r}s` : `${m}m`;
+};
 export const baseName = (s: string) => s.replace(/USDT$/, "");
 
 /* ---------------- v1.5.3 可视化：价格闪烁 / 24h 区间条 / 侧栏 bar 行 ---------------- */
@@ -363,9 +428,11 @@ export const EquityCard = memo(function EquityCard({ e, onDetail }: {
 
 /* ---------------- 妖币雷达行 ---------------- */
 
-export const RadarLine = memo(function RadarLine({ m, mode, onTrade, onOrder, onAnalyze, onDetail }: {
+export const RadarLine = memo(function RadarLine({ m, mode, th, onTrade, onOrder, onAnalyze, onDetail }: {
   m: RadarRow;
   mode: "ignition" | "takeoff";
+  // v1.6.9（#2）：后端下发的阈值（缺失时退回 FALLBACK_TAKER_BUY_DOMINANT）
+  th?: RadarThresholds;
   onTrade?: (symbol: string) => void;
   onOrder?: (symbol: string, mode: OrderMode) => void;
   onAnalyze?: (symbol: string) => void;
@@ -384,9 +451,17 @@ export const RadarLine = memo(function RadarLine({ m, mode, onTrade, onOrder, on
   if (f.funding != null && Math.abs(f.funding) >= 0.0015) bits.push(`费率${f.funding > 0 ? "+" : ""}${(f.funding * 100).toFixed(3)}%`);
   if (f.oi_chg24 != null && Math.abs(f.oi_chg24) >= 5) bits.push(`OI ${f.oi_chg24 > 0 ? "+" : ""}${f.oi_chg24.toFixed(0)}%`);
   if (f.top_ratio != null) bits.push(`大户 ${f.top_ratio.toFixed(2)}`);
-  if (f.taker_ratio != null && f.taker_ratio >= 1.5) bits.push(`taker ${f.taker_ratio.toFixed(2)}`);
+  // v1.6.9（#2）：阈值改读后端下发值（原为硬编码 1.5，比后端 1.30 严，挡掉了 1.30~1.50 的信号）
+  const tkMin = th?.taker_buy_dominant ?? FALLBACK_TAKER_BUY_DOMINANT;
+  if (f.taker_ratio != null && f.taker_ratio >= tkMin) bits.push(`taker ${f.taker_ratio.toFixed(2)}`);
   if (f.liq_5m != null && f.liq_5m >= 3e5) bits.push(`爆 $${(f.liq_5m / 1e6).toFixed(1)}M${f.liq_side === "long" ? "多" : f.liq_side === "short" ? "空" : ""}`);
   const stageCls = m.stage ? STAGE_META[m.stage]?.cls ?? "pill-dim" : "pill-dim";
+  // v1.6.9（D1）：爆仓流没接上时，摘要行必须显式说明 —— 否则用户看到的「没有爆仓 bit」
+  // 会被理解成「真的没爆仓」，而实际是「这个数据源整体不可用」。
+  const bitsText = bits.length ? bits.join(" · ") : m.note;
+  const rowTip = m.liq_available === false ? `${bitsText} ｜ ${t("markets.liqUnavailableTip")}` : bitsText;
+  // v1.6.9（#6）：控盘指纹为空 + oi_usd=0 但合约有成交额 ⇒ 这一行压根没进确认层
+  const manipUnmeasured = !m.manip?.length && (m.oi_usd ?? 0) === 0 && (m.fut_qv ?? 0) > 0;
   return (
     <div onClick={() => onDetail?.(m.symbol, m)} title={t("markets.detail.open")}
       className={`grid items-center px-4 py-2.5 border-b border-line/60 last:border-0 transition-colors cursor-pointer group
@@ -396,8 +471,19 @@ export const RadarLine = memo(function RadarLine({ m, mode, onTrade, onOrder, on
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-mono font-semibold text-ink group-hover:text-gold">{baseName(m.symbol)}</span>
           <span className="font-mono text-[10.5px] text-ink-mute">/USDT</span>
-          {m.stage_label && <span className={`pill ${stageCls} text-[10.5px]`} title={m.tag}>{m.stage_label}</span>}
-          {!m.stage_label && <span className={`pill ${m.side === "LONG" ? "pill-green" : m.side === "WATCH_SHORT" ? "pill-red" : "pill-dim"} text-[10.5px]`} title={m.tag}>{m.tag}</span>}
+          {/* v1.6.9（#5）：late 时 stage 仍是 ACCUMULATION/IGNITION（状态机键不改），
+              若沿用 STAGE_META[stage].cls 会出现「绿标 + 追高语义」的自相矛盾。
+              这里按 late 单独渲染金标，文案走 i18n（后端 stage_label 是中文字面量，
+              直接用它会让英文界面串中文）。 */}
+          {m.late ? (
+            <span className="pill pill-gold text-[10.5px]" title={t("markets.stageStartedTip")}>
+              {t("markets.stageStarted")}
+            </span>
+          ) : m.stage_label ? (
+            <span className={`pill ${stageCls} text-[10.5px]`} title={m.tag}>{m.stage_label}</span>
+          ) : (
+            <span className={`pill ${m.side === "LONG" ? "pill-green" : m.side === "WATCH_SHORT" ? "pill-red" : "pill-dim"} text-[10.5px]`} title={m.tag}>{m.tag}</span>
+          )}
           <span className="pill pill-dim text-[10.5px]" title={t("markets.scoreTitle")}>{t("markets.scorePrefix")}{m.score}</span>
           {m.cooldown && <span className="pill pill-dim text-[10.5px]" title={t("markets.cooldownTitle")}>{t("markets.cooldown")}</span>}
           {!!m.manip?.length && (
@@ -405,9 +491,23 @@ export const RadarLine = memo(function RadarLine({ m, mode, onTrade, onOrder, on
               控盘 {m.manip.join("/")}
             </span>
           )}
+          {/* v1.6.9（#6）：控盘指纹为空 ≠ 干净。确认层只覆盖前 24 个候选，
+              第 24 名之后 oi_usd=0 → 「换手畸高」分母为 0 永不成立 → 系统性漏报。
+              这里显式标「控盘未测」，让用户知道该点「分析」拿准确结论。 */}
+          {manipUnmeasured && (
+            <span className="pill pill-dim text-[10.5px]" title={t("markets.manipUnmeasuredTip")}>
+              {t("markets.manipUnmeasured")}
+            </span>
+          )}
+          {/* v1.6.9（D1）：爆仓流未接入 —— 面板级横幅之外，行级也给一个可悬浮的锚点 */}
+          {m.liq_available === false && (
+            <span className="pill pill-dim text-[10.5px]" title={t("markets.liqUnavailableTip")}>
+              {t("markets.liqUnavailable")}
+            </span>
+          )}
           {isIgn && m.floor_rising && <span className="pill pill-dim text-[10.5px]" title={t("markets.floorRisingTitle")}>{t("markets.floorRising")}</span>}
         </div>
-        <div className="font-mono text-[11px] text-ink-mute truncate mt-0.5" title={bits.length ? bits.join(" · ") : m.note}>
+        <div className="font-mono text-[11px] text-ink-mute truncate mt-0.5" title={rowTip}>
           {bits.length ? bits.join(" · ") : m.note}
         </div>
       </div>

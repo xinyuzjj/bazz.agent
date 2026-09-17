@@ -374,6 +374,36 @@ export const zh: Dict = {
   "markets.stage.DORMANT": "沉寂",
   "markets.stage.ACTIVE": "异动",
   "markets.stage.SHORT_AMBUSH": "做空埋伏",
+  // v1.6.9（#5）：10%~12% 标签断层 —— 语义层仍判「点火/吸筹」，但已越过 _TRIG_LATE_CHG24(10%)
+  // 启动窗口，被归进追高组。后端只在展示层改写 stage_label/tag/side（stage 不动，因为
+  // 它是状态机键），前端用 late 标志单独渲染 pill，避免「点火」绿标配「追高」语义。
+  "markets.stageStarted": "已启动 · 追高区",
+  "markets.stageStartedTip": "语义层判定未变，但 24h 涨幅已越过启动窗口（≥10%）——进场时机已过，仅作观察",
+  // v1.6.9（#6）：确认层只覆盖前 24 个候选，第 24 名之后的行 oi_last 为 None → oi_usd=0，
+  // 而「换手畸高」判据（fut_qv / oi_usd > 10）分母为 0 永不成立 → 控盘指纹**系统性漏报**。
+  // 必须把「没测」与「测了没有」分开显示，否则用户会把漏报当成「干净」。
+  "markets.manipUnmeasured": "控盘未测",
+  "markets.manipUnmeasuredTip": "该行未进入确认层（前 24 币封顶），换手畸高 / 拉升无爆仓等控盘判据的分母缺失 —— 是「没测到」而非「真没有」。要看准确结论请点「分析」（妖币引擎会按需补取并重算）",
+  // v1.6.9（D1）：币安 !forceOrder@arr 在 fstream 实测不推流，且无公开 REST 兜底
+  // （allForceOrders 404 / forceOrders 需 key 且只回本账户）→ 爆仓类因子整体不可用。
+  // 此前 liq_5m 恒为 0.0，「真没爆仓」与「没接上」在界面上无法区分。
+  "markets.liqUnavailable": "爆仓流未接入",
+  "markets.liqUnavailableTip": "币安强平流（!forceOrder@arr）在本环境不推流，且无公开 REST 兜底 → 爆仓量 / 拉升无爆仓等因子整体不可用，已按「未测」处理（不参与判定，也不显示为 0）",
+  // v1.6.9（档一 §16）：阈值命中率监控 —— 让「够不着的死规则」在界面上可见。
+  // 缘起：_TAKER_BUY_DOMINANT = 1.85 自上线起命中 0 个，却在四处被使用；
+  // 这类规则不报错、不让测试变红，只能靠命中率暴露。
+  "markets.thrDead": "阈值空转 @{n} 条",
+  "markets.thrDeadTip": "样本 @{rows} 行 / @{scans} 轮扫描内，下列阈值一次都没命中 —— 规则可能已够不着（历史上 taker≥1.85 就这么空转了很久）：@{rules}",
+  // v1.6.9（档二 C6）：本地时序库体检。只写不看的落盘等于没有落盘 ——
+  // 「表建了但一行没写进去」这种失效方式界面上本来完全看不出来。
+  "markets.tsStore": "时序库 @{rows} 行 · @{syms} 币",
+  "markets.tsStoreTip": "本地时序库：累计 @{rows} 行 / @{syms} 个币 / 保留 @{days} 天；最近一轮扫描写入 @{last} 行。radar_tracks 只记「登记那一刻」，登记之前的演化过程全靠这张表。",
+  "markets.tsEmpty": "时序库未落盘",
+  "markets.tsEmptyTip": "雷达在跑，但本地时序库一行都没有 —— 这意味着「某币被登记之前长什么样」仍然无法回答。请检查工作区 state.db 是否可写。",
+  "markets.fresh": "数据 @{age} 前",
+  "markets.freshTip": "这轮雷达结果算于 @{age} 前（本轮缓存 TTL @{ttl}）。注意：真正打币安接口的节奏由后端 TTL 决定，轮询快于 TTL 时拿到的是同一份结果。",
+  "markets.stale": "数据已陈旧 @{age}",
+  "markets.staleTip": "当前展示的是 @{age} 前的旧结果，已超过本轮缓存 TTL（@{ttl}）—— 通常是扫描正在途中，后端把上一轮缓存先给了你。此时看到的信号可能已滞后。",
   "markets.detail.open": "查看详情",
   "markets.detail.trend": "价格走势",
   "markets.detail.range24": "24h 区间",
@@ -531,6 +561,9 @@ export const zh: Dict = {
   "alert.radarExpired": "妖币跟踪到期",
   "alert.radarHold": "妖币达标 · 继续持有",
   "alert.radarHoldBody": "发现价 @{found} → 现价 @{price}；动能未反转，转移动止盈持有（峰值回撤 12% 自动落袋），模拟盈亏 @{pnl}",
+  // v1.6.9（档二 #10）：毛盈亏之外并列给出**含成本净值**。成本模型在 radar_tracker.sim_cost（同一份实现），
+  // 绝不拿净值**悄悄替换**毛值 —— 否则历史告警与新增告警会变成两个口径而无人察觉。
+  "alert.netPnl": "（净 @{net}）",
   "alert.radarBody": "发现价 @{found} → 现价 @{price}（最大涨幅 +@{gain}% / 最大跌幅 -@{drop}%）",
   // v1.5.2 妖币追踪面板
   "markets.trackTitle": "妖币追踪 · Monster Tracks",
@@ -542,6 +575,9 @@ export const zh: Dict = {
   // 那是更早的一版遗留键，前端已无任何调用方，不要拿它来当这里的正字。
   "markets.trackWin": "胜率",
   "markets.trackHistory": "历史战绩",
+  // v1.6.9（#12）：面板顶部计数（moon/dump/expired 与分档胜率）基于**全部**已关单，
+  // 而下方历史表只列最近 N 条 —— 样本超过 N 后数字与可见行数对不上，必须显式注明口径。
+  "markets.trackHistoryNote": "显示最近 @{shown} 条 · 统计基于全部 @{total} 条",
   "markets.trackMore": "仅显示最近 8 条，共 @{n} 条历史",
   "markets.trackFoundPrice": "发现价",
   "markets.trackNowPrice": "现价",
@@ -1928,6 +1964,8 @@ export const en: Dict = {
   "alert.radarExpired": "Monster Track Expired",
   "alert.radarHold": "Monster Target Hit · Holding",
   "alert.radarHoldBody": "Found @{found} → now @{price}; momentum intact, trailing take-profit active (auto-close on 12% pullback from peak), simulated PnL @{pnl}",
+  // v1.6.9 (Tier 2, #10): show cost-adjusted net PnL alongside gross. Cost model lives in radar_tracker.sim_cost.
+  "alert.netPnl": " (net @{net})",
   "alert.radarBody": "Found @{found} → now @{price} (max gain +@{gain}% / max drop -@{drop}%)",
   // v1.5.2 monster tracks panel
   "markets.trackTitle": "Monster Tracks",
@@ -1935,6 +1973,7 @@ export const en: Dict = {
   "markets.trackStats": "Active @{p} · Moon @{moon} · Dump @{dump} · Expired @{expired}",
   "markets.trackWin": "Win Rate",
   "markets.trackHistory": "History",
+  "markets.trackHistoryNote": "Showing latest @{shown} of @{total} records · stats cover all",
   "markets.trackMore": "Showing latest 8 of @{n} records",
   "markets.trackFoundPrice": "Found Price",
   "markets.trackNowPrice": "Now",
@@ -1952,6 +1991,24 @@ export const en: Dict = {
   "markets.outcomeMoon": "Moon",
   "markets.outcomeDump": "Dump",
   "markets.stage.SHORT_AMBUSH": "Short Ambush",
+  "markets.stageStarted": "Started · Chase zone",
+  "markets.stageStartedTip": "Stage verdict unchanged, but 24h change has passed the entry window (≥10%) — the timing has gone; watch only",
+  "markets.manipUnmeasured": "Manip unmeasured",
+  "markets.manipUnmeasuredTip": "This row never entered the confirm layer (24-coin cap), so denominators for churn / no-liquidation checks are missing — this means \"not measured\", not \"clean\". Click Analyze for a per-coin recompute.",
+  "markets.liqUnavailable": "Liquidation feed offline",
+  "markets.liqUnavailableTip": "Binance !forceOrder@arr does not stream in this environment and there is no public REST fallback — liquidation factors are unavailable and treated as unmeasured (never as 0).",
+  "markets.thrDead": "@{n} rule(s) never fire",
+  "markets.thrDeadTip": "Across @{rows} rows / @{scans} scans, the following thresholds never fired — the rule may be out of reach (historically taker≥1.85 idled like this for a long time): @{rules}",
+  // v1.6.9 (Tier 2, C6): local time-series store health. Write-only persistence is not persistence —
+  // "table created but nothing ever written" was previously invisible in the UI.
+  "markets.tsStore": "TS store @{rows} rows · @{syms} syms",
+  "markets.tsStoreTip": "Local time-series store: @{rows} rows total / @{syms} symbols / @{days} days retention; last scan wrote @{last} rows. radar_tracks only records the registration instant — everything before that lives in this table.",
+  "markets.tsEmpty": "TS store empty",
+  "markets.tsEmptyTip": "The radar is running but the local time-series store has zero rows — meaning \"what did this coin look like before registration\" still cannot be answered. Check that state.db in the workspace is writable.",
+  "markets.fresh": "data @{age} old",
+  "markets.freshTip": "This radar result was computed @{age} ago (cache TTL @{ttl} for this round). Note: the actual Binance request cadence is governed by the backend TTL — polling faster than the TTL just re-reads the same result.",
+  "markets.stale": "stale by @{age}",
+  "markets.staleTip": "Showing a result from @{age} ago, past this round's cache TTL (@{ttl}) — usually because a scan is in flight and the backend handed you the previous cache. Signals may be lagging.",
   "markets.reviewPill": "Failure Review",
   "markets.reviewTip": "Expand/collapse the failure review: failure path, factors at close, market regime and lessons",
   "markets.fakeStart": "Likely False Start",

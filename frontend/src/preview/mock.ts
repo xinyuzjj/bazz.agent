@@ -72,6 +72,9 @@ const previewTracks = {
       holding: 0, found_at: FIXTURE_SEC - 60 * 3600, closed_at: FIXTURE_SEC - 44 * 3600,
       updated_at: FIXTURE_SEC - 44 * 3600 },
   ],
+  // v1.6.9（#12）：顶部计数基于全量（stats 里 moon+dump+expired=24），
+  // 而 history 数组只放了 4 条 fixture —— 正是要演示「数字与可见行数对不上」时的新口径注明。
+  pending_total: 31, history_total: 24, history_shown: 4, history_shown_limit: 50,
   stats: {
     total: 55, pending: 31, moon: 3, dump: 21, expired: 0,
     by_stage: {
@@ -159,6 +162,10 @@ const radar = tickers.slice(4, 7).map((r, i) => ({ ...r, side: "WATCH", tag: "�
   change7d_pct: 5 + i, change30d_pct: 12 + i, change3d_pct: 2 + i, change24_pct: r.change_pct,
   position_pct: 30 + i * 10, drawdown_pct: -20, floor_rising: true, change1h_pct: 0.8, rvol15: 2.1,
   amp24: 12, cooldown: false, listed_days: 120, factors: { flow: 1.2, jump: 0.6, oi_chg24: 3, funding: 0.0001 },
+  // v1.6.9（#6）：oi_usd=0 但 fut_qv>0 ⇒ 未进确认层 → 演示「控盘未测」pill；
+  // v1.6.9（#5）：late=true ⇒ 演示「已启动 · 追高区」金标（stage 仍是 IGNITION）
+  fut_qv: 3_200_000, spot_qv: 1_100_000, no_spot: false, oi_usd: i === 1 ? 0 : 8_400_000, late: i === 0,
+  liq_available: false,
   reasons: ["固定 fixture，仅用于组件排版", "没有行情采集或实际信号计算"] }));
 
 const agents = [
@@ -410,7 +417,18 @@ export function installPreview(): void {
       }) });
       case "/api/market/fng": return json({ ...META, value: 52, classification: "演示中性", history: [40, 44, 49, 46, 50, 54, 51, 52].map((value, i) => ({ value, timestamp: FIXTURE_SEC - (7 - i) * 86400 })) });
       case "/api/market/longshort": return json({ ...META, rows: futures.slice(0, 4).map((r, i) => ({ ...r, top_ratio: 1.2 + i * 0.1, top_prev: 1.1, global_ratio: 0.9, divergence: true })) });
-      case "/api/market/radar": return json({ ...META, ignition: radar.slice(0, 2), takeoff: radar.slice(2), stage_counts: { IGNITION: 2, VERTICAL: 1 }, engine: "演示 fixture", env: { regime: "DEMO / OFFLINE" } });
+      case "/api/market/radar": return json({ ...META, ignition: radar.slice(0, 2), takeoff: radar.slice(2), stage_counts: { IGNITION: 2, VERTICAL: 1 }, engine: "演示 fixture", env: { regime: "DEMO / OFFLINE" },
+        // v1.6.9（#2/D1）：阈值与爆仓流可用性随 payload 下发（与后端同结构，非伪造端点）
+        thresholds: { taker_buy_dominant: 1.3, trig_late_chg24: 10, new_coin_days: 30 }, liq_available: false,
+        // v1.6.9（档一 §16）：演示「阈值空转」告警（样本够但一次没命中）
+        threshold_hits: { scans: 12, rows: 480, min_rows: 200, dead_rules: ["trig_max_chg24"],
+          rules: { trig_max_chg24: { desc: "追高：涨幅 > 12%（判 EXTENDED）", hits: 0, rows: 480, rate: 0, dead: true } } },
+        // v1.6.9（档二 C6）：本地时序库体检（与后端 scanner.ts_store_view() 同结构，非伪造端点）
+        ts_store: { rows: 31420, symbols: 108, oldest: FIXTURE_SEC - 12 * 86400, newest: FIXTURE_SEC - 120, keep_days: 14, last_written: 106, last_ts: FIXTURE_SEC - 120 },
+        // v1.7.1（C3）：数据新鲜度三件套（后端 scanner._with_age() 下发）。
+        // 演示里给「新鲜但非零」的 47s —— 给 0 会让 pill 看起来像个装饰，
+        // 而 0 只在「刚好读完就渲染」时出现，验不到格式化与文案。
+        updated_at: FIXTURE_SEC - 47, ttl: 300, age_sec: 47, stale: false });
       case "/api/market/ignition": return json({ ...META, items: radar.slice(0, 2), ignition: radar.slice(0, 2) });
       case "/api/market/monsters": return json({ ...META, items: radar.slice(2), monsters: radar.slice(2) });
       case "/api/market/radar/tracks": return json({ ...META, ...previewTracks });

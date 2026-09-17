@@ -5,8 +5,8 @@ import { useT } from "../i18n/i18n";
 import { subscribeTicks, useWsStatus, useLiveTick } from "../lib/live";
 import {
   type Ticker, type Signal, type FutureRow, type EquityRow, type RadarRow, type OrderMode,
-  type TracksData,
-  SIDE_META, RADAR_COLS, STAGE_META, TRACK_COLS, fmtPrice, fmtVol, fmtRate, fmtAgo, baseName, UpdatedAgo,
+  type TracksData, type RadarThresholds, type RadarThresholdHits, type RadarTsStore, type RadarFresh,
+  SIDE_META, RADAR_COLS, STAGE_META, TRACK_COLS, fmtPrice, fmtVol, fmtRate, fmtAgo, fmtCount, fmtAge, baseName, UpdatedAgo,
   PosBar, useFlash, LsLine,
   FutRow, EquityCard, RadarLine, TrackLine, SignalRow,
 } from "../components/MarketRows";
@@ -126,6 +126,17 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
   const [stageCounts, setStageCounts] = useState<Record<string, number>>({});
   const [engine, setEngine] = useState("");
   const [env, setEnv] = useState("");
+  // v1.6.9（#2）：阈值随 payload 下发（后端单一来源）—— 前端不再硬编码 taker 门槛。
+  // v1.6.9（D1）：liq_available 说明爆仓流是否真的接上（false ⇒ 爆仓类因子「未测」）。
+  const [radarTh, setRadarTh] = useState<RadarThresholds>({});
+  const [radarLiq, setRadarLiq] = useState<boolean | null>(null);
+  // v1.6.9（档一 §16）：阈值命中率 —— dead_rules 非空说明有阈值在空转，必须让人看见
+  const [radarThr, setRadarThr] = useState<RadarThresholdHits | null>(null);
+  // v1.6.9（档二 C6）：本地时序库体检 —— 「到底存没存下来」必须可见
+  const [radarTs, setRadarTs] = useState<RadarTsStore | null>(null);
+  // v1.7.1（C3 延迟治理）：数据新鲜度。由后端 `_with_age()` 下发，前端**不再自己算** ——
+  // 本地时钟偏差 + 拿不到本轮 TTL，这两点让「前端自算」只能算出个像模像样的错数。
+  const [radarFresh, setRadarFresh] = useState<RadarFresh | null>(null);
   const [mLoading, setMLoading] = useState(false);
   const [mErr, setMErr] = useState("");
   const [mSide, setMSide] = useState<"ALL" | RadarRow["side"]>("ALL");
@@ -159,6 +170,20 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
       setStageCounts(d?.stage_counts ?? {});
       setEngine(String(d?.engine ?? ""));
       if (d?.env?.regime) setEnv(d.env.regime);
+      // v1.6.9（#2/#6/D1）：阈值、爆仓流可用性都以后端为准；旧后端缺字段时退回兜底
+      setRadarTh((d?.thresholds ?? {}) as RadarThresholds);
+      setRadarLiq(typeof d?.liq_available === "boolean" ? d.liq_available : null);
+      setRadarThr((d?.threshold_hits ?? null) as RadarThresholdHits | null);
+      // v1.6.9（档二 C6）：时序库体检。`last_written === 0` 且 `rows === 0` 时前端会显式提示
+      // 「没存下来」—— 否则「代码写了、库里空的」这种失效方式永远没人发现。
+      setRadarTs((d?.ts_store ?? null) as RadarTsStore | null);
+      // v1.7.1（C3）：新鲜度三件套（age_sec / stale / ttl）。旧后端不带这三个字段时
+      // 落到 `null` → 面板不显示该 pill，**不显示一个假的「0s」**。
+      setRadarFresh(
+        typeof d?.age_sec === "number"
+          ? ({ age_sec: d.age_sec, stale: !!d?.stale, ttl: Number(d?.ttl) || 0 } as RadarFresh)
+          : null,
+      );
       if (d?.error) setMErr(d.error);
     } catch (e: any) { setMErr(e?.message ?? String(e)); }
     finally { setMLoading(false); }
@@ -201,7 +226,12 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
   }, []);
   useEffect(() => {
     fetchRadar();
-    const t = setInterval(() => fetchRadar(), 180_000);
+    // v1.7.1（C3 延迟治理）：180s → 60s。C3 记的端到端延迟 3~8 分钟里，前端轮询是**固定项之一**
+    // （另两项是后端 RADAR2_TTL 缓存与触发层）。实测澄清触发层**不是**瓶颈：K 线接口返回的
+    // 最后一根是**在途未收盘** K 线，特征每轮都用最新价重算，不存在「等 15 分钟收盘」的盲区。
+    // 所以把轮询压到 60s 直接砍掉最多 2 分钟，而代价接近 0 —— 后端 300s TTL 内命中缓存，
+    // 轮询变密只是多几次本地 HTTP，不会多打币安接口（这一点由 TTL 保证，不靠轮询自律）。
+    const t = setInterval(() => fetchRadar(), 60_000);
     return () => clearInterval(t);
   }, []);
   const radarRows = mode === "ignition" ? ign : tk;
@@ -460,6 +490,58 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
             <span className="font-mono text-[14px] font-semibold tracking-wider text-ink">{t("markets.radarTitle")}</span>
             {env && <span className="pill pill-gold text-[11.5px]" title={t("markets.envTitle")}>{t("markets.env", { env })}</span>}
             {engine && <span className="pill pill-dim text-[10.5px]">engine v{engine.replace(/^v/, "")}</span>}
+            {/* v1.6.9（档一 §16）：阈值空转告警 —— 只在「样本够但一次没命中」时出现，
+                避免冷启动噪音；悬浮可看到具体是哪几条规则 + 样本量 */}
+            {!!radarThr?.dead_rules?.length && (
+              <span className="pill pill-red text-[10.5px]"
+                title={t("markets.thrDeadTip", {
+                  n: String(radarThr.dead_rules.length),
+                  rows: String(radarThr.rows ?? 0),
+                  scans: String(radarThr.scans ?? 0),
+                  rules: radarThr.dead_rules
+                    .map((k) => `${radarThr.rules?.[k]?.desc ?? k}`)
+                    .join(" / "),
+                })}>
+                {t("markets.thrDead", { n: String(radarThr.dead_rules.length) })}
+              </span>
+            )}
+            {/* v1.7.1（C3 延迟治理）：数据新鲜度 —— 把「延迟」从只能掐表的隐性事实变成可见数字。
+                为什么必须显式标 `stale`：后端在扫描进行中会把**上一轮缓存**给并发请求
+                （见 `get_radar_v2` 的等锁分支），此时 `age_sec` 可能已经超过 TTL。
+                不标出来的话，界面上「陈旧兜底」与「刚算完」长得一模一样。 */}
+            {radarFresh && (
+              radarFresh.stale ? (
+                <span className="pill pill-red text-[10.5px]"
+                  title={t("markets.staleTip", { age: fmtAge(radarFresh.age_sec), ttl: fmtAge(radarFresh.ttl) })}>
+                  {t("markets.stale", { age: fmtAge(radarFresh.age_sec) })}
+                </span>
+              ) : (
+                <span className="pill pill-dim text-[10.5px]"
+                  title={t("markets.freshTip", { age: fmtAge(radarFresh.age_sec), ttl: fmtAge(radarFresh.ttl) })}>
+                  {t("markets.fresh", { age: fmtAge(radarFresh.age_sec) })}
+                </span>
+              )
+            )}
+            {/* v1.6.9（档二 C6）：本地时序库体检 —— 让「到底存没存下来」可见。
+                库里 0 行是**必须显式报出来**的失效方式：表建了、代码在跑，但一行没写进去，
+                而界面上完全看不出来（与 §16 的死规则同一类问题）。 */}
+            {radarTs && (
+              radarTs.rows || radarTs.last_written ? (
+                <span className="pill pill-dim text-[10.5px]"
+                  title={t("markets.tsStoreTip", {
+                    rows: fmtCount(radarTs.rows ?? 0),
+                    syms: String(radarTs.symbols ?? 0),
+                    days: String(radarTs.keep_days ?? 0),
+                    last: String(radarTs.last_written ?? 0),
+                  })}>
+                  {t("markets.tsStore", { rows: fmtCount(radarTs.rows ?? 0), syms: String(radarTs.symbols ?? 0) })}
+                </span>
+              ) : (
+                <span className="pill pill-red text-[10.5px]" title={t("markets.tsEmptyTip")}>
+                  {t("markets.tsEmpty")}
+                </span>
+              )
+            )}
             {/* 语义层阶段计数 */}
             {(["ACCUMULATION", "IGNITION", "VERTICAL", "DISTRIBUTION", "CRASH", "DORMANT", "ACTIVE"] as const).map((st) => {
               const n = stageCounts[st] ?? 0;
@@ -504,6 +586,13 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
             </span>
           </div>
           {mErr && <div className="rounded-md border border-red/40 bg-red/5 px-3 py-1.5 text-[13px] text-red font-mono">{mErr}</div>}
+          {/* v1.6.9（D1）：爆仓流未接入是**全局**事实，行级 pill 之外再给一条面板级说明，
+              免得用户逐行悬浮才知道。仅在后端明确回报 false 时显示（null=未知不打扰）。 */}
+          {radarLiq === false && (
+            <div className="rounded-md border border-line bg-elevated/40 px-3 py-1.5 text-[12.5px] text-ink-dim font-mono">
+              {t("markets.liqUnavailable")} —— {t("markets.liqUnavailableTip")}
+            </div>
+          )}
         </div>
 
         {/* 表头 */}
@@ -522,7 +611,7 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
           </div>
         ) : (
           mRows.map((m) => (
-            <RadarLine key={m.symbol} m={m} mode={mode} onTrade={onTrade} onOrder={onOrder} onAnalyze={onAnalyze} onDetail={openDetail("spot")} />
+            <RadarLine key={m.symbol} m={m} mode={mode} th={radarTh} onTrade={onTrade} onOrder={onOrder} onAnalyze={onAnalyze} onDetail={openDetail("spot")} />
           ))
         )}
         {radarRows.length > mLimit && (
@@ -625,7 +714,22 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
 
           {(tracks.history?.length ?? 0) > 0 && (
             <>
-              <div className="px-4 pt-3 pb-1 text-[11.5px] font-mono tracking-[0.08em] text-ink-dim">{t("markets.trackHistory")}</div>
+              <div className="px-4 pt-3 pb-1 text-[11.5px] font-mono tracking-[0.08em] text-ink-dim flex items-center gap-2 flex-wrap">
+                <span>{t("markets.trackHistory")}</span>
+                {/* v1.6.9（#12）：顶部 moon/dump/expired 与分档胜率基于**全部**已关单，
+                    而下表只列最近 N 条 —— 样本超过 N 后数字与可见行数对不上，必须注明口径。
+                    仅当「全量 > 展示」时才显示（否则是噪音）。 */}
+                {(() => {
+                  const total = tracks.history_total ?? tracks.history?.length ?? 0;
+                  const shown = tracks.history_shown ?? tracks.history?.length ?? 0;
+                  if (total <= shown) return null;
+                  return (
+                    <span className="text-ink-mute" title={t("markets.trackHistoryNote", { shown: String(shown), total: String(total) })}>
+                      ({t("markets.trackHistoryNote", { shown: String(shown), total: String(total) })})
+                    </span>
+                  );
+                })()}
+              </div>
               <div className="grid items-center px-4 py-2 border-t border-b border-line text-[11.5px] font-mono tracking-[0.08em] text-ink-dim"
                 style={{ gridTemplateColumns: TRACK_COLS.history.tpl }}>
                 {TRACK_COLS.history.head.map((h) => <div key={h}>{t(h)}</div>)}

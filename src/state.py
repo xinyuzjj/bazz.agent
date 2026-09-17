@@ -183,7 +183,46 @@ def _init():
     CREATE INDEX IF NOT EXISTS idx_mem ON memory(key);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_radar_tracks_pending ON radar_tracks(symbol) WHERE status='pending';
     CREATE INDEX IF NOT EXISTS idx_radar_tracks_hist ON radar_tracks(status, found_at);
+    -- v1.6.6（档二 C6）：本地时序库。radar_tracks 只记「登记那一刻」，此后所有行情缓存
+    -- 都是短 TTL 内存态（8s / 20s / 30s / 60s / 300s），重启即丢 —— 于是「某币被登记前
+    -- 3 小时费率 / OI / 价差长什么样」这个问题**在数据层无法回答**。
+    -- 主键 (symbol, ts)：一轮扫描每个 symbol 恰好一行，重复写同一 ts 用 REPLACE 覆盖，
+    -- 使落库**幂等**（扫描重试 / 手动 force 不会灌重复行）。
+    CREATE TABLE IF NOT EXISTS ts_series (
+        symbol      TEXT NOT NULL,
+        ts          REAL NOT NULL,
+        price       REAL,
+        chg24       REAL,
+        oi_usd      REAL,
+        oi_chg24    REAL,
+        funding     REAL,
+        mark_price  REAL,
+        index_price REAL,
+        basis_bps   REAL,
+        spread_bps  REAL,
+        taker_ratio REAL,
+        liq_5m      REAL,
+        liq_side    TEXT,
+        fut_qv      REAL,
+        -- v1.7.1：**合约盘口**买一卖一价差（基点）。为什么另起一列而不复用 `spread_bps`：
+        -- 那一列是**现货** ticker 的 bid/ask（纯合约币恒为 None），而妖币追踪交易的是
+        -- **合约**。两者的口径不同，直接覆盖会让「同一列名在两个版本里是两个意思」。
+        -- 这一列的存在意义是闭掉成本模型里那句「滑点 0.15% 是保守常数，等样本攒够再标定」：
+        -- 实测（v1.7.1）全市场 766 个合约价差中位 3.97bps / p90 9.81bps，
+        -- 而假设值是 15bps/边 —— 方向确实是**偏保守**，现在有数据能持续验证这件事了。
+        fut_spread_bps REAL,
+        PRIMARY KEY (symbol, ts)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ts_series_ts ON ts_series(ts);
     """)
+    # v1.7.1：兼容已建过 ts_series 的库（该表在 v1.7.1 前未发布，但仍按惯例补列，避免
+    # 「老库少一列 → INSERT 报 no such column」这种只在别人机器上出现的失败）。
+    try:
+        _tscols = {r[1] for r in c.execute("PRAGMA table_info(ts_series)").fetchall()}
+        if _tscols and "fut_spread_bps" not in _tscols:
+            c.execute("ALTER TABLE ts_series ADD COLUMN fut_spread_bps REAL")
+    except Exception:
+        pass
     # 兼容早期库：agents 缺 config 列时补上
     cols = {r[1] for r in c.execute("PRAGMA table_info(agents)").fetchall()}
     if cols and "config" not in cols:
@@ -209,10 +248,24 @@ def _init():
     # 此前回放只能解析 reasons_json 文本反推，口径会漂（同一条规则算出「剩 11 笔」与
     # 「剩 7 笔」两个答案）→ 改任何规则都无法做 A/B 回放。老库这 5 列为 NULL，
     # 回放脚本必须兼容「快照缺失」并回退文本口径。
-    for _scol in ("snap_chg24", "snap_oi24", "snap_amp24", "snap_funding", "snap_rvol15"):
+    #
+    # v1.6.6（问题清单 C4）：**补全确认层因子**。v1.6.4 落的是触发层/日线层的 5 个数
+    # （chg24/oi24/amp24/funding/rvol15），而**点火判据与加分段真正依赖的是确认层**：
+    # `_stage_of_raw` 的点火条件读 `taker_ratio`，`_radar_score` 的加分段读
+    # `oi_pulse15` / `top_ratio` / `liq_5m`。缺了它们，下一轮改点火判据时**仍然只能解析
+    # reasons_json 文本** —— 也就是 v1.6.4 想解决的问题只解决了一半。
+    # 新增列对老库一律 NULL，语义与既有 5 列一致（NULL = 未测到 / 老样本）。
+    # 一并补 `basis` / `spread`（v1.6.6 档一新取的两个信号），让它们从第一天起就进回放。
+    for _scol in ("snap_chg24", "snap_oi24", "snap_amp24", "snap_funding", "snap_rvol15",
+                  "snap_taker", "snap_oi15", "snap_top", "snap_top48", "snap_glob",
+                  "snap_liq5m", "snap_basis", "snap_spread"):
         if rtcols and _scol not in rtcols:
             c.execute(f"ALTER TABLE radar_tracks ADD COLUMN {_scol} REAL")
             c.commit()
+    # liq_side 是文本（"long"/"short"/""），单独一列；NULL 与 "" 都表示未测到。
+    if rtcols and "snap_liqside" not in rtcols:
+        c.execute("ALTER TABLE radar_tracks ADD COLUMN snap_liqside TEXT")
+        c.commit()
     ccols = {r[1] for r in c.execute("PRAGMA table_info(conversations)").fetchall()}
     if ccols and "persona" not in ccols:
         c.execute("ALTER TABLE conversations ADD COLUMN persona TEXT DEFAULT ''")
@@ -974,6 +1027,11 @@ def _radar_track_out(r):
     d = dict(r)
     d["reasons"] = json.loads(d.get("reasons_json") or "[]")
     d.pop("reasons_json", None)
+    # v1.6.6（问题清单 C4）：把 14 个 snap_* 聚成 `snap` 子字典，方便回放脚本一次性取用；
+    # 同时**保留平铺的 snap_* 键**，避免破坏既有消费方（老代码按 d["snap_chg24"] 读）。
+    # 键名去前缀（snap_chg24 → chg24），与 `radar_track_add(snap={...})` 的入参口径一致，
+    # 这样「写进去的 dict」与「读出来的 dict」形状相同，回放不需要再做一次映射。
+    d["snap"] = {k[len("snap_"):]: v for k, v in d.items() if k.startswith("snap_")}
     return d
 
 
@@ -999,8 +1057,10 @@ def radar_track_add(symbol: str, stage: str, found_price: float, found_score: in
     """登记一条启动前发现记录；同币已在跟踪中（pending）则幂等返回已有 id；
     同币刚关单不满 RADAR_REENTRY_COOLDOWN 则**拒绝登记**（返回空串，调用方据此跳过）。
     direction: LONG=做多 / SHORT=做空（决定结局语义，见 radar_tracker._judge_outcome）。
-    snap: v1.6.4 登记时刻数值快照（chg24/oi24/amp24/funding/rvol15）—— 落库后回放不再依赖
-    `reasons_json` 文本反推；缺键写 NULL。"""
+    snap: 登记时刻数值快照 —— 落库后回放不再依赖 `reasons_json` 文本反推；缺键写 NULL。
+      v1.6.4 起 5 键：chg24 / oi24 / amp24 / funding / rvol15
+      v1.6.6（C4）起补 9 键：taker / oi15 / top / top48 / glob / liq5m / liqside / basis / spread
+      （前 6 个是点火判据与加分段真正依赖的确认层因子，后 2 个是档一新取的信号）"""
     now = time.time()
     sym_u = str(symbol).upper()
     exist = _conn_get().execute(
@@ -1014,17 +1074,32 @@ def radar_track_add(symbol: str, stage: str, found_price: float, found_score: in
     if last_closed and now - float(last_closed["closed_at"] or 0) < RADAR_REENTRY_COOLDOWN:
         return ""
     tid = _uid()
+    # v1.6.6（问题清单 C4）：快照从 5 列扩到 14 列，补上**点火判据与加分段真正依赖的
+    # 确认层因子**（taker / oi_pulse15 / top_ratio / top_mean48 / global_ratio / liq），
+    # 外加 v1.6.6 档一新取的 basis（标记价对指数价偏离）与 spread（买卖价差）。
+    # 缺键一律 NULL（`_snap_val` 保证），语义 = 未测到，与「真的是 0」严格区分。
     _conn_get().execute(
         "INSERT INTO radar_tracks (id,symbol,stage,direction,found_price,found_score,reasons_json,"
         "status,outcome,max_gain_pct,max_drop_pct,peak_price,trough_price,last_price,"
-        "outcome_price,snap_chg24,snap_oi24,snap_amp24,snap_funding,snap_rvol15,"
-        "found_at,closed_at,updated_at) VALUES (?,?,?,?,?,?,?, 'pending','',0,0,0,0,0,0,?,?,?,?,?,?,NULL,?)",
+        "outcome_price,"
+        "snap_chg24,snap_oi24,snap_amp24,snap_funding,snap_rvol15,"
+        "snap_taker,snap_oi15,snap_top,snap_top48,snap_glob,snap_liq5m,snap_liqside,"
+        "snap_basis,snap_spread,"
+        "found_at,closed_at,updated_at) "
+        "VALUES (?,?,?,?,?,?,?, 'pending','',0,0,0,0,0,0,"
+        "?,?,?,?,?,"
+        "?,?,?,?,?,?,?,?,?,"
+        "?,NULL,?)",
         (tid, str(symbol).upper(), stage or "IGNITION",
          "SHORT" if str(direction).upper() == "SHORT" else "LONG",
          float(found_price or 0),
          int(found_score or 0), json.dumps(reasons or [], ensure_ascii=False),
          _snap_val(snap, "chg24"), _snap_val(snap, "oi24"), _snap_val(snap, "amp24"),
          _snap_val(snap, "funding"), _snap_val(snap, "rvol15"),
+         _snap_val(snap, "taker"), _snap_val(snap, "oi15"), _snap_val(snap, "top"),
+         _snap_val(snap, "top48"), _snap_val(snap, "glob"), _snap_val(snap, "liq5m"),
+         (str(snap.get("liqside") or "") or None) if snap else None,
+         _snap_val(snap, "basis"), _snap_val(snap, "spread"),
          float(found_at or now), now))
     _conn_get().commit()
     return tid
@@ -1100,29 +1175,89 @@ def radar_track_set_review(tid: str, review: str) -> None:
     _conn_get().commit()
 
 
-def radar_tracks_list(status: str = "") -> list:
+def radar_tracks_list(status: str = "", limit: int = 0) -> list:
+    """列出雷达跟踪单。`status` 取 `pending` / `closed` / 空（全部）。
+
+    v1.6.6（问题清单 #13）：`limit` 改为显式参数，**默认 0 = 不限制**。
+    此前是**无条件** `LIMIT 200`，而 `ORDER BY found_at DESC` 意味着：
+    一旦 pending 累积超过 200 笔，被截掉的恰好是**最早登记**的那批 —— 也就是
+    最接近 7 天到期、最需要关注的单。更严重的是 `radar_tracker._tick` 也走这个查询，
+    被截断的单**永不更新、7 天后也不会被判 expired**，静默卡在 pending 里。
+    `LIMIT` 只应约束展示路径，不应约束状态机的输入；历史展示由调用方显式传 limit。
+    """
     q = "SELECT * FROM radar_tracks"
-    args = ()
+    args: tuple = ()
     if status in ("pending", "closed"):
         q += " WHERE status=?"
         args = (status,)
-    q += " ORDER BY found_at DESC LIMIT 200"
+    q += " ORDER BY found_at DESC"
+    if limit and int(limit) > 0:
+        q += " LIMIT ?"
+        args = args + (int(limit),)
     return [_radar_track_out(r) for r in _conn_get().execute(q, args).fetchall()]
 
 
-def radar_tracks_stats() -> dict:
+def radar_tracks_count(status: str = "") -> int:
+    """雷达跟踪单计数（v1.6.6，问题清单 #12）。
+
+    用途：展示路径只列最近 N 条历史，而顶部战绩计数基于全量 —— 两者必须能对账，
+    否则用户看到「32 moon」却只数得出 12 行，无法判断差异来自口径还是来自截断。
+    """
+    q = "SELECT COUNT(*) AS n FROM radar_tracks"
+    args: tuple = ()
+    if status in ("pending", "closed"):
+        q += " WHERE status=?"
+        args = (status,)
+    r = _conn_get().execute(q, args).fetchone()
+    return int((r["n"] if r is not None else 0) or 0)
+
+
+def _radar_direction_totals() -> dict:
+    """按 direction 拆分的全量口径明细（供 radar_tracks_stats 附带返回）。
+
+    存在意义：`radar_tracks_stats` 默认只统计 LONG，而历史库里躺着 3 笔做空单
+    （全部 dump）。若不把「被排除掉的那部分」显式摆出来，用户看到的总胜率
+    与页面能看到的行数对不上，且无法判断差异来自口径还是来自数据。
+    """
+    out: dict = {}
+    for r in _conn_get().execute(
+            "SELECT direction, status, outcome, COUNT(*) AS n FROM radar_tracks "
+            "GROUP BY direction, status, outcome").fetchall():
+        k = (r["direction"] or "LONG")
+        o = out.setdefault(k, {"total": 0, "pending": 0, "moon": 0, "dump": 0, "expired": 0})
+        o["total"] += r["n"]
+        if r["status"] == "pending":
+            o["pending"] += r["n"]
+        elif r["outcome"] in ("moon", "dump", "expired"):
+            o[r["outcome"]] += r["n"]
+    return out
+
+
+def radar_tracks_stats(direction: str = "LONG") -> dict:
     """战绩统计（+ v1.6.5 OPT-07 的 by_stage 分组）。
 
     为什么要按 stage 分组：安装版已关单里 `IGNITION` 是 3 moon / 13 dump（18.8%），
     而 `ACCUMULATION` 是 **0 moon / 4 dump**，新规则却仍把 ACCUMULATION 当 ignition 登记。
     4 笔样本可能纯属偶然，所以本轮**不删、不降权**，只把两组的胜率分开摆出来，
     攒到 10 笔再决定（这正是 OPT-07 的原文要求）。
+
+    v1.6.6（问题清单 #3）：**加 direction 过滤，默认 LONG**。
+    此前本函数不过滤方向，而 `radar_snapshot_crosstab` / `radar_recheck_decisions`
+    都显式按 `direction='LONG'` 过滤并写明「做空已整条砍掉」—— 三个「体检」口径不一致：
+    前端战绩面板会混入 3 笔历史做空单（全部 dump），使总胜率与 IGNITION 档胜率
+    系统性偏低，用户看到「战绩」与「判据体检」数字对不上却无法判断原因。
+    传 `direction=None` 或 `"ALL"` 可取全量口径（保留给需要复核历史空单的场景），
+    返回值里始终附 `by_direction` 明细，让「被排除的部分」可见。
     """
+    d = (direction or "").strip().upper()
+    where, args = "", ()
+    if d and d != "ALL":
+        where, args = " WHERE direction=?", (d,)
     rows = _conn_get().execute(
-        "SELECT status, outcome, stage, COUNT(*) AS n FROM radar_tracks "
-        "GROUP BY status, outcome, stage").fetchall()
+        "SELECT status, outcome, stage, COUNT(*) AS n FROM radar_tracks" + where +
+        " GROUP BY status, outcome, stage", args).fetchall()
     st = {"total": 0, "pending": 0, "moon": 0, "dump": 0, "expired": 0,
-          "by_stage": {}, "stages": []}
+          "by_stage": {}, "stages": [], "direction": (d or "ALL")}
     for r in rows:
         st["total"] += r["n"]
         g = st["by_stage"].setdefault(
@@ -1140,6 +1275,8 @@ def radar_tracks_stats() -> dict:
         g["win_rate"] = round(g["moon"] / g["closed"] * 100, 1) if g["closed"] else 0.0
     # stages 按「已关单样本数」降序，样本多的组排前面（前端直接按序渲染，不再自己排）
     st["stages"] = sorted(st["by_stage"].items(), key=lambda kv: -kv[1]["closed"])
+    # 全量口径的方向明细：让「本口径排除了哪些方向、各多少笔」可见，而不是静默丢掉。
+    st["by_direction"] = _radar_direction_totals()
     return st
 
 
@@ -1387,6 +1524,177 @@ def radar_recheck_decisions(direction: str = "LONG") -> dict:
             "recommend": d3_reco,
         },
         "note": "本函数只给证据与建议，**不改任何规则**。加闸门是产品决策，要用户拍板。",
+    }
+
+
+# ---------------- 本地时序库（v1.6.6 · 档二 C6） ----------------
+# **为什么必须落盘**：第 12/13 节的**所有**改进方向（阈值重标定、A/B 回放、ML 训练）都
+# 需要「某个 symbol 在某时刻的因子读数」。而此前唯一的持久化是 `radar_tracks` —— 它只在
+# **登记那一刻**拍一次快照（C4 把它从 5 列扩到 14 列），**登记之前的演化过程完全不存在**。
+# 于是「这只币在被登记前 3 小时，OI / 费率 / 价差长什么样」只能靠猜，也正因如此，
+# 所有回放都退化成「拿登记瞬间的几个数拟合这 20 笔」。
+#
+# **体量是可算的，不是「先存了再说」**：
+#   池子封顶 `top_n = 110` 币 → 每轮扫描 ≤ 110 行；后端雷达 TTL 300s → 每天 ≤ 288 轮
+#   → 每天 ≤ 31,680 行；单行 16 列 ≈ 160 B → **每天 ≈ 5.1 MB**，默认保留 14 天 ≈ 71 MB。
+# 保留期可用 env `BAZZ_TS_KEEP_DAYS` 覆盖；清理**每小时最多一次**（不每轮扫描都 DELETE）。
+TS_KEEP_DAYS = 14.0
+_TS_PRUNE_EVERY = 3600.0        # 清理节流窗口（秒）
+_ts_prune_at = 0.0
+# ⚠️ 列顺序与 `ts_append` 里构造的元组**必须一致** —— 顺序错位不会报错，只会静默错位。
+# 所以护栏里有「真实落库往返」断言（静态数个数查不出顺序问题，见 test_v164 的教训）。
+_TS_COLS = ("symbol", "ts", "price", "chg24", "oi_usd", "oi_chg24", "funding",
+            "mark_price", "index_price", "basis_bps", "spread_bps", "taker_ratio",
+            "liq_5m", "liq_side", "fut_qv", "fut_spread_bps")
+
+
+def ts_keep_days() -> float:
+    """保留期（天）。env `BAZZ_TS_KEEP_DAYS` 可覆盖；非法值一律回退默认，不抛。"""
+    raw = (os.environ.get("BAZZ_TS_KEEP_DAYS") or "").strip()
+    if raw:
+        try:
+            v = float(raw)
+            if v > 0:
+                return v
+        except Exception:
+            pass
+    return TS_KEEP_DAYS
+
+
+def _ts_num(v):
+    """转 float；**非数值 / 空串 / NaN / inf → None**（未测到），绝不写 0。"""
+    if v is None or isinstance(v, bool):
+        return None
+    try:
+        f = float(v)
+    except Exception:
+        return None
+    return f if f == f and f not in (float("inf"), float("-inf")) else None
+
+
+@_serialized
+def ts_append(rows: list) -> int:
+    """批量写入时序行（**幂等**：同 `(symbol, ts)` 用 REPLACE 覆盖）。
+
+    调用方是行情扫描热路径，所以：① 一次事务批量写；② **任何异常都吞掉** ——
+    时序库是**旁路**，绝不能因为落盘失败让雷达整体报错；③ 返回真正写入的行数，
+    供测试与体检使用（这个返回值就是「到底存没存下来」的观测点）。
+    """
+    if not rows:
+        return 0
+    vals = []
+    for r in rows:
+        if not r or not r.get("symbol"):
+            continue
+        ts = _ts_num(r.get("ts"))
+        if not ts or ts <= 0:
+            continue
+        vals.append((
+            str(r.get("symbol")),
+            ts,
+            _ts_num(r.get("price")),
+            _ts_num(r.get("chg24")),
+            _ts_num(r.get("oi_usd")),
+            _ts_num(r.get("oi_chg24")),
+            _ts_num(r.get("funding")),
+            _ts_num(r.get("mark_price")),
+            _ts_num(r.get("index_price")),
+            _ts_num(r.get("basis_bps")),
+            _ts_num(r.get("spread_bps")),
+            _ts_num(r.get("taker_ratio")),
+            _ts_num(r.get("liq_5m")),
+            (str(r.get("liq_side")) if r.get("liq_side") else None),
+            _ts_num(r.get("fut_qv")),
+            _ts_num(r.get("fut_spread_bps")),
+        ))
+    if not vals:
+        return 0
+    try:
+        c = _conn_get()
+        c.executemany(
+            "INSERT OR REPLACE INTO ts_series (" + ", ".join(_TS_COLS) + ") VALUES ("
+            + ", ".join("?" * len(_TS_COLS)) + ")", vals)
+        c.commit()
+    except Exception:
+        return 0
+    _ts_maybe_prune()
+    return len(vals)
+
+
+def _ts_maybe_prune() -> None:
+    """按节流窗口触发清理；失败不影响写入。"""
+    global _ts_prune_at
+    now = time.time()
+    if now - _ts_prune_at < _TS_PRUNE_EVERY:
+        return
+    _ts_prune_at = now
+    ts_prune()
+
+
+@_serialized
+def ts_prune(keep_days: float = 0.0) -> int:
+    """删除早于保留期的行，返回删除条数（0 也可能是「异常已吞」—— 调用方不应据此判错）。"""
+    days = float(keep_days or 0) or ts_keep_days()
+    cutoff = time.time() - days * 86400.0
+    try:
+        c = _conn_get()
+        cur = c.execute("DELETE FROM ts_series WHERE ts < ?", (cutoff,))
+        c.commit()
+        return int(cur.rowcount or 0)
+    except Exception:
+        return 0
+
+
+def ts_range(symbol: str, since: float = 0.0, until: float = 0.0, limit: int = 0) -> list:
+    """某 symbol 的时间序列（**按 ts 升序**）。`since`/`until` 为 0 表示不限；`limit=0` 不限条数。"""
+    sql = "SELECT * FROM ts_series WHERE symbol=?"
+    args: list = [symbol]
+    if since:
+        sql += " AND ts >= ?"
+        args.append(float(since))
+    if until:
+        sql += " AND ts <= ?"
+        args.append(float(until))
+    sql += " ORDER BY ts ASC"
+    if limit:
+        sql += " LIMIT ?"
+        args.append(int(limit))
+    try:
+        return [dict(r) for r in _conn_get().execute(sql, tuple(args)).fetchall()]
+    except Exception:
+        return []
+
+
+def ts_symbols(limit: int = 0) -> list:
+    """有数据的 symbol，按最新 ts 降序（`limit=0` 不限）。"""
+    sql = ("SELECT symbol, MAX(ts) AS last_ts, COUNT(*) AS n FROM ts_series "
+           "GROUP BY symbol ORDER BY last_ts DESC")
+    args: tuple = ()
+    if limit:
+        sql += " LIMIT ?"
+        args = (int(limit),)
+    try:
+        return [dict(r) for r in _conn_get().execute(sql, args).fetchall()]
+    except Exception:
+        return []
+
+
+def ts_stats() -> dict:
+    """时序库体检：行数 / 币数 / 时间跨度 / 保留期。
+
+    与 §16 的阈值命中率同源动机：**让「到底存没存下来」可见**。
+    没有这个数，C6 极易退化成「代码写了、库里是空的」而无人察觉。
+    """
+    try:
+        r = _conn_get().execute(
+            "SELECT COUNT(*) AS n, COUNT(DISTINCT symbol) AS syms, "
+            "MIN(ts) AS oldest, MAX(ts) AS newest FROM ts_series").fetchone()
+    except Exception:
+        return {"rows": 0, "symbols": 0, "oldest": 0, "newest": 0, "keep_days": ts_keep_days()}
+    return {
+        "rows": int(r["n"] or 0), "symbols": int(r["syms"] or 0),
+        "oldest": int(r["oldest"] or 0), "newest": int(r["newest"] or 0),
+        "keep_days": ts_keep_days(),
     }
 
 

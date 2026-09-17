@@ -217,16 +217,74 @@ def test_pick_prefers_existing_key():
     check("_pick：两边都没有 → None", P({}, {}, "a") is None)
 
 
+# ---------------- 2b) INSERT 语句解析（v1.6.6 扩列后重写） ----------------
+# 原实现直接对源码做整段子串匹配（`") VALUES"` / `"outcome_price,snap_chg24,..."`），
+# 这是**排版耦合**：v1.6.6 把 5 个快照列扩到 14 个、顺手按语义分组折行之后，
+# 子串立刻不再连续，两处断言一个 FAIL 一个直接 ValueError 崩掉。
+# 断言本身（列数 = 占位符数）是对的，错的是「靠换行位置去认 SQL」这个手段。
+# 现在改成：把相邻字符串字面量**拼回一条 SQL** 再解析，与排版无关。
+
+def _insert_sql(src: str) -> str:
+    """拼回 `INSERT INTO radar_tracks ... VALUES (...)` 的完整 SQL 文本。
+
+    源码把它拆成多行字符串做可读性排版，这里逐行取字面量直到遇见非字符串行。
+    """
+    i = src.index('"INSERT INTO radar_tracks (')
+    parts = []
+    for ln in src[i:].splitlines():
+        s = ln.strip()
+        if not s.startswith('"'):
+            break
+        parts.append(s[1:s.index('"', 1)])
+    return "".join(parts)
+
+
 def test_schema_has_snapshot_columns():
-    """建表 + 老库迁移两条路都要有这 5 列。"""
+    """建表 + 老库迁移两条路都要有这 14 列。"""
     src = _src("state.py")
-    for col in ("snap_chg24", "snap_oi24", "snap_amp24", "snap_funding", "snap_rvol15"):
+    SNAP_COLS = ("snap_chg24", "snap_oi24", "snap_amp24", "snap_funding", "snap_rvol15",
+                 "snap_taker", "snap_oi15", "snap_top", "snap_top48", "snap_glob",
+                 "snap_liq5m", "snap_liqside", "snap_basis", "snap_spread")
+    for col in SNAP_COLS:
         check(f"建表：{col} 出现在 CREATE TABLE 与 ALTER 迁移里", src.count(col) >= 2,
               str(src.count(col)))
     check("迁移：沿用「缺列才 ALTER」模式（老库安全）",
           'if rtcols and _scol not in rtcols:' in src)
-    check("插入：INSERT 语句含 5 个快照列",
-          "outcome_price,snap_chg24,snap_oi24,snap_amp24,snap_funding,snap_rvol15," in src)
+    # 插入列清单必须与迁移清单**同集合** —— 少一列就是「加了字段却永不落库」的静默漏写
+    sql = _insert_sql(src)
+    cols = [c.strip() for c in sql[sql.index("(") + 1:sql.index(") VALUES")].split(",") if c.strip()]
+    check("插入：14 个快照列全部出现在 INSERT 列清单里",
+          all(c in cols for c in SNAP_COLS),
+          f"缺 {[c for c in SNAP_COLS if c not in cols]}")
+
+
+def test_snapshot_roundtrip_all_14_columns():
+    """行为护栏：14 个快照列真的能写进去、读出来（静态解析替代不了这一步）。
+
+    v1.6.6 之前只有 5 列，扩列时最容易犯的错是「列名加了、值没加」或「顺序错位」——
+    静态数个数查不出顺序错位，只有真落库再读回才能发现（SQLite 位置绑定按顺序）。
+    """
+    sym = "RT14USDT"
+    snap = {"chg24": 3.5, "oi24": 7.25, "amp24": 18.0, "funding": -0.0004, "rvol15": 2.6,
+            "taker": 1.42, "oi15": 1.1, "top": 1.8, "top48": 1.55, "glob": 0.92,
+            "liq5m": 350000.0, "liqside": "long", "basis": -4.56, "spread": 1.2}
+    tid = state.radar_track_add(sym, "IGNITION", 2.0, 30, ["回放护栏"], direction="LONG",
+                                found_at=1_700_000_000, snap=snap)
+    check("往返：radar_track_add 返回了 id", bool(tid), str(tid))
+    row = next((r for r in state.radar_tracks_list("pending") if r["id"] == tid), None)
+    if row is None:
+        check("往返：能在 pending 列表里读回该行", False)
+        return
+    for k, v in snap.items():
+        got = row.get(f"snap_{k}")
+        # liqside 是 TEXT，其余是 REAL —— 用 float 比较，避免 int/float 表述差异
+        ok = (got == v) if isinstance(v, str) else (got is not None and float(got) == float(v))
+        check(f"往返：snap_{k} 落库并读回 == {v!r}", ok, f"got={got!r}")
+    # 子字典视图（C4 新增，供回放脚本一次性取用）必须与平铺键同值
+    sub = row.get("snap") or {}
+    check("往返：snap 子字典含 14 键且与平铺键同值",
+          len(sub) == 14 and all(sub.get(k) == row.get(f"snap_{k}") for k in snap),
+          f"keys={sorted(sub)}")
 
 
 def test_state_decorator_not_displaced():
@@ -242,16 +300,12 @@ def test_state_decorator_not_displaced():
     check("护栏：_snap_val 是纯函数、不带 @_serialized",
           "@_serialized" not in head2, head2[-60:].replace("\n", "\\n"))
     # INSERT 列数与占位符数必须配平（手工改过 SQL 后最容易错在这里）
-    sql = src[src.index('"INSERT INTO radar_tracks'):]
-    sql = sql[:sql.index("VALUES") + 200]
-    cols = src[src.index("INSERT INTO radar_tracks ("):]
-    cols = cols[:cols.index(") VALUES")]
-    n_cols = len([c for c in cols[cols.index("(") + 1:].split(",") if c.strip()])
-    vals = sql[sql.index("VALUES") + len("VALUES"):]
-    vals = vals[:vals.index(")")]
-    n_vals = len([v for v in vals.split(",") if v.strip()])
-    check("护栏：INSERT 列数 = 占位符数", n_cols == n_vals and n_cols == 23,
-          f"cols={n_cols} vals={n_vals}")
+    sql = _insert_sql(src)
+    cols = [c for c in sql[sql.index("(") + 1:sql.index(") VALUES")].split(",") if c.strip()]
+    vals = [v for v in sql[sql.index("VALUES") + len("VALUES"):sql.rindex(")")].split(",") if v.strip()]
+    # v1.6.6：23 → 32（+9 个确认层/档一快照列）
+    check("护栏：INSERT 列数 = 占位符数 = 32", len(cols) == len(vals) == 32,
+          f"cols={len(cols)} vals={len(vals)}")
 
 
 # ---------------- 3) OPT-01：取价三级兜底 ----------------
@@ -325,7 +379,8 @@ def main():
     for fn in (test_oi_gate_replay, test_oi_gate_wiring,
                test_snap_val_semantics, test_snapshot_persisted,
                test_record_from_radar_writes_snapshot, test_pick_prefers_existing_key,
-               test_schema_has_snapshot_columns, test_state_decorator_not_displaced,
+               test_schema_has_snapshot_columns, test_snapshot_roundtrip_all_14_columns,
+               test_state_decorator_not_displaced,
                test_current_price_fallback, test_tick_merges_futures_snapshot,
                test_neg_funding_penalty_downweighted):
         fn()

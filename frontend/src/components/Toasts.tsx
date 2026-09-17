@@ -90,13 +90,20 @@ export default function Toasts() {
         // v1.5.2：妖币追踪结局（启动前发现 → 暴涨/暴跌兑现 / 到期）
         if (kind === "radar_outcome") {
           const oc = String(e.outcome ?? "");
+          // v1.6.9（档二 #10）：后端在毛盈亏之外并列下发 `pnl_net_usdt`（含 taker 手续费 +
+          // 滑点 + 资金费率）。这里**只加不减**：毛值照旧显示，净值用括号补在后面。
+          // 若拿净值替换毛值，历史告警与新增告警就会变成两个口径，而界面上看不出区别。
+          const pnlU = (v: any) => `${Number(v) >= 0 ? "+" : ""}${Number(v).toFixed(0)}U`;
+          const netSuffix = (e.pnl_net_usdt != null && e.pnl_usdt != null
+            && Math.abs(Number(e.pnl_net_usdt) - Number(e.pnl_usdt)) >= 1)
+            ? t("alert.netPnl", { net: pnlU(e.pnl_net_usdt) }) : "";
           if (oc === "hold") {
             // v1.5.8：达标（+25%）但动能未反转 → 转持有模式移动止盈
             const title = t("alert.radarHold");
             const body = t("alert.radarHoldBody", {
               found: e.found_price != null ? fmtPrice(Number(e.found_price)) : "—",
               price: px,
-              pnl: e.pnl_usdt != null ? `${Number(e.pnl_usdt) >= 0 ? "+" : ""}${Number(e.pnl_usdt).toFixed(0)}U` : "—",
+              pnl: e.pnl_usdt != null ? `${pnlU(e.pnl_usdt)}${netSuffix}` : "—",
             });
             pushToast(title, `${sym} · ${body}`, "info");
             systemNotify(title, `${sym} · ${body}`);
@@ -109,7 +116,7 @@ export default function Toasts() {
             gain: Number(e.max_gain_pct ?? 0).toFixed(1),
             drop: Number(e.max_drop_pct ?? 0).toFixed(1),
           });
-          const pnlTxt = e.pnl_usdt != null ? ` · ${Number(e.pnl_usdt) >= 0 ? "+" : ""}${Number(e.pnl_usdt).toFixed(0)}U` : "";
+          const pnlTxt = e.pnl_usdt != null ? ` · ${pnlU(e.pnl_usdt)}${netSuffix}` : "";
           pushToast(title, `${sym} · ${body}${pnlTxt}`, oc === "moon" ? "ok" : oc === "dump" ? "bad" : "info");
           systemNotify(title, `${sym} · ${body}${pnlTxt}`);
           return;

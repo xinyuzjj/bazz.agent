@@ -79,6 +79,16 @@ def get_snapshot(quote: str = "USDT", limit: int = 0, use_cache: bool = True) ->
                         "low": float(d.get("lowPrice") or 0),
                         # v1.5.0：成交笔数（妖币 v2 刷量过滤：成交额/笔数=单笔均额）
                         "count": int(float(d.get("count") or 0)),
+                        # v1.6.6（档一「已付费未取用」）：现货 ticker **带 bid/ask/bidQty/askQty**，
+                        # 此前整体丢弃。买卖价差是最早的流动性恶化信号（盘口先变薄，价格与成交量后动），
+                        # 且与「现货无深度」这个控盘指纹同源，是它的**实时版本**。
+                        # 注：合约 ticker **没有** bid/ask（2026-09 实测字段全集里不含），
+                        # 所以纯合约币拿不到价差 —— 那类币只能标「未测到」，不能拿别的数凑。
+                        "bid": float(d.get("bidPrice") or 0),
+                        "ask": float(d.get("askPrice") or 0),
+                        "bid_qty": float(d.get("bidQty") or 0),
+                        "ask_qty": float(d.get("askQty") or 0),
+                        "weighted_avg_price": float(d.get("weightedAvgPrice") or 0),
                     })
                 except (TypeError, ValueError):
                     continue
@@ -90,20 +100,190 @@ def get_snapshot(quote: str = "USDT", limit: int = 0, use_cache: bool = True) ->
 
 
 FUNDING_TTL = 30.0  # 秒；资金费率批量拉取较稳，加短 TTL 缓存避免每个 30s 轮询都全量打 premiumIndex
-_funding_cache = {"ts": 0.0, "rates": {}}
+# v1.7.1（#10）：币安**默认**资金费率结算周期（小时）。与 `radar_tracker.FUNDING_CYCLE_H`
+# 同义，两侧都只用在「周期未测到时的回退」上 —— 有护栏断言两者相等，防止以后只改一边。
+FUNDING_CYCLE_DEFAULT_H = 8.0
+# v1.6.6（档一「已付费未取用」）：`premiumIndex` 的响应本来就同时返回
+# `markPrice` / `indexPrice` / `nextFundingTime` / `interestRate` / `estimatedSettlePrice`，
+# 此前只取了 `lastFundingRate`，其余全丢。缓存结构因此扩成 `meta`（逐币全字段）。
+# `markPrice − indexPrice` 的背离是外部文献里「跨所标记价格操纵」的直接观测量：
+# 标记价被单向拉离指数价，意味着有人在用标记价推动强平（而不是真实成交）。
+_funding_cache = {"ts": 0.0, "rates": {}, "meta": {}}
+
+
+def get_funding_meta() -> dict:
+    """逐币 `premiumIndex` 全字段（v1.6.6）。
+
+    返回 `{symbol: {"funding", "mark_price", "index_price", "next_funding_ts",
+    "interest_rate", "est_settle", "basis_bps"}}`。
+    `basis_bps` = 标记价对指数价的偏离（基点），**符号有意义**：正 = 标记价高于指数价。
+    与 `get_funding_rates` 共用同一份缓存，不产生额外请求。
+    """
+    get_funding_rates()          # 负责拉取 + 填充缓存（含 meta）
+    return _funding_cache["meta"] or {}
+
+
+# v1.7.1（#10 成本模型修正）：**资金费率结算周期并非全市场统一 8 小时**。
+# 实测 `/fapi/v1/fundingInfo`（782 条，覆盖成交额前 110 全部）分布为：
+#     8h = 312 个 ／ **4h = 467 个** ／ **1h = 3 个**
+# 即 4 小时周期才是多数；成交额前 110 里有 **40 个**是 4h（ENA/HYPE/ONDO/TRUMP/PENGU/
+# TAO/PUMP/ZEC/XAU…）。而成本模型此前把周期**硬编码成 8h** ——
+# 对这 40 个币的资金费率成本**低估 2 倍**，对 1h 周期的低估 8 倍。
+# 这是「数字看起来没问题、方向却系统性偏乐观」的典型：不报错、不飘红，只是偏。
+#
+# `fundingInfo` 变化极慢（调整结算频率是公告级事件），给长 TTL 6 小时。
+# 拿不到 → `measured=False`，调用方必须回退默认 8h 并把「未测到」如实标出，
+# **不得**把「没测到周期」悄悄当成某个具体周期（与全项目 None/0 语义纪律一致）。
+FUNDING_INFO_TTL = 21600.0   # 6 小时
+_funding_info_cache = {"ts": 0.0, "intervals": {}, "measured": False}
+
+
+# v1.7.1（#10 成本模型闭环）：**合约盘口价差**。
+# 成本模型里 `SLIP_PCT = 0.15%`（15bps/边）是**保守常数、非实测**，报告里写明
+# 「等 C6 时序库攒够「价差 + 成交额」样本再回来标定」。但那个闭环**当时是断的**：
+# `ts_series.spread_bps` 存的是**现货** ticker 的 bid/ask，而**纯合约币恒为 None** ——
+# 偏偏妖币里「只上合约、无现货深度」是经典形态，于是最该标定的那批币一个样本都不会有。
+#
+# 修法不是逐币打 `/fapi/v1/depth`（110 个币 = 110 次请求，且合约 ticker 不返回盘口），
+# 而是 `/fapi/v1/ticker/bookTicker` **不带 symbol**：实测一次返回**全市场 766 个**合约的
+# `bidPrice`/`askPrice`（1.64s，1 次请求）。于是全市场价差一次到位，零扇出。
+# 实测（v1.7.1）中位 3.97bps / p90 9.81bps / max 29.11bps —— 与假设的 15bps/边 同量级
+# 且更小，说明常数方向**偏保守**（高估成本，不会把结论说得好听）。
+BOOK_TTL = 30.0   # 秒；与 FUNDING_TTL 同量级（盘口变化快，但成本标定不需要秒级精度）
+_book_cache = {"ts": 0.0, "spreads": {}, "measured": False}
+
+
+def get_book_spreads() -> tuple:
+    """全市场**合约**盘口价差（基点）。返回 `(spreads, measured)`（v1.7.1）。
+
+    `spreads` = `{symbol: bps}`，`bps = (ask − bid) / mid × 1e4`（mid = (ask+bid)/2）。
+    `measured` 语义与 `get_funding_intervals` 一致：True = 真读到了，False = 失败兜底。
+
+    只收 `bid>0 且 ask>0 且 ask>=bid` 的行：缺字段/零价/交叉盘一律**不入表**（宁可留空
+    = 未测到，也不写 0 —— 0 会被读成「零价差」即「完美流动性」，那是相反的结论）。
+    30s TTL；失败返回上次成功内容（可能为空表），`measured` 保持上次的值。
+    """
+    now = time.time()
+    if _book_cache["measured"] and now - _book_cache["ts"] < BOOK_TTL:
+        return _book_cache["spreads"], True
+    try:
+        r = _session.get(f"{FAPI}/fapi/v1/ticker/bookTicker", timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        if not isinstance(data, list) or not data:
+            raise ValueError("bookTicker empty/not a list")
+        out: dict = {}
+        for d in data:
+            sym = str(d.get("symbol") or "")
+            if not sym:
+                continue
+            try:
+                b = float(d.get("bidPrice") or 0)
+                a = float(d.get("askPrice") or 0)
+            except (TypeError, ValueError):
+                continue
+            if b > 0 and a >= b:
+                mid = (a + b) / 2.0
+                if mid > 0:
+                    out[sym] = round((a - b) / mid * 1e4, 2)
+        if not out:
+            raise ValueError("bookTicker yielded no usable spreads")
+        _book_cache.update({"ts": now, "spreads": out, "measured": True})
+        return out, True
+    except Exception:
+        return _book_cache["spreads"], bool(_book_cache["measured"])
+
+
+def get_funding_intervals() -> tuple:
+    """逐币资金费率**结算周期**（小时）。返回 `(intervals, measured)`（v1.7.1）。
+
+    `intervals` = `{symbol: 4.0 / 8.0 / 1.0}`，只取 `fundingIntervalHours`
+    （响应里的 `adjustedFundingRateCap/Floor` 是费率上下限，本轮不消费 —— 留着不动，
+    免得再落一个「已付费未取用」）。
+
+    `measured` = 本次是否**真的从接口读到了**（True）/ 走的是失败兜底（False）。
+    这个布尔是必须的：`intervals` 里查不到某个币，既可能是「该币用默认 8h」，
+    也可能是「接口压根没通」—— 两者对成本的结论完全不同，不能合并成同一个 `{}`。
+    TTL 6 小时；失败时返回**上一次成功的内容**（若有），否则空表。
+    """
+    now = time.time()
+    if _funding_info_cache["measured"] and now - _funding_info_cache["ts"] < FUNDING_INFO_TTL:
+        return _funding_info_cache["intervals"], True
+    try:
+        r = _session.get(f"{FAPI}/fapi/v1/fundingInfo", timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        if not isinstance(data, list) or not data:
+            raise ValueError("fundingInfo empty/not a list")
+        iv: dict = {}
+        for d in data:
+            sym = str(d.get("symbol") or "")
+            if not sym:
+                continue
+            try:
+                h = float(d.get("fundingIntervalHours") or 0)
+            except (TypeError, ValueError):
+                continue
+            # 只收正数：0 / 负数 / 非数值一律不收（宁可回退默认 8h，也不接受一个
+            # 会让 `hours / interval` 除零或翻符号的周期）。
+            if h > 0:
+                iv[sym] = h
+        if not iv:
+            raise ValueError("fundingInfo yielded no usable intervals")
+        _funding_info_cache.update({"ts": now, "intervals": iv, "measured": True})
+        return iv, True
+    except Exception:
+        # 失败：退回上次成功的内容（可能是空表）。`measured` 保持上次的值 ——
+        # 若从未成功过，仍是 False，调用方据此知道「这是默认值不是实测值」。
+        return _funding_info_cache["intervals"], bool(_funding_info_cache["measured"])
 
 
 def get_funding_rates() -> dict:
-    """一次性拉取所有交易对的资金费率（避免逐币请求）。~30s TTL 缓存。失败回退单请求。"""
+    """一次性拉取所有交易对的资金费率（避免逐币请求）。~30s TTL 缓存。失败回退单请求。
+
+    v1.6.6：同一响应里顺手取走 `markPrice` / `indexPrice` / `nextFundingTime` /
+    `interestRate`（见 `_funding_cache["meta"]`）—— 零额外请求。
+    """
     now = time.time()
     if _funding_cache["rates"] and now - _funding_cache["ts"] < FUNDING_TTL:
         return _funding_cache["rates"]
+    rates: dict = {}
+    meta: dict = {}
     try:
         r = _session.get(f"{FAPI}/fapi/v1/premiumIndex", timeout=10)
         r.raise_for_status()
-        rates = {d["symbol"]: float(d.get("lastFundingRate", 0) or 0) for d in r.json()}
+        for d in r.json():
+            sym = str(d.get("symbol") or "")
+            if not sym:
+                continue
+            rates[sym] = float(d.get("lastFundingRate", 0) or 0)
+            try:
+                mp = float(d.get("markPrice") or 0)
+            except (TypeError, ValueError):
+                mp = 0.0
+            try:
+                ip = float(d.get("indexPrice") or 0)
+            except (TypeError, ValueError):
+                ip = 0.0
+            # 基差只在两价都有效时才算 —— 缺失写 None（未测到），绝不写 0
+            # （0 会被读成「标记价与指数价完全一致」，那是另一个意思）。
+            basis_bps = round((mp - ip) / ip * 1e4, 2) if (mp > 0 and ip > 0) else None
+            try:
+                nft = int(d.get("nextFundingTime") or 0)
+            except (TypeError, ValueError):
+                nft = 0
+            meta[sym] = {
+                "funding": rates[sym],
+                "mark_price": mp or None,
+                "index_price": ip or None,
+                "next_funding_ts": (nft // 1000) if nft else None,   # 毫秒 → 秒
+                "interest_rate": d.get("interestRate"),
+                "est_settle": d.get("estimatedSettlePrice"),
+                "basis_bps": basis_bps,
+            }
     except Exception:
         rates = {}
+        meta = {}
         for sym in TOP_SYMBOLS():  # 动态识别的大盘币（按当前成交额排序）
             try:
                 r = _session.get(f"{FAPI}/fapi/v1/fundingRate", params={"symbol": sym}, timeout=5)
@@ -112,6 +292,7 @@ def get_funding_rates() -> dict:
                 rates[sym] = 0.0
     _funding_cache["ts"] = now
     _funding_cache["rates"] = rates
+    _funding_cache["meta"] = meta
     return rates
 
 
@@ -392,8 +573,49 @@ def volume_heat(top: int = 15, quote: str = "USDT") -> list:
 FUTURES_TTL = 20.0  # 秒
 _futures_cache = {"ts": 0.0, "rows": []}
 # v1.6.3：合约「标的是加密币」白名单（exchangeInfo 的 underlyingType == "COIN"），6 小时缓存
+# v1.6.6（档一「已付费未取用」）：同一个响应里顺手取走 `onboardDate`（权威合约上线时间）
+# 与 `status`。此前只取了 underlyingType + symbol —— 响应里另外 6 个字段全被丢弃，
+# 而 onboardDate 恰好是 C1（新币过滤失效）的现成解药，零额外请求。
 FUT_CRYPTO_TTL = 6 * 3600.0
-_fut_crypto_cache = {"ts": 0.0, "syms": set()}
+_fut_crypto_cache = {"ts": 0.0, "syms": set(), "onboard": {}, "status": {}}
+
+
+def _fetch_exchange_meta() -> None:
+    """拉一次 exchangeInfo，刷新 `_fut_crypto_cache`（syms / onboard / status 一次取齐）。
+
+    只在这一个地方发请求，保证三个派生视图永远同源同批 —— 否则 syms 与 onboard
+    可能来自不同时刻的两次拉取，出现「币在白名单里但币龄查不到」的错配。
+    失败时**保持旧缓存不动**（不写空值），与扩池前的安全退化行为一致。
+    """
+    now = time.time()
+    try:
+        r = _session.get(f"{FAPI}/fapi/v1/exchangeInfo", timeout=20)
+        r.raise_for_status()
+        payload = r.json()
+    except Exception:
+        return
+    syms, onboard, status = set(), {}, {}
+    for c in payload.get("symbols", []) or []:
+        if not isinstance(c, dict):
+            continue
+        s = str(c.get("symbol") or "")
+        if not s:
+            continue
+        # onboardDate 是**毫秒**时间戳。缺失/非法写 None —— 消费方必须按「未知」处理，
+        # 不能当成 0（=1970 年，会被读成「上市 2 万年」）也不能当成「刚上市」。
+        ts = c.get("onboardDate")
+        try:
+            onboard[s] = float(ts) / 1000.0 if ts else None
+        except (TypeError, ValueError):
+            onboard[s] = None
+        status[s] = str(c.get("status") or "")
+        if str(c.get("underlyingType") or "") == "COIN":
+            syms.add(s)
+    if syms:
+        _fut_crypto_cache["syms"] = syms
+        _fut_crypto_cache["onboard"] = onboard
+        _fut_crypto_cache["status"] = status
+        _fut_crypto_cache["ts"] = now
 
 
 def futures_crypto_syms(use_cache: bool = True) -> set:
@@ -416,24 +638,30 @@ def futures_crypto_syms(use_cache: bool = True) -> set:
     now = time.time()
     if use_cache and _fut_crypto_cache["syms"] and now - _fut_crypto_cache["ts"] < FUT_CRYPTO_TTL:
         return set(_fut_crypto_cache["syms"])
-    try:
-        r = _session.get(f"{FAPI}/fapi/v1/exchangeInfo", timeout=20)
-        r.raise_for_status()
-        payload = r.json()
-    except Exception:
-        return set(_fut_crypto_cache["syms"])
-    syms = set()
-    for c in payload.get("symbols", []) or []:
-        if not isinstance(c, dict):
-            continue
-        if str(c.get("underlyingType") or "") == "COIN":
-            s = str(c.get("symbol") or "")
-            if s:
-                syms.add(s)
-    if syms:
-        _fut_crypto_cache["syms"] = syms
-        _fut_crypto_cache["ts"] = now
-    return syms
+    _fetch_exchange_meta()
+    return set(_fut_crypto_cache["syms"])
+
+
+def futures_listed_days(sym: str) -> float | None:
+    """合约上市天数（**权威口径**，来自 exchangeInfo 的 `onboardDate`）。
+
+    v1.6.6（问题清单 C1）：此前币龄靠**日线首根 K 线**反推（`_daily_feats` 里的
+    `listed_days = (now - first_ms)/86400`），有两个洞：
+      ① 上市不足 25 根的币拿不到日线（`_daily2_fetch` 直接返回 None）→ 根本走不到
+         币龄判断，整段过滤被跳过（这正是 C1 的静默豁免）；
+      ② 现货与合约上市日不同，日线首根只反映**所选那个市场**的历史长度。
+    改用 `onboardDate` 后，**任何有合约的币都能判币龄**，且是交易所权威值。
+
+    返回 `None` = **未知**（接口失败或字段缺失）。消费方必须把「未知」与
+    「已确认很新」分开处理 —— 把 None 当成 0 会让全市场都被判成新币。
+    """
+    now = time.time()
+    if not _fut_crypto_cache["onboard"] or now - _fut_crypto_cache["ts"] >= FUT_CRYPTO_TTL:
+        _fetch_exchange_meta()
+    ts = (_fut_crypto_cache["onboard"] or {}).get(sym)
+    if not ts:
+        return None
+    return max(0.0, (now - float(ts)) / 86400.0)
 
 
 def futures_snapshot(use_cache: bool = True) -> list:
@@ -460,6 +688,16 @@ def futures_snapshot(use_cache: bool = True) -> list:
             price = float(d.get("lastPrice") or 0)
             if price <= 0:
                 continue
+            # v1.6.6（档一「已付费未取用」）：ticker 响应里本来就有 `count`（成交笔数）与
+            # `weightedAvgPrice`，此前整体丢弃。
+            # ⚠️ 2026-09 实测：**合约 ticker 没有 bidPrice/askPrice**（字段全集只有 16 个，
+            # 不含盘口）。所以这里的 bid/ask 恒为 0、`spread_bps` 恒为 None —— 这是
+            # **诚实的「未测到」**，不是「价差为零」。合约侧的价差只能靠 `depth` 流
+            # 或 REST `/fapi/v1/depth` 拿，那是另一条路（见 §14.2）。
+            bid = float(d.get("bidPrice") or 0)
+            ask = float(d.get("askPrice") or 0)
+            mid = (ask + bid) / 2.0
+            spread_bps = round((ask - bid) / mid * 1e4, 2) if (bid > 0 and ask >= bid and mid > 0) else None
             out.append({
                 "symbol": sym,
                 "price": price,
@@ -467,6 +705,17 @@ def futures_snapshot(use_cache: bool = True) -> list:
                 "quote_volume": float(d.get("quoteVolume") or 0),
                 "high": float(d.get("highPrice") or 0),
                 "low": float(d.get("lowPrice") or 0),
+                # v1.6.6（问题清单 C2）：合约 ticker **确实带 `count`（成交笔数）** ——
+                # `_radar_pool` 此前把它无条件置 0，注释写「合约 ticker 无成交笔数」，
+                # 那是个**错误假设**：它让「单笔均额过低 = 假量」这条防线对池子里
+                # 57/110 的纯合约币整体失效（`if cnt > 0` 永不成立），而纯合约 + 无现货
+                # 深度恰恰是最容易刷量的形态。缺失时写 0（= 没测到），消费方以 `cnt > 0`
+                # 为前提，语义不变，不会把「没测到」误判成「没有成交」。
+                "count": int(float(d.get("count") or 0)),
+                "bid": bid,
+                "ask": ask,
+                "spread_bps": spread_bps,
+                "weighted_avg_price": float(d.get("weightedAvgPrice") or 0),
                 "funding_rate": float(rates.get(sym, 0) or 0),
                 "side": "future",
                 "kind": "futures",
@@ -770,14 +1019,45 @@ def _env_regime(bars: dict) -> dict:
 # 对外接口不变（agent_core meme_watch 与前端行情页共用）。
 import math
 
-RADAR2_TTL = 300.0          # 5 分钟一扫
+RADAR2_TTL = 300.0          # 5 分钟一扫（**默认值**；运行时可用 env BAZZ_RADAR2_TTL 覆盖，见 radar2_ttl）
 RADAR2_FLOOR = 5e6          # 过滤层：24h 成交额 ≥ $5M 流动性地板
 NEW_COIN_DAYS = 30          # 过滤层：上市 < 30 天排除
 RADAR2_COOLDOWN = 1800.0    # 过滤层：同币同阶段 30 分钟冷却（防重复报警刷屏）
 
 _radar2_cache = {"ts": 0.0, "data": None}
-_daily2_cache = {"ts": 0.0, "bars": {}}   # sym -> (o,h,l,c,v,first_ms)，30 分钟缓存
+# v1.6.6（问题清单 #9）：扫描级互斥锁 + 等待上限。见 get_radar_v2 的 docstring。
+RADAR2_LOCK_WAIT = 20.0
+_radar2_lock = threading.Lock()
+_daily2_cache = {"ts": 0.0, "bars": {}, "key": None}   # sym -> (o,h,l,c,v,first_ms)，30 分钟缓存
 _radar_prev: dict = {}                    # sym -> (cycle_ts, stage)
+
+
+# ---------------- 5.0 扫描节流（C3 端到端延迟治理的**后端一半**） ----------------
+# 问题清单 C3 记的端到端延迟 3~8 分钟，链路上有三个固定项：
+#   ① 触发层 15m K 线  ② 后端 RADAR2_TTL 缓存  ③ 前端 180s 轮询
+# 实测（v1.7.1）澄清 ① **不是瓶颈**：`/fapi/v1/klines` 返回的最后一根是**在途未收盘**
+# K 线（实测其 closeTime 比当前时间晚 713s），而触发层特征直接读 `c15[-1]`/`c5[-1]`，
+# 所以每轮扫描用的都是**当下最新价**，不存在「等 15 分钟收盘」的盲区。
+# 真正的固定延迟是 ② + ③。两者都做成可调/可见，而不是继续当常数写死：
+#   · ② 本函数：`BAZZ_RADAR2_TTL` 覆盖（运维可在「请求量」与「延迟」之间取舍，
+#     不必改代码）；默认仍是 300s，行为不变。
+#   · ③ 前端轮询间隔改 60s，并把 `age_sec`（数据已陈旧多少秒）显示出来 ——
+#     延迟从「静默发生」变成「看得见」，见 payload 的 `age_sec` / `stale`。
+def radar2_ttl() -> float:
+    """雷达 v2 缓存 TTL（秒）。env `BAZZ_RADAR2_TTL` 可覆盖；非法/非正/非有限值一律回退默认，不抛。
+
+    `inf` / `nan` 必须一起挡掉：`float("inf") > 0` 为真，放过去会让缓存**永不失效**
+    （表现为「雷达再也不更新」），而这是个只在有人手滑写错 env 时才出现的故障。
+    """
+    raw = (os.environ.get("BAZZ_RADAR2_TTL") or "").strip()
+    if raw:
+        try:
+            v = float(raw)
+            if v > 0 and math.isfinite(v):
+                return v
+        except Exception:
+            pass
+    return RADAR2_TTL
 
 
 # ---------------- 5.1 在途请求合并（同缓存键并发去重） ----------------
@@ -1046,6 +1326,161 @@ _MANIP_NEG_FUNDING = -0.0015   # 费率 ≤ −0.15% → 空头在给多头付�
 _TAKER_BUY_DOMINANT = 1.30
 
 
+# ---------------- 阈值命中率监控（v1.6.6 · 档一 §16） ----------------
+# **为什么需要它**：上面那条 `_TAKER_BUY_DOMINANT = 1.85` 自上线起命中 **0 个**，却在
+# 四处被使用 —— 这类「死规则」**不报错、不抛异常、也不会让任何测试变红**，只能靠
+# **命中率**暴露。§16 已指出：支撑闸门线的样本本就很薄（20 笔、9 笔、甚至 0 笔），
+# 一旦某条线再也够不着，系统会静默地少一个维度，而没有任何地方会说出来。
+#
+# 设计取舍：
+#   · **逐行计数、进程级累计**（不落库）—— 零新增依赖、零额外请求；冷启动后 1~2 轮扫描即有意义。
+#   · 分母是**走到语义层的候选行**（`d` 已合并确认层因子、已过过滤层）。为什么不把分母放到
+#     更前面：过滤层那几条（新币 / 刷量 / 假量）在命中时就已经 `continue` 掉了，
+#     若混进来会永远读到 0 命中而被误判「死规则」—— 那几条的可观测性已经由 payload 里的
+#     `excluded_new` / `excluded_wash` / `excluded_no_bars` 承担，不必在此重复。
+#   · 判「死」需要样本下限 `_THR_DEAD_MIN_ROWS`，避免冷启动（rows 很小）时误报。
+#   · 计数发生在 `_radar2_lock` 内（`_radar_v2_scan` 全程持锁），无需再加锁。
+_THR_HITS: dict = {"scans": 0, "rows": 0, "hits": {}, "since": 0.0}
+_THR_DEAD_MIN_ROWS = 200      # 少于此样本量不下「死规则」结论
+_THR_RULES: tuple = (
+    # (规则名, 说明) —— 说明会随 payload 下发，前端/技能可直接展示
+    ("trig_up_chg24", "触发：顺向涨幅 ≥ 3%"),
+    ("trig_late_chg24", "硬挡：涨幅 ≥ 10%（判定「你来晚了」）"),
+    ("trig_max_chg24", "追高：涨幅 > 12%（判 EXTENDED）"),
+    ("trig_max_oi24", "硬挡：OI 24h ≥ 5%（持仓已堆积）"),
+    ("trig_amp_ok", "振幅 ≥ 20%（活口线）"),
+    ("taker_buy_dominant", "买盘主导：taker 买比 ≥ 1.30"),
+    ("manip_no_spot", "控盘：现货成交占比 < 5%"),
+    ("manip_churn", "控盘：换手畸高 > 10x"),
+    ("manip_neg_funding", "控盘：空头付钱 ≤ −0.15%"),
+)
+_THR_NAMES = {k: v for k, v in _THR_RULES}
+
+
+def _thr_rules(d: dict, cf: dict) -> dict:
+    """一行命中了哪些阈值规则（纯函数，可单测）。键 = 规则名，值 = 是否命中。
+
+    ⚠️ 这里**只做判定、不做过滤** —— 与生产判据用同一个常量对象，保证「监控的就是在用的」。
+    凡「未测到」的字段一律判 False（fail-open），不得把缺失当成命中。
+    """
+    chg24 = float(d.get("chg24") or 0.0)
+    oi24 = d.get("oi_chg24")
+    amp24 = float(d.get("amp24") or 0.0)
+    tr = (cf or {}).get("taker_ratio")
+    fut_qv = float(d.get("fut_qv") or 0.0)
+    spot_qv = float(d.get("spot_qv") or 0.0)
+    oi_usd = float(d.get("oi_usd") or 0.0)
+    fund = d.get("funding")
+    return {
+        "trig_up_chg24": chg24 >= _TRIG_UP_CHG24,
+        "trig_late_chg24": chg24 >= _TRIG_LATE_CHG24,
+        "trig_max_chg24": chg24 > _TRIG_MAX_CHG24,
+        "trig_max_oi24": oi24 is not None and float(oi24) >= _TRIG_MAX_OI24,
+        "trig_amp_ok": amp24 >= _TRIG_AMP_OK,
+        "taker_buy_dominant": tr is not None and float(tr) >= _TAKER_BUY_DOMINANT,
+        # 控盘三项：与 `_manip_flags` 同口径（分母为 0 时不成立 —— 这是「没测到」，不是「命中」）
+        "manip_no_spot": bool(fut_qv > 0 and spot_qv / (fut_qv + spot_qv) < _MANIP_SPOT_SHARE_MIN),
+        "manip_churn": bool(oi_usd > 0 and fut_qv / oi_usd > _MANIP_CHURN_MAX),
+        "manip_neg_funding": fund is not None and float(fund) <= _MANIP_NEG_FUNDING,
+    }
+
+
+def _thr_tally(flags: dict) -> None:
+    """累计一次扫描的行命中（在 `_radar2_lock` 内调用）。"""
+    hits = _THR_HITS["hits"]
+    for k, v in flags.items():
+        if v:
+            hits[k] = hits.get(k, 0) + 1
+
+
+def _thr_new_scan() -> None:
+    """一轮扫描开始时调用（在 `_radar2_lock` 内）。"""
+    _THR_HITS["scans"] += 1
+    if not _THR_HITS["since"]:
+        _THR_HITS["since"] = time.time()
+
+
+def threshold_hitrate() -> dict:
+    """阈值命中率快照（供 payload / 技能 / 人工体检）。
+
+    返回 `rules[name] = {hits, rows, rate, dead}` + `dead_rules` 清单。
+    `dead=True` 的语义：**样本已够（≥ `_THR_DEAD_MIN_ROWS` 行）但一次都没命中** ——
+    这正是 `_TAKER_BUY_DOMINANT = 1.85` 当年的形态，必须被看见。
+    """
+    n = int(_THR_HITS["rows"] or 0)
+    rules = {}
+    for name, desc in _THR_RULES:
+        h = int(_THR_HITS["hits"].get(name, 0) or 0)
+        rules[name] = {
+            "desc": desc, "hits": h, "rows": n,
+            "rate": (round(h / n, 4) if n else 0.0),
+            "dead": bool(n >= _THR_DEAD_MIN_ROWS and h == 0),
+        }
+    return {
+        "scans": int(_THR_HITS["scans"] or 0),
+        "rows": n,
+        "since": int(_THR_HITS["since"] or 0),
+        "min_rows": _THR_DEAD_MIN_ROWS,
+        "dead_rules": sorted([k for k, v in rules.items() if v["dead"]]),
+        "rules": rules,
+    }
+
+
+def threshold_hitrate_reset() -> None:
+    """清零（仅测试与人工体检用；不在生产路径调用）。"""
+    _THR_HITS["scans"] = 0
+    _THR_HITS["rows"] = 0
+    _THR_HITS["hits"] = {}
+    _THR_HITS["since"] = 0.0
+
+
+# ---------------- 本地时序库落盘（v1.6.6 · 档二 C6） ----------------
+# 表与读写实现在 `state.py`（`ts_series` / `ts_append` / `ts_range` / `ts_stats`）。
+# 这里只负责「扫描时把行交出去」，并且**必须做成旁路**：
+#   ① 落盘失败绝不能让雷达报错（行情是主路径，历史数据是附属产物）；
+#   ② 用**惰性 import**，让 `scanner` 在「没有 state / 没有工作区」的上下文里
+#      （单文件脚本、离线复算、部分测试）仍能正常被导入 —— 模块顶层 import 会连坐。
+# 观测点：`_TS_LAST` 记录最近一次真正写入的行数，随 payload 的 `ts_store` 下发。
+# 没有这个数，C6 很容易退化成「代码写了、库里是空的」而无人察觉（同 §16 的动机）。
+_TS_LAST: dict = {"written": 0, "ts": 0.0}
+_TS_STATS_CACHE: dict = {"ts": 0.0, "data": None}
+_TS_STATS_TTL = 60.0        # `ts_stats()` 要 COUNT(*) 全表，payload 每次构建都算太浪费
+
+
+def _ts_persist(rows: list) -> int:
+    """把时序行交 `state` 落库；返回写入行数（失败返回 0，不抛）。"""
+    if not rows:
+        _TS_LAST["written"] = 0
+        return 0
+    try:
+        import state
+        n = int(state.ts_append(rows) or 0)
+    except Exception:
+        n = 0
+    _TS_LAST["written"] = n
+    _TS_LAST["ts"] = time.time()
+    return n
+
+
+def ts_store_view(force: bool = False) -> dict:
+    """时序库体检快照（供 payload / 技能 / 人工体检）。结果缓存 `_TS_STATS_TTL` 秒。"""
+    now = time.time()
+    cached = _TS_STATS_CACHE.get("data")
+    if cached is not None and not force and now - float(_TS_STATS_CACHE.get("ts") or 0) < _TS_STATS_TTL:
+        st = dict(cached)
+    else:
+        try:
+            import state
+            st = dict(state.ts_stats())
+        except Exception:
+            st = {"rows": 0, "symbols": 0, "oldest": 0, "newest": 0, "keep_days": 0}
+        _TS_STATS_CACHE["ts"] = now
+        _TS_STATS_CACHE["data"] = dict(st)
+    st["last_written"] = int(_TS_LAST.get("written") or 0)
+    st["last_ts"] = int(_TS_LAST.get("ts") or 0)
+    return st
+
+
 def _trigger_hit(t: dict, row: dict, range_ratio: float = 0.0) -> tuple:
     """触发层（v1.6.2）：返回 (命中?, 依据列表)。
     机会型命中必须在**顺向**上成立；振幅 / 量能等方向无关项只写进依据文本，不再单独触发。"""
@@ -1112,6 +1547,25 @@ def _daily2_fetch(sym: str):
     return (o, h, l, c, v, first_ms)
 
 
+def _spread_bps(bid, ask):
+    """买卖价差（基点）。任一腿缺失/为 0/交叉 → **None（未测到）**，绝不写 0。
+
+    v1.6.6（档一）：现货 ticker 带 bid/ask，合约 ticker 不带（实测），
+    所以纯合约币这里恒为 None —— 那是诚实的「拿不到」，不是「流动性完美」。
+    """
+    try:
+        b = float(bid or 0)
+        a = float(ask or 0)
+    except (TypeError, ValueError):
+        return None
+    if b <= 0 or a <= 0 or a < b:
+        return None
+    mid = (a + b) / 2.0
+    if mid <= 0:
+        return None
+    return round((a - b) / mid * 1e4, 2)
+
+
 def _radar_pool(top_n: int, min_qv: float) -> list:
     """v1.6.3 妖币候选池 = **现货 ∪ 合约**（按 `rank_qv` 降序，取前 top_n）。
 
@@ -1134,6 +1588,8 @@ def _radar_pool(top_n: int, min_qv: float) -> list:
         m["rank_qv"] = qv
         m["spot_qv"] = qv
         m["no_spot"] = False
+        # v1.6.6（档一）：现货行能算价差；纯合约行在下面显式写 None。
+        m["spread_bps"] = _spread_bps(m.get("bid"), m.get("ask"))
         merged[m["symbol"]] = m
     try:
         fut_rows = futures_snapshot()
@@ -1157,7 +1613,14 @@ def _radar_pool(top_n: int, min_qv: float) -> list:
         m["rank_qv"] = fq
         m["spot_qv"] = 0.0
         m["no_spot"] = True
-        m["count"] = 0                    # 合约 ticker 无成交笔数 → 刷量检查自然跳过
+        # 纯合约行：合约 ticker 无 bid/ask → 价差拿不到，写 None（未测到）。
+        m["spread_bps"] = _spread_bps(m.get("bid"), m.get("ask"))
+        # v1.6.6（问题清单 C2）：此前无条件写 0，注释称「合约 ticker 无成交笔数」。
+        # 该假设是错的 —— `/fapi/v1/ticker/24hr` 的响应带 `count`，已在
+        # `futures_snapshot` 中取用。置 0 的后果是「单笔均额过低 = 假量」这条
+        # 防线对**池子里 57/110 的纯合约币**整体失效（`if cnt > 0` 永不成立），
+        # 而纯合约 + 无现货深度恰恰是最容易刷量的形态 —— 防线在最需要它的地方关着。
+        m["count"] = int(r.get("count") or 0)
         merged[sym] = m
     rows = [r for r in merged.values()
             if (r.get("rank_qv") or 0) >= min_qv and _is_eligible(r["symbol"])]
@@ -1166,9 +1629,17 @@ def _radar_pool(top_n: int, min_qv: float) -> list:
 
 
 def _daily2_bars(top_n: int, min_qv: float, force: bool = False, workers: int = 10) -> dict:
-    """并发拉扫描池日线（30 分钟缓存；妖币 v2 专用，与 v1 _bars_cache 分离）。"""
+    """并发拉扫描池日线（30 分钟缓存；妖币 v2 专用，与 v1 _bars_cache 分离）。
+
+    v1.6.6（问题清单 #10）：缓存键纳入 `(top_n, min_qv)`。此前命中条件只看
+    「非空 + 未过期」，**不比较这两个参数** —— 传 110 与传 120 会拿到同一份池子。
+    实际影响面不大（`get_radar_v2` 默认 110、`agent_core` 传 120），
+    但属于隐性耦合：一旦有人按不同 top_n 做对比实验，拿到的会是同一批数据而不自知。
+    """
     now = time.time()
-    if not force and _daily2_cache["bars"] and now - _daily2_cache["ts"] < 1800:
+    key = (int(top_n), float(min_qv))
+    if not force and _daily2_cache["bars"] and _daily2_cache.get("key") == key \
+            and now - _daily2_cache["ts"] < 1800:
         return _daily2_cache["bars"]
     rows = _radar_pool(top_n, min_qv)
     out = {}
@@ -1182,6 +1653,7 @@ def _daily2_bars(top_n: int, min_qv: float, force: bool = False, workers: int = 
             if kv:
                 out[futs[fut]] = kv
     _daily2_cache["bars"] = out
+    _daily2_cache["key"] = key
     _daily2_cache["ts"] = now
     return out
 
@@ -1283,14 +1755,33 @@ def _funding_hist(sym: str, limit: int = 21) -> list:
     return _dedupe_fetch(("fundhist", sym, limit), _fetch)
 
 
+def _liq_source_available() -> bool:
+    """强平数据源当前是否真的在供数（v1.6.6，问题清单 D1）。
+
+    包一层是为了「雷达没有强平数据」这件事在 payload 层面可见，
+    同时让 market_ws 未启动（测试、无 WS 依赖）时安全返回 False 而不抛异常。
+    """
+    try:
+        import market_ws
+        return bool(market_ws.liq_available())
+    except Exception:
+        return False
+
+
 def _confirm_factors(sym: str, funding_now: float) -> dict:
     """确认层因子：OI 四象限/脉冲、funding 极值、大户/散户多空比、taker 买卖比、爆仓流。
-    任一接口失败安全降级（0/None），绝不因确认层挂掉丢触发信号。"""
+    任一接口失败安全降级（0/None），绝不因确认层挂掉丢触发信号。
+
+    v1.6.6（问题清单 D1）：`liq_5m` / `liq_n5m` 的默认值由 `0.0` / `0` 改为 **`None`**。
+    原因见下方强平流分支注释 —— 该流在部署地区不推数据，而恒写 0 会与
+    「真的没有爆仓」完全无法区分，属于静默失效。
+    """
     f = {"oi_chg24": 0.0, "oi_chg48": 0.0, "oi_pulse15": 0.0, "oi_last": 0.0,
          "funding": funding_now,
          "funding_peak": funding_now, "funding_prev": None, "top_ratio": None,
          "top_mean48": None, "global_ratio": None, "taker_ratio": None,
-         "taker_drop": False, "liq_5m": 0.0, "liq_side": "", "liq_n5m": 0}
+         "taker_drop": False, "liq_5m": None, "liq_side": "", "liq_n5m": None,
+         "liq_available": False}
     oi = _fut_hist(sym, "openInterestHist", period="15m", limit=197)
     if len(oi) >= 13:
         try:
@@ -1336,12 +1827,26 @@ def _confirm_factors(sym: str, funding_now: float) -> dict:
             f["funding_prev"] = fh[-1] if len(fh) >= 1 else None
         except Exception:
             pass
+    # 强平流（v1.6.6，问题清单 D1）：WS `!forceOrder@arr` 在部署地区**连得上但不推流**
+    # —— 2026-09 实测观察 109 秒 **0 帧**（同域 `btcusdt@depth@100ms` 10 秒 5 帧，对照组正常），
+    # 且**没有公开 REST 兜底**（`/fapi/v1/allForceOrders` 已 404，`/fapi/v1/forceOrders` 需
+    # API key 且只返回本账户强平单）。即这个数据源在当前环境下**整体不可用**。
+    #
+    # 此前无论可用与否都写 `liq_5m = 0.0`，于是「数据源没推流」与「真的没有爆仓」
+    # 在数值上完全一样。它挂在三处：reasons 的「爆仓 $X M/5m」、`_radar_score` 的加分、
+    # `_reversal_now` 的反转因子 —— 三处**静默空转**，与 `_TAKER_BUY_DOMINANT = 1.85`
+    # 那条「自上线起命中 0 个」的死规则同类，但更难发现（因为 0 看起来是个合法读数）。
+    #
+    # 现在按「未测到 → None」写入。全部展示侧消费方本来就写的是 `if f.get("liq_5m"):`
+    # 或 `(x or 0) >= 3e5`，拿到 None 会自然跳过，不会再谎报「爆仓 $0.0M」。
     try:
         import market_ws
         ls = market_ws.liq_symbol_stats(sym, window=300)
-        f["liq_5m"] = float(ls.get("quote") or 0)
-        f["liq_side"] = str(ls.get("side") or "")
-        f["liq_n5m"] = int(ls.get("count") or 0)
+        if ls.get("available"):
+            f["liq_available"] = True
+            f["liq_5m"] = float(ls.get("quote") or 0.0)
+            f["liq_side"] = str(ls.get("side") or "")
+            f["liq_n5m"] = int(ls.get("count") or 0)
     except Exception:
         pass
     return f
@@ -1538,7 +2043,18 @@ def _stage_of_raw(d: dict) -> tuple:
         return ("ACCUMULATION", "吸筹", "吸筹 · 启动前", "LONG",
                 f"低位放量但价被压住{tail}；点火信号出现前小仓埋伏、破位即走")
     # 6) 沉寂：量枯回吐
-    if (d.get("rvol_d", 1.0) or 1.0) <= 0.6 and (d.get("amp24", 0.0) or 0.0) <= 5.0 \
+    #
+    # v1.6.6（问题清单 #4）：此前写作 `(d.get("rvol_d", 1.0) or 1.0) <= 0.6`，有**双重吞值**：
+    #   ① `_daily_feats._vr()` 在基准均量为 0 时返回 `0.0`，而 `0.0 or 1.0` 在 Python 里
+    #      求值为 `1.0` → `1.0 <= 0.6` 恒为 False。也就是**「真·零成交量」这个最该判沉寂的
+    #      极端情形永远进不了沉寂档**，方向与直觉完全相反。
+    #   ② `d.get("rvol_d", 1.0)` 的默认值 1.0 与后面的 `or 1.0` 是重复防御，两次都指向
+    #      「不触发」，让这个 bug 更难被发现（看起来像刻意保守）。
+    # 现改为显式判空：**缺失**（键不存在 / None，即无日线）不参与判定 —— fail-open，
+    # 与全系统「拿不到就不判」的约定一致；但**测得为 0** 必须真正参与判定，
+    # 因为那正是「量能枯竭」这个信号本身。
+    rv_d = d.get("rvol_d")
+    if rv_d is not None and rv_d <= 0.6 and (d.get("amp24", 0.0) or 0.0) <= 5.0 \
             and abs(chg24) <= 3.0:
         return ("DORMANT", "沉寂", "沉寂 · 泵后回吐" if chg30 >= 30.0 else "沉寂 · 无波动",
                 "WATCH", "量能枯竭、波动收敛；仅有大起大落史者保持观察")
@@ -1633,12 +2149,79 @@ def _radar_score(t: dict, f: dict, d: dict, cooldown: bool) -> int:
 
 # ---------------- v2 主流程 ----------------
 
+def _with_age(data: dict, now: float) -> dict:
+    """补写 `age_sec` / `stale` 后返回（浅拷贝，不动缓存里的原对象）。
+
+    v1.7.1（C3 延迟治理）：`updated_at` 只说「这轮什么时候算的」，不说「你现在看到的是多久前的」。
+    前端过去只能自己拿本地时钟去减，于是：① 各页面各算各的；② 拿不到后端认为的 TTL，
+    无法判断「这个数字是不是已经过期」；③ 本地时钟与服务端有偏差时直接算错，且错的方向不固定。
+    现在后端把两个判断一次下发：
+      · `age_sec` = 读的时刻 − 本轮扫描时刻（0 = 刚算完；走缓存则 > 0）
+      · `stale`   = `age_sec` 是否已超过**本轮生效的** TTL（payload 里的 ttl，可被 env 覆盖）
+    浅拷贝的理由：`coins` 是上百行的列表，深拷贝会白花 CPU，而这里只改两个顶层键。
+    """
+    out = dict(data or {})
+    try:
+        ts = float(out.get("updated_at") or 0.0)
+    except (TypeError, ValueError):
+        ts = 0.0
+    if not math.isfinite(ts):
+        ts = 0.0
+    age = max(0.0, float(now) - ts) if ts > 0 else 0.0
+    out["age_sec"] = int(age)
+    try:
+        ttl = float(out.get("ttl") or 0.0)
+    except (TypeError, ValueError):
+        ttl = 0.0
+    if not (ttl > 0) or not math.isfinite(ttl):
+        ttl = radar2_ttl()
+    out["stale"] = bool(age > ttl)
+    return out
+
+
 def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_FLOOR) -> dict:
-    """妖币雷达 v2 全量扫描（5 分钟缓存）。coins 含 stage/score/factors，按妖币度降序。"""
+    """妖币雷达 v2 全量扫描（5 分钟缓存）。coins 含 stage/score/factors，按妖币度降序。
+
+    v1.6.6（问题清单 #9）：**扫描级互斥**。此前 `_radar2_cache` 是无锁 dict，
+    `get_radar_v2` 也没有扫描级互斥，而触发源至少四个（前端「强制重扫」按钮、
+    定时任务、对话 `meme_watch`、妖币引擎 `_row_of`）。`_dedupe_fetch` 只合并
+    「**同缓存键且同时在途**」的请求，挡不住两个并发 `force=True` 各自跑完整流水线
+    （日线池 + 15m/5m 扇出 + 确认层，冷启动扇出约 450 次 REST）→ 请求量翻倍、
+    有被限频的实际风险，且缓存写入「最后写赢」会让 `updated_at` 与内容短暂错配。
+
+    现在：拿不到锁的调用**等锁**（最多 `RADAR2_LOCK_WAIT` 秒），拿到后先做双重检查 ——
+    若等锁期间已有别的线程写好缓存，直接复用而不重复扇出。
+
+    v1.7.1（C3 延迟治理）：**所有返回路径都经 `_with_age()` 补写新鲜度**
+    （`age_sec` / `stale`），上层不必再自己拿本地时钟去减 —— 见 `_with_age` 的说明。
+    """
     now = time.time()
-    if not force and _radar2_cache["data"] and now - _radar2_cache["ts"] < RADAR2_TTL:
+    if not force and _radar2_cache["data"] and now - _radar2_cache["ts"] < radar2_ttl():
+        return _with_age(_radar2_cache["data"], now)
+    if not _radar2_lock.acquire(timeout=RADAR2_LOCK_WAIT):
+        # 等不到锁：另一路正在扫。有缓存就给缓存，没有则抛出让上层走 v1 兜底
+        # （不硬等 —— 扫描可能要几十秒，调用方不该被无限阻塞）。
+        if _radar2_cache["data"]:
+            return _with_age(_radar2_cache["data"], now)
+        raise RuntimeError("radar v2 scan busy")
+    try:
+        # 双重检查：等锁期间可能已有别的线程跑完并写好缓存
+        now2 = time.time()
+        if _radar2_cache["data"] and now2 - _radar2_cache["ts"] < radar2_ttl():
+            return _with_age(_radar2_cache["data"], now2)
+        return _with_age(_radar_v2_scan(force=force, top_n=top_n, min_qv=min_qv), now2)
+    finally:
+        _radar2_lock.release()
+
+
+def _radar_v2_scan(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_FLOOR) -> dict:
+    """v2 扫描主体（**只在持有 `_radar2_lock` 时调用**）。"""
+    now = time.time()
+    if not force and _radar2_cache["data"] and now - _radar2_cache["ts"] < radar2_ttl():
         return _radar2_cache["data"]
     cycle_ts = now
+    # v1.6.6（档一 §16）：阈值命中率监控 —— 一轮扫描计一次
+    _thr_new_scan()
     # v1.6.3：候选池扩到 **现货 ∪ 合约全市场**（纯合约妖币 RAVE / LAB 此前不可见，见 `_radar_pool`）。
     floor = max(min_qv or 0, RADAR2_FLOOR)
     pool_rows = _radar_pool(top_n, floor)
@@ -1653,6 +2236,18 @@ def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_F
         raise RuntimeError("empty pool (snapshot unavailable)")
     d2 = _daily2_bars(top_n, floor, force=force)
     rates = get_funding_rates()
+    # v1.6.6（档一）：premiumIndex 的 markPrice/indexPrice 与费率共用同一份缓存，
+    # 这里取来算**基差**（标记价对指数价的偏离）—— 零额外请求。
+    fund_meta = get_funding_meta()
+    # v1.7.1（#10 成本模型修正）：逐币**资金费率结算周期**（4h/8h/1h）。与上面同源动机 ——
+    # 确认层要用它算含成本的 PnL，而周期不是全市场统一的 8h（实测 4h 才是多数）。
+    # `_fi_ok=False` 表示接口没通：此时**不下发**任何周期（写 None = 未测到），
+    # 由消费方回退默认 8h 并自知那是假设，而不是把假设伪装成实测。
+    fund_iv, _fi_ok = get_funding_intervals()
+    # v1.7.1（#10 成本模型闭环）：全市场**合约**盘口价差（1 次请求拿 766 个币，零扇出）。
+    # 现货口径的 `spread_bps`（下面行里的 `r.get("spread_bps")`）保持原样不动 ——
+    # 那是**另一个口径**，且纯合约币为 None；合约价差单列 `fut_spread_bps`，不覆盖。
+    book, _bk_ok = get_book_spreads()
 
     # —— 短时窗 K 线并发（15m 结构 + 5m 速度） ——
     # v1.6.3：带合约回退 —— 池里已含纯合约妖币，必须走 fut_fallback 才拿得到 K 线。
@@ -1674,7 +2269,7 @@ def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_F
 
     # —— 逐币特征合成 + 触发判定 ——
     feats: dict = {}
-    n_new = n_wash = 0
+    n_new = n_wash = n_no_bars = 0
     for sym in pool_syms:
         r = snap.get(sym)
         if not r:
@@ -1690,25 +2285,51 @@ def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_F
              # 不能拿 r["quote_volume"] 冒充 —— 纯合约币那里是合约口径。
              "spot_qv": float(r.get("spot_qv") or 0.0),
              "no_spot": bool(r.get("no_spot")),
+             # v1.6.6（档一）：价差随行带入（现货行有值、纯合约行为 None）
+             "spread_bps": r.get("spread_bps"),
+             # v1.7.1（#10）：合约盘口价差（基点）。与上面的现货口径**并列**，不覆盖 ——
+             # 两个口径的差别正是「纯合约币的滑点从哪来」这个问题的答案。
+             # 未测到 → None（不是 0）：0 会被读成「零价差」，那是相反的结论。
+             "fut_spread_bps": (book.get(sym) if _bk_ok else None),
              "funding": rates.get(sym, 0.0)}
         # 过滤层：新币 / 刷量 / 假量（单笔均额过低）
+        #
+        # v1.6.6（问题清单 C1）：此前整段过滤被 `if b:` 包住 —— 一旦拿不到日线就
+        # **把三道防线整体跳过**。而 `_daily2_fetch` 在 `len(arr) < 25` 时返回 None，
+        # 即「上市不足 25 天」的币恰好全部绕过过滤；「刚上市 + 只上合约 + 无现货深度」
+        # 正是外部文献描述的**经典妖币形态** —— 防线在最该生效的地方关着。
+        # 更糟的是它是**静默**的：`n_new` / `n_wash` 都在 `if b:` 内部自增，
+        # 审计计数里也看不见这批币，所以「被丢掉的到底是谁、为什么」无从回答。
+        #
+        # 现拆成两条显式路径：有日线走原逻辑；无日线改用**权威的合约 onboardDate**
+        # 判币龄（`futures_listed_days`），并单独计入 `n_no_bars` 让它可见。
+        # 注意 fail-open 原则不变：币龄**未知**（接口失败/字段缺失）时放行，不误杀。
         b = d2.get(sym)
+        df: dict = {}
         rr = 0.0
         if b:
             df = _daily_feats(b, now)
             d.update(df)
             if df.get("amp7d"):
                 rr = d["amp24"] / df["amp7d"] if df["amp7d"] > 0 else 0.0
-            if (df.get("listed_days") or 999) < NEW_COIN_DAYS:
-                n_new += 1
-                continue
-            if df.get("wash"):
-                n_wash += 1
-                continue
-            cnt = r.get("count") or 0
-            if cnt > 0 and r["quote_volume"] > 1e6 and r["quote_volume"] / cnt < 5.0:
-                n_wash += 1
-                continue
+            listed = df.get("listed_days")
+        else:
+            n_no_bars += 1
+            listed = futures_listed_days(sym)
+        # 新币线（两条路径共用）：None = 未知 → 放行，绝不把未知当成「刚上市」
+        if listed is not None and listed < NEW_COIN_DAYS:
+            n_new += 1
+            continue
+        # 刷量线：连续 3 个已收日量比 > 50（需要日线，无日线时无法判定 → 放行）
+        if df.get("wash"):
+            n_wash += 1
+            continue
+        # 假量线：单笔均额过低。`count` 为 0 表示**没测到**（合约 ticker 此前被强制置 0），
+        # 不是「没有成交」—— 见 C2 修复后此处对纯合约币同样生效。
+        cnt = r.get("count") or 0
+        if cnt > 0 and r["quote_volume"] > 1e6 and r["quote_volume"] / cnt < 5.0:
+            n_wash += 1
+            continue
         if len(c15) >= 2 and c15[-2] > 0:
             d["chg1h"] = (c15[-1] / c15[-5] - 1.0) * 100 if len(c15) >= 5 and c15[-5] > 0 else 0.0
         else:
@@ -1785,6 +2406,7 @@ def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_F
 
     # —— 语义层 + 评分 + 冷却 + 出行 ——
     rows = []
+    _ts_rows: list = []          # v1.6.6（档二 C6）：待落本地时序库的行，循环后一次事务写入
     stage_counts: dict = {}
     for sym, f in feats.items():
         d = f["d"]
@@ -1797,6 +2419,29 @@ def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_F
         # v1.6.3 控盘代理底料：合约成交额 + 持仓美元额（`_manip_flags` 直接读 d）
         d["fut_qv"] = futq.get(sym, 0.0)
         d["oi_usd"] = (d.get("oi_last") or 0.0) * (d.get("price") or 0.0)
+        # v1.6.6（档一 §16）：阈值命中率监控 —— 此处 `d` 已合并确认层因子且已过过滤层，
+        # 是「闸门线到底还够不够得着」最干净的分母。逐行累计，供 `threshold_hitrate()` 体检。
+        _thr_tally(_thr_rules(d, cf))
+        _THR_HITS["rows"] = int(_THR_HITS["rows"] or 0) + 1
+        # v1.6.6（档二 C6）：把这一行的因子读数落进**本地时序库**。
+        # 落点与 §16 的 tally 完全相同（`d` 已合并确认层因子、已过过滤层），是因子最全的一刻。
+        # 刻意**不等到「出行」之后再存** —— C6 要回答的是「某币被**登记之前**长什么样」，
+        # 只存登记过的币等于没解决那个问题。未测到一律 None（不写 0），与 payload 同口径。
+        _fm = fund_meta.get(sym) or {}
+        _ts_rows.append({
+            "symbol": sym, "ts": cycle_ts,
+            "price": d.get("price"), "chg24": d.get("chg24"),
+            "oi_usd": d.get("oi_usd"), "oi_chg24": d.get("oi_chg24"),
+            "funding": d.get("funding"),
+            "mark_price": _fm.get("mark_price"), "index_price": _fm.get("index_price"),
+            "basis_bps": _fm.get("basis_bps"), "spread_bps": d.get("spread_bps"),
+            "taker_ratio": cf.get("taker_ratio"),
+            "liq_5m": d.get("liq_5m"), "liq_side": cf.get("liq_side", ""),
+            "fut_qv": d.get("fut_qv"),
+            # v1.7.1（#10 成本模型闭环）：合约盘口价差落库 —— 攒的是「滑点常数该是多少」
+            # 的标定样本，尤其是纯合约币（它们在上面那列 `spread_bps` 里永远是空的）。
+            "fut_spread_bps": d.get("fut_spread_bps"),
+        })
         prev = _radar_prev.get(sym)
         stage, slabel, tag, side, note = _stage_of(d)
         if not f["hit"] and not stage:
@@ -1878,21 +2523,59 @@ def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_F
                 "amp24": round(d.get("amp24", 0.0) or 0.0, 2),
                 "funding": cf.get("funding", d.get("funding", 0.0)),
                 "funding_peak": cf.get("funding_peak"),
-                "oi_chg24": round(cf.get("oi_chg24", 0.0) or 0.0, 2),
-                "oi_pulse15": round(cf.get("oi_pulse15", 0.0) or 0.0, 2),
+                # v1.7.1（#10 成本模型修正）：该币资金费率的**结算周期**（小时）。
+                # 三态，不能合并：
+                #   · 具体小时数（4.0 / 8.0 / 1.0）= 实测到了周期
+                #   · 8.0 = 接口通了、但该币不在 fundingInfo 里 → 币安**默认周期**，
+                #     这是有依据的默认值，不是假设
+                #   · None = 接口没通 → **未测到**，消费方必须自己回退默认值并自知那是假设
+                # 合并掉后两态的后果：成本模型会拿「假设的 8h」冒充「实测的 8h」，
+                # 而这正是本轮要修的那个缺陷的同一形状。
+                "funding_interval_h": (float(fund_iv.get(sym) or FUNDING_CYCLE_DEFAULT_H)
+                                       if _fi_ok else None),
+                # v1.6.6（问题清单 #7）：`factors` 层此前用 `cf.get(k, 0.0) or 0.0` 兜底，
+                # 于是**同一个概念在同一个 dict 的两层里语义相反** —— 顶层「缺值写 None
+                # （未测到）」，factors 层「缺值写 0.0（没变化）」。而 OI 是 OI 堆积线、
+                # 燃料轴、控盘轴三处的关键输入，任何新消费方直接读 factors 层就会把
+                # 「压根没测」读成「持仓没动」。代码里已有两处专门规避（`radar_tracker._pick`
+                # 按键存在性取值、`square_monster._axis_fuel` 显式回查顶层），正是这个陷阱的证据。
+                # 现在两层统一走**同一个表达式**，从结构上保证不可能再出现分歧。
+                "oi_chg24": (round(d["oi_chg24"], 2) if d.get("oi_chg24") is not None else None),
+                "oi_pulse15": (round(d["oi_pulse15"], 2) if d.get("oi_pulse15") is not None else None),
                 "top_ratio": cf.get("top_ratio"),
                 "global_ratio": cf.get("global_ratio"),
                 "taker_ratio": cf.get("taker_ratio"),
-                "liq_5m": round(cf.get("liq_5m", 0.0) or 0.0, 0),
+                # v1.6.6（档一）：`markPrice − indexPrice` 的偏离（基点）。外部文献里这是
+                # 「跨所标记价格操纵」的直接观测量 —— 标记价被单向拉离指数价，意味着
+                # 有人在用标记价推动强平而不是真实成交。None = 未测到。
+                "basis_bps": (fund_meta.get(sym) or {}).get("basis_bps"),
+                # v1.6.6（档一）：买卖价差（基点）。现货行有、纯合约行恒为 None。
+                "spread_bps": d.get("spread_bps"),
+                # v1.7.1（#10 成本模型闭环）：**合约**盘口价差（基点）。纯合约币在这里
+                # 终于有值了 —— 上面那列对它们恒为 None，于是「滑点常数该标定成多少」
+                # 这个闭环此前对最该标定的那批币是断的。None = 未测到。
+                "fut_spread_bps": d.get("fut_spread_bps"),
+                "top_mean48": cf.get("top_mean48"),
+                # 强平流：未测到时写 None（不是 0）—— 见 _confirm_factors 的 D1 注释。
+                # 前端 `if (f.liq_5m != null && ...)` 与 `radar_tracker` 的 `if f.get("liq_5m")`
+                # 都天然把 None 当「不展示」，所以这里保持 None 即可让三处静默空转变为显式缺失。
+                "liq_5m": (round(d["liq_5m"], 0) if d.get("liq_5m") is not None else None),
                 "liq_side": cf.get("liq_side", ""),
                 "btc_beta": d.get("btc_beta"),
                 "btc_residual": d.get("btc_residual"),
             },
             "reasons": reasons[:6],
             "listed_days": round(d.get("listed_days", 0) or 0, 1) if d.get("listed_days") else None,
+            # v1.6.6（问题清单 D1）：强平数据源可用性随行下发，供 UI 区分
+            # 「没有爆仓」与「爆仓流不可用」。不给出这个标志时，两者在界面上完全一样。
+            "liq_available": bool(cf.get("liq_available")) if cf else None,
             "cooldown": cooldown,
         })
         stage_counts[stage] = stage_counts.get(stage, 0) + 1
+
+    # v1.6.6（档二 C6）：循环结束后**一次事务**写入本地时序库（旁路，失败不影响返回）。
+    # 放在这里而不是循环内：SQLite 每行一次 commit 会让扫描尾部多出上百次 fsync。
+    _ts_persist(_ts_rows)
 
     rows.sort(key=lambda x: x["score"], reverse=True)
     # v1.6.3 起：**只有「尚未启动」的币才可登记**（登记即入场，不设候选态）。
@@ -1933,6 +2616,30 @@ def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_F
     rows_tk += [r for r in rows if r["stage"] in ("ACCUMULATION", "IGNITION") and _late(r)]
     rows_tk += [r for r in rows if r["stage"] == "DORMANT"
                 and (r.get("change30d_pct") or 0) >= 30.0]
+
+    # v1.6.6（问题清单 #5）：**展示层与分组对齐**。
+    #
+    # 病根是「阶段标签断层」：`_late` 用 `_TRIG_LATE_CHG24`(10.0)，而语义层判 `EXTENDED`
+    # 要 `chg24 > _TRIG_MAX_CHG24`(12.0)。于是 `chg24 ∈ (10, 12]` 的行判不出 EXTENDED，
+    # stage 仍是 IGNITION（tag「点火 · 破位启动」、side LONG、绿底），却被 `_late`
+    # 划进 takeoff（追高高风险）组 —— takeoff 页里出现「绿底 + LONG + 写着『点火 = 可埋伏』」
+    # 的行，而它实际已被判定「你来晚了」。`_piled`（OI 24h ≥ 5%）为真时同样如此，与涨幅无关。
+    #
+    # 修法：**不动 `stage`**（它是语义层的真实输出，且被 `stage_counts`、回放分桶、
+    # `square_monster` 依赖），只改写**展示层**的 tag / stage_label / side，
+    # 并加一个显式的 `late` 标志给前端换 pill 颜色。这样「分组」与「标签」不再互相矛盾，
+    # 且「语义层判它是什么」与「现在能不能上车」两件事都如实表达。
+    for r in rows_tk:
+        if r["stage"] in ("ACCUMULATION", "IGNITION") and _late(r):
+            _orig = r.get("stage_label") or r["stage"]
+            r["late"] = True
+            r["tag"] = "已启动 · 追高区"
+            r["stage_label"] = "已启动"
+            r["side"] = "WATCH"
+            r["note"] = (f"语义层仍判「{_orig}」，但已越过启动窗口"
+                         f"（24h 涨幅 ≥ {_TRIG_LATE_CHG24:.0f}% 或 OI 24h ≥ {_TRIG_MAX_OI24:.0f}%）；"
+                         "此处进场即接力末端，仅作观察")
+
     rows_tk.sort(key=lambda x: x["score"], reverse=True)
     rows_ign.sort(key=lambda x: x["score"], reverse=True)
 
@@ -1943,9 +2650,47 @@ def get_radar_v2(force: bool = False, top_n: int = 110, min_qv: float = RADAR2_F
         "triggered": sum(1 for f in feats.values() if f["hit"]),
         "confirmed": len(confirms),
         "excluded_new": n_new, "excluded_wash": n_wash,
+        "excluded_no_bars": n_no_bars,
         "min_qv": floor, "env": _env_regime(bars_env),
         "stage_counts": stage_counts, "engine": "v2",
-        "updated_at": int(cycle_ts), "ttl": RADAR2_TTL,
+        # v1.6.6（问题清单 D1）：强平流（`!forceOrder@arr`）在部署地区实测不推数据，
+        # 且无公开 REST 兜底 → 该信号整体不可用。把它作为**顶层标志**下发，
+        # 让前端能显式提示「爆仓流不可用」，而不是让用户把「没有爆仓」读成一种结论。
+        "liq_available": _liq_source_available(),
+        # v1.6.6（问题清单 #2）：**把判据阈值随 payload 下发**，消除前后端双份硬编码。
+        # 病根：后端 v1.5.66 把 `_TAKER_BUY_DOMINANT` 从 1.85 修到 1.30，前端因子摘要行
+        # 仍硬编码 1.5 —— 同一个数在两处不同义。后果是 taker ∈ [1.30, 1.50) 的币
+        # 「买盘主导」信号在 UI 上完全不可见（后端 reasons 里写了，但前端既不显示摘要 bit，
+        # 又因为 `bits.length ? bits.join() : note` 的短路，连含该信息的 note 也不显示），
+        # 于是「分数为什么高」在界面上解释不通。阈值由后端单一来源下发后不会再漂。
+        "thresholds": {
+            "taker_buy_dominant": _TAKER_BUY_DOMINANT,
+            "trig_up_chg24": _TRIG_UP_CHG24,
+            "trig_late_chg24": _TRIG_LATE_CHG24,
+            "trig_warm_chg24": _TRIG_WARM_CHG24,
+            "trig_max_chg24": _TRIG_MAX_CHG24,
+            "trig_max_oi24": _TRIG_MAX_OI24,
+            "trig_amp_ok": _TRIG_AMP_OK,
+            "trig_amp_risk": _TRIG_AMP_RISK,
+            "manip_spot_share_min": _MANIP_SPOT_SHARE_MIN,
+            "manip_churn_max": _MANIP_CHURN_MAX,
+            "manip_neg_funding": _MANIP_NEG_FUNDING,
+            "new_coin_days": NEW_COIN_DAYS,
+        },
+        # v1.6.6（档一 §16）：阈值命中率 —— 让「够不着的死规则」在界面上可见。
+        # 缘起：`_TAKER_BUY_DOMINANT = 1.85` 自上线起命中 0 个却在四处被使用，
+        # 这类规则不报错、不让测试变红，只能靠命中率暴露。`dead_rules` 非空 = 该看一看了。
+        "threshold_hits": threshold_hitrate(),
+        # v1.6.6（档二 C6）：本地时序库体检 —— 让「到底存没存下来」可见。
+        # 与 §16 同源动机：只写不看的落盘等于没有落盘，出问题时没人会发现。
+        "ts_store": ts_store_view(),
+        "updated_at": int(cycle_ts), "ttl": radar2_ttl(),
+        # v1.7.1（C3 延迟治理 · 可见化）：`age_sec` / `stale` **不在这里定稿** ——
+        # 它们的定义是「**读的时刻** − 扫描时刻」，而这里只是扫描时刻，读的时刻还不知道。
+        # 所以由 `_with_age()` 在所有返回路径上补写（见该函数）。此处占位 0/False，
+        # 保证直接读 `_radar2_cache["data"]` 的旧消费方（如 radar_tracker）拿到的结构不变。
+        "age_sec": 0,
+        "stale": False,
     }
     _radar2_cache["data"] = payload
     _radar2_cache["ts"] = cycle_ts
@@ -2050,7 +2795,7 @@ def get_monster_coins(force: bool = False, top_n: int = 110, min_qv: float = 2e6
                 "stage_counts": v2.get("stage_counts", {}),
                 "engine": v2.get("engine", "v2"),
                 "updated_at": v2.get("updated_at", int(time.time())),
-                "ttl": v2.get("ttl", RADAR2_TTL)}
+                "ttl": v2.get("ttl", radar2_ttl())}
     except Exception:
         return _get_monster_v1(force=force, top_n=top_n, min_qv=min_qv)
 
@@ -2070,7 +2815,7 @@ def get_ignition_coins(force: bool = False, top_n: int = 110, min_qv: float = 2e
                 "stage_counts": v2.get("stage_counts", {}),
                 "engine": v2.get("engine", "v2"),
                 "updated_at": v2.get("updated_at", int(time.time())),
-                "ttl": v2.get("ttl", RADAR2_TTL)}
+                "ttl": v2.get("ttl", radar2_ttl())}
     except Exception:
         return _get_ignition_v1(force=force, top_n=top_n, min_qv=min_qv)
 
