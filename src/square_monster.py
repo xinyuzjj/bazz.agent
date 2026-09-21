@@ -69,6 +69,16 @@ WARM_CHG24 = 3.0    # == scanner._TRIG_WARM_CHG24：暖启动段下沿 [3, 10)
 # 原值 1.85 是条**死规则**（实测 40 个合约 max 1.79、命中 0），连同 scanner 四处一起修正。
 TAKER_BUY_DOMINANT = 1.30
 
+# ---------------- 控盘指纹的分类 ---------------- #
+# 两类指纹**语义不同，不能混用**（提成模块级是为了能被测试钉住不漂移）：
+#   · 结构性：说的是「**盘本身**被攥住」—— 没有现货抛压 / 现货没深度 / 量是两边对冲做出来的。
+#     `scanner._MANIP_STRUCT` 是同一份名单（`test_v172_onchain` 断言两者相等）。
+#     只有这一类能拿去和**链上持仓集中度**交叉验证 —— 两者问的是同一件事（筹码在谁手里）。
+#   · 持仓结构：说的是「**对手盘在挨打**」—— 空头在交钱 / 拉上去没有对手盘出清。
+#     把它和链上集中度对撞等于拿两个不同的东西比大小，会造出一堆无意义的「矛盾」。
+STRUCT_FLAGS = ("无现货", "合约独大", "换手畸高")
+POSITION_FLAGS = ("空头付钱", "拉升无爆仓")
+
 # ---------------- 剧本位阶表 ---------------- #
 # 主剧本七格，顺序即剧本顺序；SHORT_AMBUSH / ACTIVE 是旁支，不占格。
 STAGE_SEQ = ("ACCUMULATION", "IGNITION", "EXTENDED", "VERTICAL",
@@ -370,8 +380,8 @@ def _axis_control(row: dict) -> dict:
     flags = list(row.get("manip") or [])
     note = row.get("manip_note") or ""
     src = row.get("_factors_source") or "radar"
-    STRUCT = ("无现货", "合约独大", "换手畸高")     # 结构性控盘指纹（盘本身被攥住）
-    POSITION = ("空头付钱", "拉升无爆仓")           # 持仓结构指纹（对手盘被收割中）
+    STRUCT = STRUCT_FLAGS                        # 结构性控盘指纹（盘本身被攥住）
+    POSITION = POSITION_FLAGS                    # 持仓结构指纹（对手盘被收割中）
     hit_struct = [f for f in flags if f in STRUCT]
     hit_pos = [f for f in flags if f in POSITION]
     # 每个指纹的「人话」，用来说清**为什么算控盘**（只说名字等于没说）
@@ -428,6 +438,28 @@ def _axis_control(row: dict) -> dict:
     if missing and not row.get("_no_futures"):
         evidence += "；" + "、".join(missing) + " 未判定"
 
+    # ── v1.7.2：链上筹码**交叉验证**（链下代理 × 链上实证）────────────────────
+    # 这一轴此前**全是链下代理**：无现货 / 合约独大 / 换手畸高 / 空头付钱 / 拉升无爆仓 ——
+    # 它们说的都是「盘面长什么样」，本质是在**猜**「有人在控盘」。链上筹码回答的是另一个
+    # 问题：**币到底在谁手里**。两者对不上时才是真正的信息。
+    #
+    # ⚠️ **只加证据，绝不动 `grade`。** 三轴的分级是 v1.6.x 建立、v1.7.1 校准过的；
+    # 而链上这一轴是本轮第一次拿到真实读数（实测 14 个样本）。拿新数据直接改分级 =
+    # 无样本改判据，正是本项目反复吃过亏的地方。所以这里只把结论**摆出来**。
+    #
+    # ⚠️ 只有**结构性**指纹（`STRUCT`）才拿去交叉 —— 见 `_MANIP_STRUCT` 的注释：
+    # 「空头付钱 / 拉升无爆仓」说的是对手盘在挨打，与「筹码集中在谁手里」不是一个范畴。
+    chain = row.get("onchain") if isinstance(row.get("onchain"), dict) else {}
+    chain_struct = [f for f in flags if f in STRUCT]
+    chain_state = chain.get("state") or ""
+    if chain_state in ("confirm", "refute", "warn", "clean", "neutral", "source_down"):
+        evidence += f"；链上{chain.get('label') or '—'}"
+        if chain.get("top10_pct") is not None:
+            evidence += f"（前十 {chain['top10_pct']:.1f}%）"
+    else:
+        # 「没这一格」与「测了但没有」不同，但在**判据**上是同一件事：不能当证据用。
+        missing.append("链上筹码")
+
     return {
         "flags": flags, "note": note, "grade": grade, "color": color,
         "reading": f"{base}｜{evidence}",
@@ -435,6 +467,9 @@ def _axis_control(row: dict) -> dict:
         "struct": hit_struct, "pos": hit_pos,
         "exit_discipline": "重度控盘/明确控盘" if hit_struct else "常规",
         "missing": missing,
+        # v1.7.2：链上交叉验证结果（供三轴卡 / 稿子）。缺这一格时是 `{}`，调用方须判空。
+        "chain": chain,
+        "chain_struct": chain_struct,
     }
 
 

@@ -166,6 +166,25 @@ const radar = tickers.slice(4, 7).map((r, i) => ({ ...r, side: "WATCH", tag: "�
   // v1.6.9（#5）：late=true ⇒ 演示「已启动 · 追高区」金标（stage 仍是 IGNITION）
   fut_qv: 3_200_000, spot_qv: 1_100_000, no_spot: false, oi_usd: i === 1 ? 0 : 8_400_000, late: i === 0,
   liq_available: false,
+  // v1.7.2（链上筹码）：三行刻意演示交叉判定的三种「有结论」状态 ——
+  //   行0 `refute`（链上反驳）：代理命中控盘指纹但链上很分散。**这是真实形状**：
+  //        CAKE(BSC) 的 top1 是销毁地址 0x…dead 占 92.74%，不先剔除就会读成「单一持有人控盘」
+  //        这个最极端的结论，剔除后它反而以 4.14% 成为整批样本里最分散的一个 —— 结论完全反过来。
+  //   行1 `warn`（链上预警）：盘面看不到控盘指纹，链上却高度集中 → 代理**结构性看不见**的控盘。
+  //   行2 `confirm`（链上佐证）：两边同向。
+  // ⚠️ `label` 是中文文案（后端下发），前端**按 `state` 分派 i18n 键**，不直接渲染 label。
+  onchain: i === 0
+    ? { state: "refute", label: "链上反驳", measured: true, source: "goplus", chain: "binance-smart-chain",
+        top1_pct: 1.47, top10_pct: 4.14, top1_raw_pct: 92.74, holders_excluded: 1, holder_count: 1_911_891,
+        proxy_hit: true, text: "演示 fixture：盘面命中控盘指纹，但链上筹码其实很分散（已剔除 1 个销毁地址）" }
+    : i === 1
+      ? { state: "warn", label: "链上预警", measured: true, source: "rugcheck", chain: "solana",
+          top1_pct: 72.69, top10_pct: 87.7, top1_raw_pct: 72.69, holders_excluded: 2, holder_count: 1_843_953,
+          risks: ["Top 10 holders high ownership", "Single holder ownership"], proxy_hit: false,
+          text: "演示 fixture：盘面看不到控盘指纹，但链上高度集中（演示「代理结构性看不见的那类控盘」）" }
+      : { state: "confirm", label: "链上佐证", measured: true, source: "goplus", chain: "ethereum",
+          top1_pct: 11.6, top10_pct: 62.82, holders_excluded: 0, holder_count: 33_502,
+          proxy_hit: true, text: "演示 fixture：链下盘面已见控盘指纹，链上也确认高度集中" },
   reasons: ["固定 fixture，仅用于组件排版", "没有行情采集或实际信号计算"] }));
 
 const agents = [
@@ -425,6 +444,16 @@ export function installPreview(): void {
           rules: { trig_max_chg24: { desc: "追高：涨幅 > 12%（判 EXTENDED）", hits: 0, rows: 480, rate: 0, dead: true } } },
         // v1.6.9（档二 C6）：本地时序库体检（与后端 scanner.ts_store_view() 同结构，非伪造端点）
         ts_store: { rows: 31420, symbols: 108, oldest: FIXTURE_SEC - 12 * 86400, newest: FIXTURE_SEC - 120, keep_days: 14, last_written: 106, last_ts: FIXTURE_SEC - 120 },
+        // v1.7.2（链上筹码）：体检快照（与后端 scanner.onchain_health() 同结构，非伪造端点）。
+        // 这里演示**限流退避**那一档（红 pill）—— 它是最容易被误读的一档：GoPlus 限流时
+        // 返回 HTTP 200 且体里没有 result 键，与「这个币查不到」长得一样，所以必须显式标出来。
+        // 想看另外两档：`goplus_backoff_sec: 0` ⇒ 灰色正常档；`measured: false` ⇒ 红「链上未通」。
+        onchain: { measured: true, symbols_cached: 12, platforms_cached: 21343, last_ok_at: FIXTURE_SEC - 300,
+          cg_available: true, cg_backoff_sec: 0, goplus_available: false, goplus_backoff_sec: 47, rug_backoff_sec: 0,
+          refreshing: false, route: "cg:http://127.0.0.1:7897",
+          last_error: "cg:ConnectTimeout", dispatched: true, dispatched_ts: FIXTURE_SEC - 320,
+          stats: { refreshes: 6, symbols_ok: 34, symbols_fail: 9, cg_429: 0, goplus_throttled: 2, rug_throttled: 0,
+                   canon_mismatch: 0, last_route: "cg:http://127.0.0.1:7897" } },
         // v1.7.1（C3）：数据新鲜度三件套（后端 scanner._with_age() 下发）。
         // 演示里给「新鲜但非零」的 47s —— 给 0 会让 pill 看起来像个装饰，
         // 而 0 只在「刚好读完就渲染」时出现，验不到格式化与文案。

@@ -6,6 +6,7 @@ import { subscribeTicks, useWsStatus, useLiveTick } from "../lib/live";
 import {
   type Ticker, type Signal, type FutureRow, type EquityRow, type RadarRow, type OrderMode,
   type TracksData, type RadarThresholds, type RadarThresholdHits, type RadarTsStore, type RadarFresh,
+  type RadarOnchainHealth,
   SIDE_META, RADAR_COLS, STAGE_META, TRACK_COLS, fmtPrice, fmtVol, fmtRate, fmtAgo, fmtCount, fmtAge, baseName, UpdatedAgo,
   PosBar, useFlash, LsLine,
   FutRow, EquityCard, RadarLine, TrackLine, SignalRow,
@@ -134,6 +135,10 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
   const [radarThr, setRadarThr] = useState<RadarThresholdHits | null>(null);
   // v1.6.9（档二 C6）：本地时序库体检 —— 「到底存没存下来」必须可见
   const [radarTs, setRadarTs] = useState<RadarTsStore | null>(null);
+  // v1.7.2（链上筹码）：体检快照。「通没通 / 覆盖几个币 / 被谁限流」必须可见 ——
+  // 链上源失败时**终态是「所有币都未测到」**，与「这些币本来就没有链上数据」长得一模一样，
+  // `last_error` 与 `*_backoff_sec` 是唯一能把这二者分开的地方。
+  const [radarOc, setRadarOc] = useState<RadarOnchainHealth | null>(null);
   // v1.7.1（C3 延迟治理）：数据新鲜度。由后端 `_with_age()` 下发，前端**不再自己算** ——
   // 本地时钟偏差 + 拿不到本轮 TTL，这两点让「前端自算」只能算出个像模像样的错数。
   const [radarFresh, setRadarFresh] = useState<RadarFresh | null>(null);
@@ -177,6 +182,9 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
       // v1.6.9（档二 C6）：时序库体检。`last_written === 0` 且 `rows === 0` 时前端会显式提示
       // 「没存下来」—— 否则「代码写了、库里空的」这种失效方式永远没人发现。
       setRadarTs((d?.ts_store ?? null) as RadarTsStore | null);
+      // v1.7.2（链上筹码）：健检快照。旧后端 / 预览 mock 不带这一格时落 `null` →
+      // 面板**不显示**该 pill（而不是显示一个「已覆盖 0 币」的假状态）。
+      setRadarOc((d?.onchain ?? null) as RadarOnchainHealth | null);
       // v1.7.1（C3）：新鲜度三件套（age_sec / stale / ttl）。旧后端不带这三个字段时
       // 落到 `null` → 面板不显示该 pill，**不显示一个假的「0s」**。
       setRadarFresh(
@@ -539,6 +547,44 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
               ) : (
                 <span className="pill pill-red text-[10.5px]" title={t("markets.tsEmptyTip")}>
                   {t("markets.tsEmpty")}
+                </span>
+              )
+            )}
+            {/* v1.7.2（链上筹码）：体检 —— 「通没通、覆盖几个币、被谁限流」必须可见。
+                为什么这一格比 §16/C6 更要紧：链上源的失败**终态是「所有币都未测到」**，
+                而「这些币本来就没有链上数据」也是同一副样子；`last_error` 与退避秒数是
+                唯一能把这二者分开的地方。三态刻意分开渲染：
+                  未通（measured=false，红）→ 整条链路的问题，不是某一个币的问题；
+                  限流中（GoPlus 退避 > 0，红）→ 临时状态，下一轮会自愈；
+                  正常（灰）→ 只报覆盖数，不喧哗。 */}
+            {radarOc && (
+              !radarOc.measured ? (
+                <span className="pill pill-red text-[10.5px]" title={t("markets.onchainDownTip", {
+                  err: radarOc.last_error || "—",
+                  cg: String(radarOc.cg_backoff_sec ?? 0),
+                  gp: String(radarOc.goplus_backoff_sec ?? 0),
+                  disp: radarOc.dispatched ? t("markets.onchainDispYes") : t("markets.onchainDispNo"),
+                })}>
+                  {t("markets.onchainDown")}
+                </span>
+              ) : (radarOc.goplus_backoff_sec ?? 0) > 0 ? (
+                <span className="pill pill-red text-[10.5px]" title={t("markets.onchainThrottledTip", {
+                  n: String(radarOc.goplus_backoff_sec ?? 0),
+                  succ: String(radarOc.stats?.symbols_ok ?? 0),
+                  fail: String(radarOc.stats?.symbols_fail ?? 0),
+                })}>
+                  {t("markets.onchainThrottled", { n: String(radarOc.goplus_backoff_sec ?? 0) })}
+                </span>
+              ) : (
+                <span className="pill pill-dim text-[10.5px]" title={t("markets.onchainHealthTip", {
+                  n: String(radarOc.symbols_cached ?? 0),
+                  ok: String(radarOc.stats?.symbols_ok ?? 0),
+                  fail: String(radarOc.stats?.symbols_fail ?? 0),
+                  ref: String(radarOc.stats?.refreshes ?? 0),
+                  route: radarOc.route || "—",
+                  err: radarOc.last_error || "—",
+                })}>
+                  {t("markets.onchainHealth", { n: String(radarOc.symbols_cached ?? 0) })}
                 </span>
               )
             )}

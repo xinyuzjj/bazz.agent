@@ -389,6 +389,27 @@ export const zh: Dict = {
   // 此前 liq_5m 恒为 0.0，「真没爆仓」与「没接上」在界面上无法区分。
   "markets.liqUnavailable": "爆仓流未接入",
   "markets.liqUnavailableTip": "币安强平流（!forceOrder@arr）在本环境不推流，且无公开 REST 兜底 → 爆仓量 / 拉升无爆仓等因子整体不可用，已按「未测」处理（不参与判定，也不显示为 0）",
+  // ===== v1.7.2 链上筹码：链下控盘代理 × 链上持仓实证的交叉判定 =====
+  // 六档结论 + 两种「没测到」。⚠️ `unknown` 与 `source_down` **必须分开**：
+  // 前者是「这个币没有合约地址 / 主链不在支持表」，后者是「整条链路没打通（需代理 / 被限流）」——
+  // 把后者说成前者就是在替数据源背锅。标签由 `MarketRows.ocLabel` 按**稳定英文码**分派。
+  "markets.onchainTitle": "链上筹码（GoPlus / RugCheck 免费源）× 链下控盘代理的交叉判定 —— 悬浮看完整结论",
+  "markets.onchain.warn": "链上预警",
+  "markets.onchain.confirm": "链上佐证",
+  "markets.onchain.refute": "链上反驳",
+  "markets.onchain.clean": "链上无异常",
+  "markets.onchain.neutral": "链上中性",
+  "markets.onchain.unknown": "链上未测",
+  "markets.onchain.sourceDown": "链上源未通",
+  // —— 面板级体检条（三态）——
+  "markets.onchainHealth": "链上 {n} 币",
+  "markets.onchainHealthTip": "链上筹码体检：已缓存 {n} 个币（成功 {ok} / 失败 {fail}，共刷新 {ref} 次）。三源零 Key：CoinGecko 消歧后拿合约地址（需走代理），GoPlus（EVM/Solana 持仓 + 貔貅/税率）与 RugCheck（Solana，20 名持仓 + 风险名）直连可达。路由 {route}｜最近错误 {err}",
+  "markets.onchainDown": "链上未通",
+  "markets.onchainDownTip": "链上数据源本轮**整体不可达** —— 所以「所有币都未测到」是链路问题，不是这些币没有链上数据。CoinGecko 直连实测超时、必须走代理；GoPlus 免费层约 10 次即限流。最近错误 {err}｜CoinGecko 退避 {cg}s｜GoPlus 退避 {gp}s｜本轮派发 {disp}",
+  "markets.onchainThrottled": "链上源限流 {n}s",
+  "markets.onchainThrottledTip": "GoPlus 免费层正在限流退避（剩 {n}s）—— ⚠️ 它限流时返回的是 **HTTP 200**，体里只有 code=4029 与 too many requests、**没有 result 键**，与「这个币查不到」长得一样，所以必须显式标出来。累计成功 {succ} / 失败 {fail}，下一轮会自动续上（读数 TTL 15 分钟，慢变量）",
+  "markets.onchainDispYes": "已派发",
+  "markets.onchainDispNo": "未派发",
   // v1.6.9（档一 §16）：阈值命中率监控 —— 让「够不着的死规则」在界面上可见。
   // 缘起：_TAKER_BUY_DOMINANT = 1.85 自上线起命中 0 个，却在四处被使用；
   // 这类规则不报错、不让测试变红，只能靠命中率暴露。
@@ -1997,6 +2018,23 @@ export const en: Dict = {
   "markets.manipUnmeasuredTip": "This row never entered the confirm layer (24-coin cap), so denominators for churn / no-liquidation checks are missing — this means \"not measured\", not \"clean\". Click Analyze for a per-coin recompute.",
   "markets.liqUnavailable": "Liquidation feed offline",
   "markets.liqUnavailableTip": "Binance !forceOrder@arr does not stream in this environment and there is no public REST fallback — liquidation factors are unavailable and treated as unmeasured (never as 0).",
+  // ===== v1.7.2 on-chain holdings: off-chain manipulation proxy x on-chain evidence =====
+  "markets.onchainTitle": "Cross-check between on-chain holders (free GoPlus / RugCheck) and the off-chain manipulation proxy — hover for the full verdict",
+  "markets.onchain.warn": "Chain warns",
+  "markets.onchain.confirm": "Chain confirms",
+  "markets.onchain.refute": "Chain refutes",
+  "markets.onchain.clean": "Chain clean",
+  "markets.onchain.neutral": "Chain neutral",
+  "markets.onchain.unknown": "Chain n/a",
+  "markets.onchain.sourceDown": "Chain source down",
+  "markets.onchainHealth": "Chain {n} coins",
+  "markets.onchainHealthTip": "On-chain holdings health: {n} coins cached ({ok} ok / {fail} failed, {ref} refreshes). Three keyless sources: CoinGecko resolves the contract address (needs a proxy), GoPlus (EVM/Solana holders + honeypot/tax) and RugCheck (Solana: 20 holders + risk names) are directly reachable. Route {route} | last error {err}",
+  "markets.onchainDown": "Chain unreachable",
+  "markets.onchainDownTip": "The on-chain sources are entirely unreachable this round — so \"every coin unmeasured\" is a link problem, not a property of those coins. CoinGecko times out on direct connections and needs a proxy; GoPlus throttles after ~10 requests. Last error {err} | CoinGecko backoff {cg}s | GoPlus backoff {gp}s | dispatched this round: {disp}",
+  "markets.onchainThrottled": "Chain throttled {n}s",
+  "markets.onchainThrottledTip": "GoPlus free tier is backing off (throttled for another {n}s) — it answers with HTTP 200 whose body only has code=4029 and too many requests, with no result key at all, which looks exactly like \"this coin has no data\", hence the explicit label. Totals: {succ} ok / {fail} failed; the next refresh picks up the rest (readings have a 15-minute TTL, this is a slow variable)",
+  "markets.onchainDispYes": "dispatched",
+  "markets.onchainDispNo": "not dispatched",
   "markets.thrDead": "@{n} rule(s) never fire",
   "markets.thrDeadTip": "Across @{rows} rows / @{scans} scans, the following thresholds never fired — the rule may be out of reach (historically taker≥1.85 idled like this for a long time): @{rules}",
   // v1.6.9 (Tier 2, C6): local time-series store health. Write-only persistence is not persistence —

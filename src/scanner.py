@@ -1481,6 +1481,105 @@ def ts_store_view(force: bool = False) -> dict:
     return st
 
 
+# ── 链上筹码（v1.7.2）：旁路接线 ─────────────────────────────────────────────
+# 纪律与 C6（`ts_series`）逐条相同：
+#   ① **惰性 import** —— `scanner` 在没有工作区/没有 state 的上下文里（离线复算、单文件脚本、
+#      部分测试）仍必须能被导入，模块顶层 import 会连坐；
+#   ② 任何异常一律吞掉，**绝不影响雷达主流程与返回值**；
+#   ③ 未测到一律 None，**不写 0**；
+#   ④ 派发必须在**后台线程**里跑 —— `get_radar_v2` 在 UI 请求路径上，冷启动时本模块要发
+#      「1 次 markets + 1 次 list + 最多 24 次 L3」并受 5.5s 的 GoPlus 匀速节流约束，
+#      串行会把扫描延迟推到几分钟。v1.7.1 刚做完 C3 延迟治理，不能在这里倒退。
+_OC_LAST: dict = {"dispatched": False, "ts": 0.0}
+
+# 控盘指纹里**结构性**的那三个 —— 说的是「盘本身被攥住」（无现货抛压 / 现货无深度 / 量是做的）。
+# 另两个（空头付钱 / 拉升无爆仓）说的是「**对手盘在挨打**」，与「筹码集中在谁手里」不是
+# 同一个范畴，**不能**拿去和链上持仓集中度对撞 —— 那是拿两个不同的东西比大小。
+# （`square_monster._axis_control` 里有一份同名列表，`test_v172_onchain` 钉住两者相等。）
+_MANIP_STRUCT = ("无现货", "合约独大", "换手畸高")
+
+
+def onchain_health() -> dict:
+    """链上筹码体检快照（供 payload / 前端体检条）。
+
+    与 `ts_store_view` 同源动机：只写不看的旁路数据等于没写。这里比它多一层作用 ——
+    `onchain_view()["last_error"]` / `goplus_backoff_sec` 是**唯一**能区分
+    「这些币没有链上数据」与「我们根本打不通」的地方，没有它，两种状态在界面上长得一样。
+
+    失败时返回一份**结构完整的**「未测到」骨架（不下发 None）：前端可以无条件按字段读，
+    不必到处判空 —— 缺字段的前端会静默少显示一块，而那种缺失没人会发现。
+    """
+    try:
+        import onchain
+        v = dict(onchain.onchain_view())
+    except Exception:
+        v = {"measured": False, "symbols_cached": 0, "platforms_cached": 0, "last_ok_at": 0,
+             "cg_available": False, "cg_backoff_sec": 0, "goplus_available": False,
+             "goplus_backoff_sec": 0, "rug_backoff_sec": 0, "refreshing": False,
+             "route": "", "stats": {}, "last_error": "import failed"}
+    v["dispatched"] = bool(_OC_LAST.get("dispatched"))
+    v["dispatched_ts"] = int(_OC_LAST.get("ts") or 0)
+    return v
+
+
+def _onchain_dispatch(symbols) -> bool:
+    """请求后台刷新链上筹码。**立即返回**，返回是否真的派发了。"""
+    if not symbols:
+        return False
+    try:
+        import onchain
+        ok = bool(onchain.refresh_async(symbols))
+    except Exception:
+        return False
+    if ok:
+        _OC_LAST["dispatched"] = True
+        _OC_LAST["ts"] = time.time()
+    return ok
+
+
+def _onchain_read(symbols) -> tuple:
+    """读一次链上缓存：返回 `({symbol: 原始读数}, measured)`。**零网络、非阻塞**。
+
+    只读**原始读数**，不在这里做交叉判决 —— 判决需要该行的控盘指纹，而那要等逐币算完。
+    """
+    try:
+        import onchain
+    except Exception:
+        return {}, False
+    try:
+        data, measured = onchain.get_onchain_holdings(symbols)
+    except Exception:
+        return {}, False
+    return dict(data or {}), bool(measured)
+
+
+def _oc_cell(reading, manip_flags, measured: bool) -> dict:
+    """雷达行/妖币面板的「链上筹码」一格。
+
+    ⚠️ `measured` 必须传进来，因为「没读数」有**两种**含义，绝不能合并：
+      · 这一批里就它没测到（其他币有读数）→ 多半是「该币无合约地址 / 主链不在支持表」；
+      · 一次都没成功过（`measured=False`）→ 是**整条链路**不通（CoinGecko 需要代理而没走通、
+        GoPlus 被限流…），此时说「这个币没有链上数据」就是错的。
+    只看单币缓存**区分不了这两者** —— 这正是「静默全空」那个失败模式的入口。
+    """
+    try:
+        import onchain
+    except Exception:
+        return {}
+    try:
+        cell = onchain.row_cell(reading, [f for f in (manip_flags or [])
+                                         if f in _MANIP_STRUCT])
+    except Exception:
+        return {}
+    cell["measured"] = bool(measured)
+    if not measured:
+        cell["state"] = "source_down"
+        cell["label"] = "链上源未通"
+        cell["text"] = ("链上数据源本轮整体不可达（CoinGecko 需走代理；GoPlus 免费层约 10 次即限流），"
+                       "这一格是「**没测到**」而不是「这个币没有链上数据」—— 详见面板体检条")
+    return cell
+
+
 def _trigger_hit(t: dict, row: dict, range_ratio: float = 0.0) -> tuple:
     """触发层（v1.6.2）：返回 (命中?, 依据列表)。
     机会型命中必须在**顺向**上成立；振幅 / 量能等方向无关项只写进依据文本，不再单独触发。"""
@@ -2234,6 +2333,13 @@ def _radar_v2_scan(force: bool = False, top_n: int = 110, min_qv: float = RADAR2
         futq = {}
     if not pool_syms:
         raise RuntimeError("empty pool (snapshot unavailable)")
+    # v1.7.2（链上筹码）：**派发后台刷新**。非阻塞，放在这里而不是末尾 —— 后台线程要跑
+    # 一分多钟（GoPlus 匀速 5.5s/次），越早派发、这一轮末尾越可能已经有读数可填。
+    # 第一轮如实留空（未测到）比「阻塞 15 秒换一个立刻可用的数」更符合本项目纪律。
+    _onchain_dispatch(pool_syms)
+    # 只读缓存（零网络）。**必须在逐币循环之前读一次**而不是每行读一次：
+    # `get_onchain_holdings` 每次都加锁并复制整个 holdings 字典，逐行调用是纯浪费。
+    _oc_readings, _oc_measured = _onchain_read(pool_syms)
     d2 = _daily2_bars(top_n, floor, force=force)
     rates = get_funding_rates()
     # v1.6.6（档一）：premiumIndex 的 markPrice/indexPrice 与费率共用同一份缓存，
@@ -2569,6 +2675,9 @@ def _radar_v2_scan(force: bool = False, top_n: int = 110, min_qv: float = RADAR2
             # v1.6.6（问题清单 D1）：强平数据源可用性随行下发，供 UI 区分
             # 「没有爆仓」与「爆仓流不可用」。不给出这个标志时，两者在界面上完全一样。
             "liq_available": bool(cf.get("liq_available")) if cf else None,
+            # v1.7.2（链上筹码）：链下控盘代理 × 链上持仓实证的交叉判定。
+            # 旁路：任何异常都退成 `{}`（前端按「没有这一格」处理），不影响这一行别的字段。
+            "onchain": _oc_cell(_oc_readings.get(sym), mflags, _oc_measured),
             "cooldown": cooldown,
         })
         stage_counts[stage] = stage_counts.get(stage, 0) + 1
@@ -2684,6 +2793,9 @@ def _radar_v2_scan(force: bool = False, top_n: int = 110, min_qv: float = RADAR2
         # v1.6.6（档二 C6）：本地时序库体检 —— 让「到底存没存下来」可见。
         # 与 §16 同源动机：只写不看的落盘等于没有落盘，出问题时没人会发现。
         "ts_store": ts_store_view(),
+        # v1.7.2（链上筹码）：体检快照 —— 让「通没通、覆盖几个币、被谁限流了」可见。
+        # 与 §16 阈值命中率 / C6 时序库同源动机：只写不看的旁路数据，出问题时没人会发现。
+        "onchain": onchain_health(),
         "updated_at": int(cycle_ts), "ttl": radar2_ttl(),
         # v1.7.1（C3 延迟治理 · 可见化）：`age_sec` / `stale` **不在这里定稿** ——
         # 它们的定义是「**读的时刻** − 扫描时刻」，而这里只是扫描时刻，读的时刻还不知道。

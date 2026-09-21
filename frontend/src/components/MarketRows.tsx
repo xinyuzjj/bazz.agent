@@ -45,6 +45,8 @@ export type RadarRow = {
   late?: boolean;
   // v1.6.9（D1）：爆仓流是否真的接上了。false ⇒ 爆仓类因子一律「未测」，不得当 0。
   liq_available?: boolean | null;
+  // v1.7.2（链上筹码）：链下控盘代理 × 链上持仓实证的交叉判定（后端 `onchain.cross_verdict`）。
+  onchain?: RadarOnchainCell;
 };
 // v1.6.9（#2）：阈值由后端 payload 单一来源下发，前端不再硬编码。
 // 病根：后端 v1.5.66 把 _TAKER_BUY_DOMINANT 从 1.85 修到 1.30，前端摘要行仍写 1.5 →
@@ -81,6 +83,64 @@ export type RadarTsStore = {
 //   ③ 三处消费点各算各的，迟早不一致。
 // `age_sec` = 读的时刻 − 本轮扫描时刻；`stale` = `age_sec` 是否超过本轮 TTL。
 export type RadarFresh = { age_sec?: number; stale?: boolean; ttl?: number };
+
+// v1.7.2（链上筹码）：链下控盘代理 × 链上持仓实证的**交叉判定**。
+//
+// 为什么值得单列一格：`manip` 那五个指纹（无现货 / 合约独大 / 换手畸高 / 空头付钱 /
+// 拉升无爆仓）**全是链下代理** —— 它们描述的是「盘面长什么样」，本质在**猜**有人在控盘。
+// 链上筹码回答的是另一个问题：**币到底在谁手里**。两者对不上时才是真正的信息：
+//   · `warn`  代理没命中、链上却很集中 → 代理**结构性看不见**的那类控盘（最该看的一格）
+//   · `refute` 代理命中了、链上却很分散 → 代理**误报**。实测最有说服力的是 CAKE(BSC)：
+//              top1 是销毁地址 `0x…dead` 占 92.74%，不先剔除就会读成「单一持有人控盘」
+//              这个最极端的结论；剔除后它反而以 4.14% 成为整批样本里**最分散**的一个。
+//
+// ⚠️ `state` 是**稳定英文码**、`label`/`text` 是后端的中文文案。前端必须按 `state` 分派
+// i18n 键，**不能直接渲染 `label`** —— 否则英文界面会串中文（`stage_label` 踩过同一个坑）。
+// ⚠️ 四种「没测到」不要混：`unknown`（该币无合约地址 / 主链不在支持表）、
+// `source_down`（整条链路不通：`measured=false`）、以及「后端压根没下发这一格」（`undefined`）。
+// 第三种最常见的成因是链上源被限流 —— 那与「这个币没有链上数据」是完全不同的事实。
+export type RadarOnchainCell = {
+  state?: "warn" | "confirm" | "refute" | "clean" | "neutral" | "unknown" | "source_down";
+  label?: string; text?: string;
+  top1_pct?: number | null; top10_pct?: number | null;
+  top1_raw_pct?: number | null; holders_excluded?: number | null; holder_count?: number | null;
+  proxy_hit?: boolean; measured?: boolean;
+  source?: string | null; chain?: string | null;
+  risks?: string[] | null; is_honeypot?: boolean | null; sell_tax_pct?: number | null;
+  score?: number | null; ts?: number;
+};
+
+// v1.7.2：链上筹码体检快照（后端 `scanner.onchain_health()`）。
+// 必需的理由与 §16 / C6 同源，但这里更强：`last_error` / `goplus_backoff_sec` 是**唯一**
+// 能区分「这些币没有链上数据」与「我们根本打不通」的地方 —— 没有它，两种状态在界面上长得一模一样。
+export type RadarOnchainHealth = {
+  measured?: boolean; symbols_cached?: number; platforms_cached?: number; last_ok_at?: number;
+  cg_available?: boolean; cg_backoff_sec?: number;
+  goplus_available?: boolean; goplus_backoff_sec?: number; rug_backoff_sec?: number;
+  refreshing?: boolean; route?: string; last_error?: string;
+  dispatched?: boolean; dispatched_ts?: number;
+  stats?: Record<string, number | string | undefined>;
+};
+
+type TFn = (key: string, params?: Record<string, string | number>) => string;
+
+/** v1.7.2：链上交叉判定的 pill 文案。
+ *
+ *  ⚠️ 刻意写成 `switch` 而不是 `t(\`markets.onchain.${state}\`)`：**模板字符串里的键，
+ *  静态扫描器看不见**（`test_v168_i18n_parity` 只抓 `t("字面量")` 形式），写成动态键就
+ *  绕过了「用到的键必须两本字典都有」这道护栏 —— 而那正是 i18n 漂移的老路
+ *  （v1.5.67 修过四处，其中一处就是 22 个 `track.*` 只有中文）。 */
+function ocLabel(state: string | undefined, t: TFn): string {
+  switch (state) {
+    case "warn": return t("markets.onchain.warn");
+    case "confirm": return t("markets.onchain.confirm");
+    case "refute": return t("markets.onchain.refute");
+    case "clean": return t("markets.onchain.clean");
+    case "neutral": return t("markets.onchain.neutral");
+    case "source_down": return t("markets.onchain.sourceDown");
+    default: return t("markets.onchain.unknown");
+  }
+}
 export type OrderMode = "spot-long" | "futures-long" | "futures-short";
 
 // v1.5.0 语义层阶段 → pill 样式（吸筹/点火=绿，垂直拉升=金，派发顶/崩跌=红，沉寂/异动=灰）
@@ -456,6 +516,15 @@ export const RadarLine = memo(function RadarLine({ m, mode, th, onTrade, onOrder
   if (f.taker_ratio != null && f.taker_ratio >= tkMin) bits.push(`taker ${f.taker_ratio.toFixed(2)}`);
   if (f.liq_5m != null && f.liq_5m >= 3e5) bits.push(`爆 $${(f.liq_5m / 1e6).toFixed(1)}M${f.liq_side === "long" ? "多" : f.liq_side === "short" ? "空" : ""}`);
   const stageCls = m.stage ? STAGE_META[m.stage]?.cls ?? "pill-dim" : "pill-dim";
+  // v1.7.2（链上筹码）：交叉判定的一格。**必须按稳定英文码 `state` 分派 i18n 键**，
+  // 绝不能直接渲染后端下发的 `label`（那是中文文案，英文界面会串中文 —— `stage_label`
+  // 踩过同一个坑）。`undefined` = 后端没下发这一格（旧后端 / 预览 mock），此时不渲染。
+  // 变量名刻意叫 `ocCell` 而不是 `oc`：本文件下方另有一个同名局部变量 `oc`（别的组件用），
+  // 重名会让「不得渲染链上 label」这条源码断言既误报又漏报。
+  const ocCell = m.onchain;
+  const ocCls = ocCell?.state === "warn" ? "pill-red"
+    : ocCell?.state === "confirm" ? "pill-gold" : "pill-dim";
+  const ocLabelText = ocCell ? ocLabel(ocCell.state, t) : "";
   // v1.6.9（D1）：爆仓流没接上时，摘要行必须显式说明 —— 否则用户看到的「没有爆仓 bit」
   // 会被理解成「真的没爆仓」，而实际是「这个数据源整体不可用」。
   const bitsText = bits.length ? bits.join(" · ") : m.note;
@@ -503,6 +572,16 @@ export const RadarLine = memo(function RadarLine({ m, mode, th, onTrade, onOrder
           {m.liq_available === false && (
             <span className="pill pill-dim text-[10.5px]" title={t("markets.liqUnavailableTip")}>
               {t("markets.liqUnavailable")}
+            </span>
+          )}
+          {/* v1.7.2（链上筹码）：链下代理 × 链上实证的交叉结论。悬浮看全文（含来源链、
+              已剔除几个销毁地址/LP 池、RugCheck 自己的风险名）。
+              只给**有结论**的那几档上色：`warn`（代理看不见的控盘）红、`confirm` 金；
+              其余（含两种「没测到」）灰 —— 没结论的事不该长得像有结论。 */}
+          {ocCell && (
+            <span className={`pill ${ocCls} text-[10.5px]`} title={ocCell.text || t("markets.onchainTitle")}>
+              {ocLabelText}
+              {ocCell.top10_pct != null ? ` ${ocCell.top10_pct.toFixed(1)}%` : ""}
             </span>
           )}
           {isIgn && m.floor_rising && <span className="pill pill-dim text-[10.5px]" title={t("markets.floorRisingTitle")}>{t("markets.floorRising")}</span>}
