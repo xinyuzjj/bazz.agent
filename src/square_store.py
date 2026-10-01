@@ -20,6 +20,14 @@ DATA_DIR = os.path.dirname(DATA_FILE)  # v1.5.12 修复：_write 引用的 DATA_
 
 SQUARE_SKILL = "square-post"
 RICH_SKILL = "square-rich-post"        # 富媒体发文技能（合成 + 转发 square-post）
+MONSTER_SKILL = "square-monster-post"  # 妖币剧本发文技能（合成 + 转发 square-post）
+# v1.7.3：记账白名单与「合成型」技能集合。
+# 此前只登记 square-post / square-rich-post —— 妖币发帖走 square-monster-post，
+# 于是**发了帖却不落台账、不建模拟挂单**（数据其实早就备好，只是没人读）。
+_POST_SKILLS = (SQUARE_SKILL, RICH_SKILL, MONSTER_SKILL)
+# 合成型技能：输出里带「已合成 → <dir>」、产物目录有 meta.json（含 plan）。
+# 二者同构，建模拟挂单的钩子对它们一视同仁。
+_COMPOSE_SKILLS = (RICH_SKILL, MONSTER_SKILL)
 DAILY_LIMIT = 100                      # Square OpenAPI 每 key 每日发帖上限
 KEY_ENV = "BINANCE_SQUARE_OPENAPI_KEY"
 KEY_FILE = os.path.join(os.path.expanduser("~"), ".config", "binance-square", "openapi-key")
@@ -287,8 +295,8 @@ def delete_records(ids: list[str]) -> dict:
 
 def record_from_run(skill_name: str, arg_s: str, output: str, exit_code: int,
                     via: str = "agent") -> dict | None:
-    """skill 执行结果 → 台账。仅 square-post / square-rich-post 生效；任何异常都静默。"""
-    if (skill_name or "") not in (SQUARE_SKILL, RICH_SKILL):
+    """skill 执行结果 → 台账。square-post / square-rich-post / square-monster-post 三类生效；任何异常都静默。"""
+    if (skill_name or "") not in _POST_SKILLS:
         return None
     try:
         out = output or ""
@@ -303,8 +311,9 @@ def record_from_run(skill_name: str, arg_s: str, output: str, exit_code: int,
             if not err:
                 err = (out or "").strip()[-300:] or f"exit={exit_code}"
 
-        if skill_name == RICH_SKILL:
-            # rich 技能：从输出解析产物目录，读回 title/article；发布结果同样取 ID/Link
+        if skill_name in _COMPOSE_SKILLS:
+            # 合成型技能（rich / monster 同构）：从输出解析产物目录，读回 title/article；
+            # 发布结果同样取 ID/Link
             m_dir = re.search(r"已合成 → (\S+)", out)
             kind, text, title = "article", "", ""
             if m_dir and os.path.isdir(m_dir.group(1)):
@@ -340,10 +349,11 @@ def record_from_run(skill_name: str, arg_s: str, output: str, exit_code: int,
             status="failed" if failed else "posted",
             error=err if failed else "", via=via,
         )
-        # v1.5.61 模拟挂单：rich 发文**发布成功**且产物 meta.json 带 SMC 计划 → 建纸单。
-        # agent / 手动两条执行路径都汇聚在 record_from_run，钩子放这里全覆盖；
-        # 幂等（run_dir 唯一索引），观望文章 plan=null 不建单
-        if not failed and skill_name == RICH_SKILL and m_dir and os.path.isdir(m_dir.group(1)):
+        # v1.5.61 模拟挂单：合成型技能（rich 代币 / monster 妖币）发文**发布成功**
+        # 且产物 meta.json 带计划 → 建纸单。agent / 手动两条执行路径都汇聚在
+        # record_from_run，钩子放这里全覆盖；幂等（run_dir 唯一索引），
+        # 观望文章 plan=null 不建单。v1.7.3 起把 monster 一并纳入（此前只认 rich）。
+        if not failed and skill_name in _COMPOSE_SKILLS and m_dir and os.path.isdir(m_dir.group(1)):
             try:
                 _paper_order_from_run(m_dir.group(1), post_id, title)
             except Exception:

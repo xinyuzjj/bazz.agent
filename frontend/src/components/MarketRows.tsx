@@ -192,6 +192,8 @@ export type TracksData = {
   // v1.6.9（#12/#13）：pending/history 的**全量**条数 vs 实际下发的展示条数。
   // 顶部计数基于全量，历史表只列 HISTORY_SHOWN 条 —— 两个数必须都能拿到才能注明口径。
   pending_total?: number; history_total?: number; history_shown?: number; history_shown_limit?: number;
+  // v1.7.3：历史战绩可展开 —— history_limit=本次实际下发上限，history_fetch_max=后端可取上限。
+  history_limit?: number; history_fetch_max?: number;
 };
 export const OUTCOME_META: Record<string, { label: string; cls: string }> = {
   moon:    { label: "markets.outcomeMoon", cls: "pill-green" },

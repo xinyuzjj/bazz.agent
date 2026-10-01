@@ -542,7 +542,7 @@ def _fake_start(t: dict, now: float) -> bool:
         return False
 
 
-def tracks_view() -> dict:
+def tracks_view(history_limit: int = 0) -> dict:
     """GET /api/market/radar/tracks 数据：进行中 + 历史（按关单时间降序 50 条）+ 战绩统计。
 
     v1.6.5（OPT-06）：pending 行补 `fake_start`（疑似假启动，只提示不自动平仓）与 `age_h`
@@ -554,22 +554,32 @@ def tracks_view() -> dict:
         也看不出被隐藏的是最早那段。现在三个数一并给出，前端可直接注明口径。
       · pending 不再受 LIMIT 约束（状态机输入，见 `state.radar_tracks_list`）；
         历史展示路径显式传 limit，把 LIMIT 只用在它该用的地方。
+
+    v1.7.3（历史战绩可展开）：`history_limit` 由前端「展开更多」按钮按需放大
+    （0 = 用默认 HISTORY_SHOWN=50，上限 HISTORY_FETCH=200）。此前后端下发 50 条、
+    前端却写死只渲染前 8 条，剩下 42 条被静默丢弃 —— 用户根本无从「展开查询」。
+    同时补 `history_fetch_max`，前端据此判断「还能不能再拉」而不是猜数字。
     """
     now = time.time()
     pending = state.radar_tracks_list("pending")
     for t in pending:
         t["fake_start"] = _fake_start(t, now)
         t["age_h"] = round(max(0.0, now - float(t.get("found_at") or now)) / 3600.0, 1)
+    limit = HISTORY_SHOWN
+    if history_limit and history_limit > 0:
+        limit = min(max(1, int(history_limit)), HISTORY_FETCH)
     history = state.radar_tracks_list("closed", limit=HISTORY_FETCH)
     history.sort(key=lambda h: h.get("closed_at") or 0, reverse=True)
     stats = state.radar_tracks_stats()
     return {
         "pending": pending,
         "pending_total": state.radar_tracks_count("pending"),
-        "history": history[:HISTORY_SHOWN],
+        "history": history[:limit],
         "history_total": state.radar_tracks_count("closed"),
-        "history_shown": min(len(history), HISTORY_SHOWN),
+        "history_shown": min(len(history), limit),
         "history_shown_limit": HISTORY_SHOWN,
+        "history_limit": limit,
+        "history_fetch_max": HISTORY_FETCH,
         "stats": stats,
         "ts": now,
     }

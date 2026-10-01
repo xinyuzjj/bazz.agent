@@ -140,12 +140,35 @@ def test_plan_levels_sets_zone():
 
 
 def test_publish_hook_creates_paper_order():
-    """发布成功入账处（record_from_run）必须挂钩建单，且只对 rich + 发布成功生效。"""
+    """发布成功入账处（record_from_run）必须挂钩建单，且对 rich / **monster** 两类合成型
+    技能 + 仅发布成功生效。v1.7.3 起妖币发帖也建单 —— 此前只挂 rich，妖币发了帖不留纸单。"""
     src = (ROOT / "src" / "square_store.py").read_text(encoding="utf-8-sig")
     assert "_paper_order_from_run" in src, "record_from_run 缺建单钩子"
-    hook = src[src.index("if not failed and skill_name == RICH_SKILL"):]
+    assert "skill_name in _COMPOSE_SKILLS" in src, "建单钩子未覆盖合成型技能集合"
     assert "not failed" in src, "发布失败不应建单"
     assert 'run_dir=run_dir' in src, "建单必须带 run_dir（幂等去重）"
+    # 白名单与合成型集合都必须含 monster
+    assert "MONSTER_SKILL" in src and 'square-monster-post' in src, "monster 未纳入记账白名单"
+    assert "_COMPOSE_SKILLS = (RICH_SKILL, MONSTER_SKILL)" in src, "monster 未纳入合成型技能集合"
+
+
+def test_monster_chain_wired_end_to_end():
+    """妖币发帖三处记账入口都必须认 square-monster-post；monster 的 meta.json 必须带 plan 节。"""
+    for f in ("agent_core.py", "skills_client.py"):
+        s = (ROOT / "src" / f).read_text(encoding="utf-8-sig")
+        assert "square-monster-post" in s, f"{f} 记账入口未认 monster（发了帖不落台账）"
+    mon = (ROOT / "src" / "square_monster.py").read_text(encoding="utf-8-sig")
+    blk = mon[mon.index('with open(meta_f, "w"'):]
+    blk = blk[:blk.index('return {"ok": True')]
+    assert '"plan": plan' in blk, "monster compose 的 meta.json 缺 plan 节（建单依据）"
+    assert '"engine": "monster"' in blk, "monster compose 缺 engine 标记"
+
+
+def test_monster_cli_prints_compose_dir():
+    """monster 的 cli 必须打印「已合成 → <dir>」——record_from_run 靠它解析产物目录建单。"""
+    cli = (ROOT / ".agents" / "skills" / "square-monster-post" / "scripts" / "cli.mjs").read_text(
+        encoding="utf-8-sig")
+    assert "已合成 →" in cli, "monster cli 未打印产物目录，建单钩子解析不到 run_dir"
 
 
 def test_paper_routes_and_start():

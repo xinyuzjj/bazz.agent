@@ -391,16 +391,19 @@ def _system_prompt(locale: str = "zh") -> str:
             "问『妖币雷达规则该不该改 / 判据体检 / 登记门槛要不要设 / 那条规则还有效吗 / 战绩回放』→ `mode='audit'`"
             "（**判据体检**：回报两条挂起规则与交叉表门禁的当前证据，样本不够会明说还差几笔；只给证据不改规则）。\n"
             "   **发币安广场 / Square 发文 → 绝不走 mcp_call（MCP 网关没有发广场能力）。先按**标的**分流，再按形态二选一：\n"
-            "   a0) **代币 vs 妖币必须先分流 —— 这是两套分析技巧，不是同一个工具的两组参数**：\n"
-            "      · **普通代币 / 主流币 / 有现货深度的币** → run_skill(skill_name='square-rich-post', "
-            "args='<SYMBOL> [futures|spot] --publish')，用 **SMC**（结构 / BOS・CHoCH / 扫流动性 / OTE 0.618-0.705 / OB / FVG）；\n"
-            "      · **妖币 / meme / 百倍币 / 十倍币 / 异动币 / 出现在「行情→妖币雷达」里的币** → "
+            "   a0) **代币 vs 妖币：第一步必须先调 radar_lookup 查名单，不许凭印象判断**（v1.7.3）：\n"
+            "      · 用户就**任何一个具体币**要求发广场 / 发文 / 出方案 → **先调 radar_lookup(symbol='<SYMBOL>')**；\n"
+            "      · 返回 in_radar=true（在妖币雷达视野内，**含用户从「行情→妖币雷达」列表里挑的币**）→ "
             "run_skill(skill_name='square-monster-post', args='<SYMBOL> [futures|spot] --publish')，用 **剧本三轴**"
-            "（① 位阶：庄家剧本演到第几格 ② 控盘度：盘在谁手里 ③ 燃料：油从哪来）。\n"
-            "      **为什么必须分开**：SMC 成立的前提是「结构位背后真的有人挂单」，而妖币是**控盘盘、K 线是画出来的** —— "
-            "你看到的 OB 就是诱多区，你看到的「扫流动性」就是专门去点你止损的那一下。用 SMC 分析妖币等于拿散户的地图找庄家的门。"
-            "**两者绝不可互相替代，也不要因为一个技能报错就换另一个硬发**。\n"
-            "      判断不了 → 先跑 monster：该币不在妖币雷达视野内时它会**明确报错并提示改用 rich**，不会硬编一篇。\n"
+            "（① 位阶：庄家剧本演到第几格 ② 控盘度：盘在谁手里 ③ 燃料：油从哪来）；\n"
+            "      · 返回 in_radar=false → run_skill(skill_name='square-rich-post', "
+            "args='<SYMBOL> [futures|spot] --publish')，用 **SMC**（结构 / BOS・CHoCH / 扫流动性 / OTE 0.618-0.705 / OB / FVG）；\n"
+            "      **为什么必须查名单而不是自己判**：SMC 成立的前提是「结构位背后真的有人挂单」，"
+            "而妖币是**控盘盘、K 线是画出来的** —— 你看到的 OB 就是诱多区，你看到的「扫流动性」就是专门去点你止损的那一下。"
+            "**用户在妖币雷达里看到的币必然在名单内**，凭印象把它判成「普通代币」走 SMC 是错的。"
+            "**两者绝不可互相替代，也不要因为一个技能报错就换另一个硬发**；"
+            "radar_lookup 取不到数（雷达未扫 / 后端不可达）→ 如实说「没测到」再按经验兜底，"
+            "**不要把「没测到」说成「不在名单」**。\n"
             "   a) 【默认形态】生成文章/行情文/深度分析发文/图文帖/发图文/行情快报：用户让『写文章发广场』"
             "『把这篇分析发出去』『发行情文』且没给现成正文 → 走 a0 选定技能，args 带 --publish："
             "自动取数 + Pillow 封面 + 固定结构组稿"
@@ -707,6 +710,42 @@ def _run_radar_audit() -> dict:
         "data": {"decisions": d, "crosstab_ready": ct.get("ready"),
                  "crosstab_n": ct.get("n")},
     }
+
+
+def _run_radar_lookup(symbol: str):
+    """v1.7.3：确定性查名单 —— 某币在不在「行情→妖币雷达」视野内。
+
+    发广场前的**分流依据**。此前这一步由 LLM 凭印象判断，导致用户从雷达列表里
+    挑出来的币也常被判成「普通代币」而走了 SMC；现在改成先查事实、再决定技能。
+    """
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        return {"reply": "请给出币种符号（如 PENGUUSDT）。",
+                "tools": [{"icon": "🪙", "name": "妖币名单核对", "status": "warn", "detail": "缺 SYMBOL"}]}
+    if not sym.endswith("USDT") and "/" not in sym:
+        sym += "USDT"          # 允许只给 base（PENGU → PENGUUSDT）
+    try:
+        import square_monster
+        r = square_monster.radar_lookup(sym)
+    except Exception as e:
+        return {"reply": f"⚠️ 雷达名单查询失败：{e}",
+                "tools": [{"icon": "🪙", "name": "妖币名单核对", "status": "error", "detail": str(e)[:140]}]}
+    if not r.get("ok"):
+        return {"reply": f"⚠️ 雷达名单查询失败：{r.get('error')}",
+                "tools": [{"icon": "🪙", "name": "妖币名单核对", "status": "error", "detail": str(r.get("error"))[:140]}]}
+    if r.get("in_radar"):
+        reply = (f"**{sym} 在妖币雷达视野内**（池：{r.get('pool') or '—'}，"
+                 f"位阶：{r.get('stage_label') or r.get('stage') or '—'}，妖币度 {r.get('score')}）。\n\n"
+                 "→ 发文**必须**走 `square-monster-post`（妖币剧本三轴：位阶 / 控盘度 / 燃料），"
+                 "**不要**用 SMC 的 `square-rich-post`。")
+        detail = f"{sym} 在册（{r.get('pool') or '—'}）"
+    else:
+        reply = (f"**{sym} 不在妖币雷达视野内**。\n\n"
+                 "→ 按普通代币走 `square-rich-post`（SMC）。若你确定它是雷达里的币，"
+                 "请核对交易对符号（雷达用 xxxUSDT 格式）。")
+        detail = f"{sym} 不在册"
+    return {"reply": reply, "data": r,
+            "tools": [{"icon": "🪙", "name": "妖币名单核对", "status": "success", "detail": detail}]}
 
 
 def _run_meme_watch(mode: str = "both"):
@@ -1817,6 +1856,8 @@ def _dispatch_tool(name: str, args: dict, confirmed: bool = False) -> Dict[str, 
         return _run_onchain()
     if name == "meme_watch":
         return _run_meme_watch(mode=(args.get("mode") or "both"))
+    if name == "radar_lookup":
+        return _run_radar_lookup(symbol=args.get("symbol") or args.get("s") or "")
     if name == "clarify":
         return _run_clarify(args)
     if name == "delegate":
@@ -2337,7 +2378,8 @@ def _tool_run_skill(args: dict, confirmed: bool = False) -> Dict[str, Any]:
     out = r.get("output", "")
     detail = f"exit={r['exit_code']} · {r['elapsed']}s" + (("\n" + out[:240].rstrip()) if out else "")
     # 广场发帖记账：真实发布成功 / 失败都落本地台账（广场页展示），失败不打断主流程
-    if name in ("square-post", "square-rich-post"):
+    # v1.7.3：补 square-monster-post —— 此前妖币发帖不在白名单，发了帖既不落台账也不建模拟挂单
+    if name in ("square-post", "square-rich-post", "square-monster-post"):
         try:
             import square_store
             square_store.record_from_run(name, arg_s, out, r["exit_code"], via="agent")

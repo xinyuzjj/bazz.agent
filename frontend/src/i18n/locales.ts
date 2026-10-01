@@ -599,7 +599,10 @@ export const zh: Dict = {
   // v1.6.9（#12）：面板顶部计数（moon/dump/expired 与分档胜率）基于**全部**已关单，
   // 而下方历史表只列最近 N 条 —— 样本超过 N 后数字与可见行数对不上，必须显式注明口径。
   "markets.trackHistoryNote": "显示最近 @{shown} 条 · 统计基于全部 @{total} 条",
-  "markets.trackMore": "仅显示最近 8 条，共 @{n} 条历史",
+  // v1.7.3：历史战绩可展开 —— 默认渲染 8 条，「展开更多」逐步放大到后端上限（200）。
+  "markets.loadMoreHistory": "展开更多（已显示 @{shown}/@{total} 条）",
+  "markets.loadMoreHistoryTip": "共 @{total} 条历史战绩，逐步展开",
+  "markets.trackAllShown": "已显示全部 @{n} 条战绩",
   "markets.trackFoundPrice": "发现价",
   "markets.trackNowPrice": "现价",
   "markets.trackChg": "当前涨跌幅",
@@ -1995,7 +1998,9 @@ export const en: Dict = {
   "markets.trackWin": "Win Rate",
   "markets.trackHistory": "History",
   "markets.trackHistoryNote": "Showing latest @{shown} of @{total} records · stats cover all",
-  "markets.trackMore": "Showing latest 8 of @{n} records",
+  "markets.loadMoreHistory": "Show more (@{shown}/@{total})",
+  "markets.loadMoreHistoryTip": "@{total} records in history, expands progressively",
+  "markets.trackAllShown": "All @{n} records shown",
   "markets.trackFoundPrice": "Found Price",
   "markets.trackNowPrice": "Now",
   "markets.trackOutcomePrice": "Exit Price",

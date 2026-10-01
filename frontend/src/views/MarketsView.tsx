@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { I } from "../components/icons";
 import { useT } from "../i18n/i18n";
@@ -199,8 +199,12 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
 
   // —— v1.5.2 妖币追踪：启动前发现 → 结局验证（进行中 + 历史 + 战绩） ——
   const [tracks, setTracks] = useState<TracksData | null>(null);
-  const loadTracks = async () => {
-    try { setTracks(await api.marketRadarTracks()); } catch { /* 网络失败保持旧数据 */ }
+  // v1.7.3：历史战绩可展开 —— 默认只渲染 8 条（此前是硬编码上限，展开不了），
+  // 「展开更多」按需放大；超过已下发条数时向后端要更大的 history_limit。
+  const [hLimit, setHLimit] = useState(8);
+  const hLimitRef = useRef(8);
+  const loadTracks = async (limit = hLimitRef.current) => {
+    try { setTracks(await api.marketRadarTracks(limit)); } catch { /* 网络失败保持旧数据 */ }
   };
 
   // —— v1.5.0 多空比面板（爆仓流已按需求移除 v1.5.7）——
@@ -780,14 +784,38 @@ export function MarketsView({ onTrade, onOrder, onAnalyze }: {
                 style={{ gridTemplateColumns: TRACK_COLS.history.tpl }}>
                 {TRACK_COLS.history.head.map((h) => <div key={h}>{t(h)}</div>)}
               </div>
-              {tracks.history.slice(0, 8).map((r) => (
+              {tracks.history.slice(0, hLimit).map((r) => (
                 <TrackLine key={r.id} r={r} variant="history" onDetail={openDetail("spot")} />
               ))}
-              {tracks.history.length > 8 && (
-                <div className="px-4 py-2 border-t border-line text-center text-ink-dim font-mono text-[12px]">
-                  {t("markets.trackMore", { n: tracks.history.length - 8 })}
-                </div>
-              )}
+              {(() => {
+                const loaded = tracks.history.length;
+                const fetchMax = tracks.history_fetch_max ?? 200;
+                const total = tracks.history_total ?? loaded;
+                // 已下发但还没渲染（本地展开）/ 后端还有更多可取（要再拉一次）
+                const hasLocal = loaded > hLimit;
+                const hasRemote = !hasLocal && total > loaded && loaded < fetchMax;
+                if (!hasLocal && !hasRemote) {
+                  return loaded > 8 ? (
+                    <div className="px-4 py-2 border-t border-line text-center text-ink-mute font-mono text-[12px]">
+                      {t("markets.trackAllShown", { n: String(loaded) })}
+                    </div>
+                  ) : null;
+                }
+                const shownN = Math.min(hLimit, loaded);
+                return (
+                  <div className="px-4 py-2 border-t border-line text-center">
+                    <button onClick={() => {
+                      const nx = hLimit + 24;
+                      hLimitRef.current = nx;
+                      setHLimit(nx);
+                      if (nx > loaded) loadTracks(nx);   // 本地已到顶 → 向后端要更多
+                    }} className="text-gold font-mono text-[12.5px] hover:underline"
+                      title={t("markets.loadMoreHistoryTip", { total: String(total) })}>
+                      {t("markets.loadMoreHistory", { shown: String(shownN), total: String(total > loaded ? total : loaded) })}
+                    </button>
+                  </div>
+                );
+              })()}
             </>
           )}
         </div>

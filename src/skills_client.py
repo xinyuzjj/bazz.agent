@@ -501,7 +501,8 @@ def run_skill(skill_name: str, args: str = "") -> dict:
                 tag += "（成功）" if proc.returncode == 0 else "（仍失败）"
                 proc.stdout = (proc.stdout or "") + tag
         # 广场发帖记账：手动「运行」发布的真实结果也落本地台账
-        if skill_name in ("square-post", "square-rich-post"):
+        # v1.7.3：补 square-monster-post（此前妖币发帖不落台账、不建模拟挂单）
+        if skill_name in ("square-post", "square-rich-post", "square-monster-post"):
             try:
                 import square_store
                 square_store.record_from_run(skill_name, arg_s, proc.stdout or "", proc.returncode, via="manual")

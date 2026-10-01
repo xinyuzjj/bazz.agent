@@ -251,10 +251,14 @@ def api_market_longshort():
 
 
 @app.get("/api/market/radar/tracks")
-def api_market_radar_tracks():
-    """妖币追踪：启动前发现记录 + 后续暴涨/暴跌结局验证（进行中/历史/战绩统计）。"""
+def api_market_radar_tracks(history_limit: int = 0):
+    """妖币追踪：启动前发现记录 + 后续暴涨/暴跌结局验证（进行中/历史/战绩统计）。
+
+    `history_limit`（v1.7.3）：>0 时按需放大历史战绩条数（默认 50，上限 200），
+    供前端「展开更多」按需拉取 —— 此前前端只渲染前 8 条，多发的被静默丢弃。
+    """
     try:
-        return radar_tracker.tracks_view()
+        return radar_tracker.tracks_view(history_limit=history_limit)
     except Exception as e:
         return {"pending": [], "history": [], "stats": {}, "error": str(e)}
 

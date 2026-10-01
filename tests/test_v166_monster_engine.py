@@ -217,7 +217,10 @@ def test_only_long_never_short():
     f = sm._facts(_an(sm, r))
     block = "\n".join(sm._plan_block(f))
     check("操作计划块无 · · 连续符号", "· ·" not in block)
-    check("计划块含杠杆算术提醒", "本金归零" in block)
+    # v1.7.3 二次修订（用户定调）：正文不再重复「杠杆算术」段与「出场四条」——
+    # 计划块只留 入场/止损/达标 + 仓位，页脚换成可核对读数
+    check("计划块已去掉杠杆算术段", "强平线" not in block and "本金归零" not in block)
+    check("计划块保留仓位与止损", "仓位" in block and "止损" in block)
 
     # 源码里不得存在给空头出计划的路径
     src = _src("square_monster.py")
@@ -236,7 +239,15 @@ def test_render_styles():
     seen = set()
     for st in sm.STYLES:
         art = sm._article_full(an, st)
-        check(f"风格 {st} 出稿", bool(art["title"]) and len(art["body"]) > 300)
+        check(f"风格 {st} 出稿", bool(art["title"]) and len(art["body"]) > 150)
+        # v1.7.3 紧凑版：结论前置 + 三条硬数据 + 一条计划，正文不许再堆回长文（旧版 800+ 字符）
+        check(f"风格 {st} 正文紧凑（<600 字符）", len(art["body"]) < 600, str(len(art["body"])))
+        # 通用科普段（每篇雷同、读者抓不到重点）必须删干净
+        check(f"风格 {st} 已删通用科普段", "妖币不能当普通币看" not in art["body"])
+        # v1.7.3 二次修订（用户定调）：删掉「出场四条」行与页脚套话，页脚换成可核对读数
+        check(f"风格 {st} 正文不含「出场：」行", "出场：" not in art["body"])
+        check(f"风格 {st} 页脚无「数据来自…」套话", "数据来自" not in art["body"])
+        check(f"风格 {st} 页脚是可核对读数（成交额）", "24h 成交额" in art["body"], art["body"][-80:])
         check(f"风格 {st} 带 $cashtag + #话题",
               any(t.startswith("$") for t in art["tags"]) and any(t.startswith("#") for t in art["tags"]))
         # 结论一致性：同一份数据不许因风格不同给出不同动作
@@ -447,7 +458,10 @@ def test_wiring():
     print("\n=== ⑩ 接线 ===")
     ac = _src("agent_core.py")
     check("agent 提示词提到 square-monster-post", "square-monster-post" in ac)
-    check("agent 提示词要求先按标的分流（代币 vs 妖币）", "代币 vs 妖币必须先分流" in ac)
+    check("agent 提示词要求先按标的分流（代币 vs 妖币）", "代币 vs 妖币" in ac)
+    # v1.7.3：分流不再靠 LLM 凭印象 —— 必须先调 radar_lookup 查雷达名单
+    check("agent 提示词强制发帖前先调 radar_lookup 查名单",
+          "radar_lookup" in ac and "不许凭印象判断" in ac)
     check("agent 提示词写清「绝不可互相替代」",
           "绝不可互相替代" in ac or "两者绝不可互相替代" in ac)
     check("agent 提示词有 audit 模式说明", "mode='audit'" in ac)
@@ -456,6 +470,13 @@ def test_wiring():
     llm = _src("llm.py")
     check("llm meme_watch enum 含 audit", '"audit"' in llm)
     check("llm 描述里说明 audit 只给证据不改规则", "只给证据不改规则" in llm)
+    # v1.7.3：radar_lookup 工具（发帖前确定性查名单）
+    check("llm 注册了 radar_lookup 工具 schema", '"name": "radar_lookup"' in llm)
+    check("llm radar_lookup 描述点明「不要凭印象判断」", "不要凭印象判断" in llm)
+    mon = _src("square_monster.py")
+    check("square_monster 提供确定性 radar_lookup 函数", "def radar_lookup(" in mon)
+    check("radar_lookup 给出 suggested skill（monster/rich 分流）",
+          'square-monster-post' in mon and 'in_radar' in mon)
 
     dr = open(os.path.join(ROOT, "desktop_app.py"), encoding="utf-8").read()
     check("后端有 /api/square/monster/compose", "/api/square/monster/compose" in dr)

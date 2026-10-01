@@ -48,7 +48,7 @@ export const api = {
     jget(`/market/oi?symbols=${encodeURIComponent(symbols.join(","))}`),
   marketFNG: () => jget("/market/fng"),
   marketRadar: (force = false) => jget("/market/radar" + (force ? "?force=1" : "")),
-  marketRadarTracks: () => jget("/market/radar/tracks"),
+  marketRadarTracks: (limit?: number) => jget("/market/radar/tracks" + (limit && limit > 0 ? `?history_limit=${limit}` : "")),
   marketLongshort: () => jget("/market/longshort"),
   marketLiquidations: (limit = 60, window = 300) =>
     jget(`/market/liquidations?limit=${limit}&window=${window}`),

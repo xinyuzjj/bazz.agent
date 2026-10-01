@@ -570,6 +570,28 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "radar_lookup",
+            "description": ("**发广场前必调**：确定性判定某币是否在「行情→妖币雷达」视野内。\n"
+                            "用户就**任何一个具体币**要求发广场 / 发文 / 出方案时，**第一步先调它**，"
+                            "再按返回值选技能：\n"
+                            "- in_radar=true（在妖币雷达视野内，**含用户从「行情→妖币雷达」列表里挑的币**）"
+                            "→ run_skill(skill_name='square-monster-post')，用妖币剧本三轴\n"
+                            "- in_radar=false → run_skill(skill_name='square-rich-post')，用 SMC\n"
+                            "**不要凭印象判断某币是不是妖币** —— 用户在雷达里看到的币一定在名单内，"
+                            "把它当普通币走 SMC 是错的。"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string",
+                               "description": "币种符号，如 PENGUUSDT（可只给 base，如 PENGU）"},
+                },
+                "required": ["symbol"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "memory_write",
             "description": "长期记忆管理（跨会话生效）。actions：add=新记（用户说‘记住…’或透露稳定偏好时）；replace=更新已有记忆（需 key）；remove=删除（需 key 或 text 相似匹配；用户手动创建的不可删）；read=查看/检索记忆（text 作关键词过滤，返回 key 列表）。含 API Key/私钥/密码的内容会被拒绝。",
             "parameters": {

@@ -319,6 +319,48 @@ def _row_of(symbol: str) -> dict:
     return {}
 
 
+def radar_lookup(symbol: str) -> dict:
+    """确定性查名单：某币是否在「行情→妖币雷达」视野内。
+
+    v1.7.3：给 Agent 的**代币 vs 妖币分流**提供事实依据。
+    此前分流整段交给 LLM 凭印象判断 —— 用户从雷达列表里挑出来的币，也常被
+    判成「普通代币」而走了 square-rich-post（SMC）方案。现在改成先来这里查：
+
+      in_radar=True  → suggest="square-monster-post"（妖币剧本三轴）
+      in_radar=False → suggest="square-rich-post"（SMC）
+
+    与 `_row_of` 同源（scanner.get_radar_v2 的 coins/takeoff/ignition），
+    所以「用户看到的雷达列表」与这里的判定**必然一致**。
+    """
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        return {"ok": False, "error": "缺少 SYMBOL"}
+    # 自洽补全：只给 base（AAA）也当成 AAAUSDT —— 雷达池全是 xxxUSDT 格式，
+    # 不补全就会把「用户只打了 base」误判成「不在名单」，正是要修的那类假阴性。
+    if not sym.endswith("USDT") and "/" not in sym:
+        sym += "USDT"
+    try:
+        row = _row_of(sym)
+    except Exception as e:
+        return {"ok": False, "symbol": sym, "error": f"雷达数据不可用：{e}"}
+    if not row:
+        return {"ok": True, "symbol": sym, "in_radar": False, "pools": [],
+                "suggest": "square-rich-post",
+                "note": "不在妖币雷达视野内 → 按普通代币走 SMC（square-rich-post）"}
+    key = row.get("_radar_key") or ""
+    st = row.get("stage") or ""
+    label = row.get("stage_label") or (STAGE_BOOK.get(st, ("",))[0] if st else "")
+    return {
+        "ok": True, "symbol": sym, "in_radar": True,
+        "pools": [key] if key else [], "pool": key,
+        "stage": st, "stage_label": label,
+        "score": row.get("score"),
+        "price": _num(row.get("price")), "change24_pct": _num(row.get("change24_pct")),
+        "suggest": "square-monster-post",
+        "note": "在妖币雷达视野内 → 必须用妖币剧本引擎（square-monster-post），不要用 SMC",
+    }
+
+
 # ---------------- 三轴 ---------------- #
 
 def _axis_stage(row: dict) -> dict:
@@ -794,7 +836,11 @@ def draw_monster_cover(an: dict, stat: dict, path: str) -> str:
             py = y1 - (y1 - y0) * (price - lo) / rng
             py = max(y0, min(y1, py))
             _dashed(dr, x0, py, x1, UP, width=1)
-            _chip_label(dr, x1 - 148, py - 20, f"现价 {_fmt(price)}", UP, 13, bold=True)
+            # 标签默认压在线上方；但价格接近 90d 高时 py≈y0，标签会顶进页头
+            # 撞上右上角的「妖币剧本引擎 …」（v1.7.3 视觉验收抓到的重叠）——
+            # 这种时候改放线下方。
+            cy = py - 24 if py - 24 >= y0 + 4 else py + 8
+            _chip_label(dr, x1 - 148, cy, f"现价 {_fmt(price)}", UP, 13, bold=True)
     else:
         dr.rectangle([x0, y0, x1, y1], outline=GRID)
         dr.text((x0 + 16, y0 + 16), "K 线数据不可用（该币可能刚上线或已下架）", font=_font(15), fill=SUB)
@@ -994,8 +1040,21 @@ def _facts(an: dict) -> dict:
         "chg3d": _num(row.get("change3d_pct")),
         "chg30d": _num(row.get("change30d_pct")),
         "pos": sa.get("pos_pct"),
+        # v1.7.3：位置坐标（90d 区间分位 + 距高/低点）——「还能不能上车」的第一依据，
+        # 比任何指标都直观：98% 分位、距高点 −0.8%，说什么都不该追
+        "dd": _num(row.get("drawdown_pct")),
+        "from_low": _num(row.get("from_low_pct")),
+        # 链上筹码（v1.7.2 接的）：**只有真测到才写进稿子**。
+        # measured=False 时这一格是「没测到」，不能当成「没有」——三态纪律。
+        "onchain": row.get("onchain") or {},
         "vol_ratio": _num(row.get("vol_ratio")),
         "qv": _num(row.get("quote_volume")),
+        # v1.7.3：页脚数据行要用的原始因子（**不带「中性/拥挤」这类结论词**，
+        # 结论在正文三轴里已经说过一遍，页脚只留能自己核对的数字）
+        "funding": _num((row.get("factors") or {}).get("funding")),
+        "taker": _num((row.get("factors") or {}).get("taker_ratio")),
+        "rvol15": _num((row.get("factors") or {}).get("rvol15")),
+        "oi24": _num(row.get("oi_chg24")),
         "score": row.get("score"),
         "stage": sa["stage"], "stage_label": sa["label"], "seq": sa["seq"],
         "seq_len": sa["seq_len"], "playing": sa["playing"], "next": sa["next"],
@@ -1015,186 +1074,230 @@ def _tags(base: str) -> list:
     return [f"${base}", "#妖币雷达", "#合约交易", "#风险管理"]
 
 
-def _footer_lines() -> list:
-    return [
-        "",
-        "—",
-        "本内容由 BAZZ.AGENT 的妖币剧本引擎生成（位阶/控盘/燃料三轴），数据取自行情接口，非投资建议。",
-        "项目开源：github.com/xinyuzjj/bazz.agent",
-        "妖币是控盘盘，剧本随时可能反手；任何位置都不值得重仓。",
-    ]
+def _footer_lines(f: dict) -> list:
+    """页脚（v1.7.3 二次修订）：**换成可核对的读数**。
+
+    原来这里是「数据来自 Monster Radar 同源行情 · 非投资建议 · github…」——
+    每篇一字不差，读者看第二遍就会跳过。同样这个位置放成交额 / 费率 / OI / taker / RVOL，
+    都是能自己去交易所对一遍的数字，才叫有信息量。
+
+    取的是**原始因子值**而不是 `fuel_items` 的标签（后者是「费率中性」「大户拥挤」这类
+    结论词，和读数拼在一起会重复成「费率中性 费率 +0.003%」）。
+    """
+    parts = []
+    if f.get("qv"):
+        parts.append(f"24h 成交额 {_fmt_qv(f['qv'])}")
+    if f.get("oi24") is not None:
+        parts.append(f"OI 24h {_spct(f['oi24'])}")
+    if f.get("funding") is not None:
+        parts.append(f"资金费率 {f['funding'] * 100:+.3f}%")
+    if f.get("rvol15") is not None:
+        parts.append(f"RVOL(15m) {f['rvol15']:.1f}x")
+    if f.get("taker") is not None:
+        parts.append(f"taker {f['taker']:.2f}")
+    if not parts:
+        parts.append("本轮行情因子未取到（该币可能刚上确认层）")
+    return ["", "· " + " · ".join(parts)]
+
+
+PEER_MIN_N = 5   # 同类样本门禁：已关单少于它就不出结论（项目纪律：样本不够不给判断）
+
+
+def _peer_stats(stage: str) -> dict:
+    """同类样本战绩 —— 取本机 radar_tracks 的**真实跟踪记录**（不是回测理论值）。"""
+    try:
+        import state
+        st = state.radar_tracks_stats()
+        g = (st.get("by_stage") or {}).get(stage) or {}
+        return {"closed": int(g.get("closed") or 0), "moon": int(g.get("moon") or 0),
+                "dump": int(g.get("dump") or 0), "expired": int(g.get("expired") or 0),
+                "win_rate": g.get("win_rate") or 0.0}
+    except Exception:
+        return {"closed": 0, "moon": 0, "dump": 0, "expired": 0, "win_rate": 0.0}
+
+
+def _peer_block(f: dict) -> list:
+    """同类参照段：**这一格在本机历史上实际是怎么走的**。
+
+    用词必须与 `radar_tracker._judge_outcome` 的口径严格对齐，否则就是在编：
+      moon    = 启动过、自持有期极值回撤 12% 落袋（**不是**「涨到 +25%」）
+      dump    = 逆向 10%（10x 下的强平线）先到
+      expired = 7 天没启动
+    样本不足 PEER_MIN_N → 明说不够，不给结论。
+    """
+    p = _peer_stats(f.get("stage") or "")
+    if not p.get("closed"):
+        return []
+    label = f.get("stage_label") or f.get("stage") or "该阶段"
+    if p["closed"] < PEER_MIN_N:
+        return ["", f"**同类参照**：本机「{label}」样本只有 {p['closed']} 笔，还不够下结论。"]
+    parts = []
+    if p["moon"]:
+        parts.append(f"{p['moon']} 笔启动后落袋")
+    if p["expired"]:
+        parts.append(f"{p['expired']} 笔 7 天没启动")
+    if p["dump"]:
+        parts.append(f"{p['dump']} 笔先打到 −10%")
+    return ["", f"**同类参照**：本机已跟踪 {p['closed']} 笔「{label}」样本 —— "
+                f"{'、'.join(parts)}（落袋率 {p['win_rate']}%）。"]
+
+
+def _fmt_qv(v) -> str:
+    """成交额人性化（亿 / 万）。"""
+    try:
+        v = float(v or 0)
+    except (TypeError, ValueError):
+        return "—"
+    if v >= 1e8:
+        return f"{v / 1e8:.2f} 亿"
+    if v >= 1e4:
+        return f"{v / 1e4:.0f} 万"
+    return f"{v:.0f}"
 
 
 def _stage_line(f: dict) -> str:
     L = f["stage_label"]
     if f["seq"] is not None:
         return f"{L}（主剧本第 {f['seq'] + 1}/{f['seq_len']} 格）"
-    return f"{L}（旁支，不在主剧本序列内）"
+    return f"{L}（旁支）"
+
+
+def _data_lines(f: dict) -> list:
+    """数据行：三轴（各带依据）+ 位置坐标（+ 链上筹码，仅真测到时）。
+
+    v1.7.3：先砍掉过解释性长句（那些要读一遍才能捞到结论）；但只给结论又太薄，
+    所以改成「结论 + 这条结论背后能核对的东西」：
+      位阶 ← 雷达登记它时的触发判据（`reasons`，与本机雷达 UI 同源）
+      控盘 ← 命中的结构性指纹
+      燃料 ← 燃料项读数
+    再补两条**决策直接相关**的客观坐标：
+      位置 ← 90d 区间分位 + 距高/低点（「还能不能上车」的第一依据）
+      链上 ← 前 10 地址持仓集中度（**只在 measured=True 时写**，没测到就不写）
+    """
+    stage = _stage_line(f)
+    rs = [r for r in (f.get("reasons") or []) if r][:2]
+    if rs:
+        stage += f"｜触发：{' · '.join(rs)}"
+    ctrl = f["ctrl_grade"]
+    if f["ctrl_flags"]:
+        ctrl += f"（{'、'.join(f['ctrl_flags'][:3])}）"
+    fuel = f["fuel_grade"]
+    # 只取**第一条**读数：燃料项的读数自带括号（如「大户比 2.16（大户偏多）」），
+    # 外面再包一层就成括号套括号，读起来像坏了。
+    fv = [val for _lab, val, _sc, _d in (f.get("fuel_items") or [])][:1]
+    if fv:
+        fuel += f"（{fv[0]}）"
+    out = [f"· 位阶：{stage}", f"· 控盘：{ctrl}", f"· 燃料：{fuel}"]
+    # 位置坐标：它现在站在 90 日区间的哪一段。这是「能不能上车」最直接的依据
+    if f.get("pos") is not None:
+        line = f"· 位置：90d 区间 {f['pos']:.0f}% 分位"
+        ep = []
+        if f.get("dd") is not None:
+            ep.append(f"距高点 {f['dd']:+.1f}%")
+        if f.get("from_low") is not None:
+            ep.append(f"距低点 {f['from_low']:+.1f}%")
+        if ep:
+            line += f"（{' / '.join(ep)}）"
+        out.append(line)
+    # 链上筹码：**只在真测到时写**（measured=False 是「没测到」，不是「没有」）
+    oc = f.get("onchain") or {}
+    if oc.get("measured") and oc.get("top10_pct") is not None:
+        line = f"· 链上：前 10 地址持 {oc['top10_pct']:.1f}%"
+        if oc.get("top1_pct") is not None:
+            line += f"（第一大 {oc['top1_pct']:.1f}%）"
+        out.append(line)
+    return out
 
 
 def _verdict_block(f: dict) -> list:
-    """结论段：动作 + 理由。所有风格共用，保证同一份数据在不同风格下结论一致。"""
-    out = [f"**结论：{f['verdict_label']}** —— {f['verdict_line']}。"]
+    """结论段（v1.7.3 前置）：动作 + 一句理由。所有风格共用，**结论不随风格变**。"""
+    out = [f"**结论：{f['verdict_label']}** —— {f['verdict_line']}"]
     if f["allow"] != "YES":
-        for w in (f["late_why"] or []):
-            out.append(f"· {w}")
+        # 空行必须留：不加的话「结论」会和理由行被 Markdown 并成同一段，挤成一坨
+        out += [""] + [f"· {w}" for w in (f["late_why"] or [])[:1]]
     return out
 
 
 def _plan_block(f: dict) -> list:
-    """操作计划段。plan 为 None 时**不给点位**（绝不硬造方向）。"""
+    """操作计划段（v1.7.3 压到 3 行）。plan 为 None 时**不给点位**，绝不硬造方向。
+
+    仓位与杠杆两行改用 `plan` 里的数字直出，不再塞完整的 `size_line` / `leverage_note`
+    长句（那两句合计 230+ 字符，是把正文撑到 900+ 的主因）。
+    """
     if not f["plan"]:
-        return ["", "**操作计划：本次不给点位。**",
-                "位阶未落在允许进场的窗口里 —— 没有计划比给一个勉强的计划更负责。"]
+        return ["**计划：本次不给点位** —— 位阶没落在允许进场的窗口，不勉强找一个。"]
     p = f["plan"]
-    return ["", "**操作计划（若要参与）**",
-            "· 方向：只做多（本框架绝不做空）",
-            f"· 入场：{_fmt(p['entry'])}（{f['stage_label']}阶段现价，不追高）",
-            f"· 止损：{_fmt(p['stop'])}（固定 −{p['stop_pct']:.0f}%）",
-            f"· {p['size_line']}",
-            f"· ⚠️ {p['leverage_note']}",
-            f"· 达标减半：+{p['hit_pct']:.0f}% → 减一半；其余交给自极值回撤 {p['trail_pct']:.0f}% 的移动止盈。"]
-
-
-def _fuel_block(f: dict) -> list:
-    if not f["fuel_items"]:
-        return ["燃料侧没有算出明确读数。"]
-    return [f"· {lab}：{val} —— {desc}" for lab, val, _sc, desc in f["fuel_items"]]
-
-
-def _axis_block(f: dict) -> list:
-    out = []
-    out.append(f"**① 位阶**：{_stage_line(f)}")
-    out.append(f"这一格在演：{f['playing']}")
-    out.append(f"下一格：{f['next']}")
-    out.append("")
-    out.append(f"**② 控盘度**：{f['ctrl_grade']}")
-    if f["ctrl_flags"]:
-        out.append(f"命中的控盘指纹：{'、'.join(f['ctrl_flags'])}")
-    out.append(f["ctrl_reading"])
-    out.append("")
-    out.append(f"**③ 燃料**：{f['fuel_grade']}")
-    out += _fuel_block(f)
-    return out
+    return [
+        f"**计划（只做多）**：入场 {_fmt(p['entry'])} · 止损 {_fmt(p['stop'])}（−{p['stop_pct']:.0f}%）"
+        f" · 达标 +{p['hit_pct']:.0f}% 减半，其余跟 {p['trail_pct']:.0f}% 移动止盈",
+        f"· 仓位：{p['notional']:.0f}U 名义（{_CAPITAL_U:.0f}U 本金 × {_LEVERAGE}x），"
+        f"打止损亏 ≈{p['loss_u']:.0f}U（本金的 {p['loss_pct_of_capital']:.0f}%）—— 嫌重就降名义，止损线不动",
+    ]
 
 
 def _style_playbook(f: dict) -> tuple:
-    """剧本拆解体：像拆一集剧一样讲清楚庄家在干什么。"""
+    """剧本拆解体：像拆一集剧，但只讲重点（v1.7.3 紧凑版）。"""
     sym, base = f["sym"], f["base"]
-    title = f"{base} 现在演到剧本第几格：{f['stage_label']}"
-    if f["seq"] is not None:
-        title = f"{base} 演到「{f['stage_label']}」——主剧本第 {f['seq'] + 1}/{f['seq_len']} 格"
+    title = (f"{base} 演到「{f['stage_label']}」——主剧本第 {f['seq'] + 1}/{f['seq_len']} 格"
+             if f["seq"] is not None else f"{base} 在「{f['stage_label']}」，这次不在主剧本序列里")
     lines = [
         f"{sym} 现价 {_fmt(f['price'])}，24h {_spct(f['chg24'])}。",
         "",
-        "妖币不能当普通币看。普通币的价格是很多人一起买出来的，所以看结构、看订单块有用；"
-        "妖币的价格是**一个人（或一伙人）按剧本演出来的**，你看到的每一个「支撑」都可能是画给你看的。"
-        "所以这篇不聊指标，只聊三件事：演到第几格、盘在谁手里、往上推的油从哪来。",
+        f"这一格在演什么：{f['playing']}",
         "",
-    ]
-    lines += _axis_block(f)
-    lines += [""] + _verdict_block(f)
-    lines += _plan_block(f)
-    lines += ["", "**出场四条线（别问理由，到线就走）**"]
-    for name, val, desc in f["exit"]:
-        lines.append(f"· {name} {val}：{desc}")
-    lines += _footer_lines()
+    ] + _verdict_block(f)
+    lines += [""] + _data_lines(f)
+    lines += [""] + _plan_block(f)
+    lines += _peer_block(f)
+    lines += _footer_lines(f)
     return title, lines
 
 
 def _style_hunt(f: dict) -> tuple:
-    """埋伏笔记体：第一人称，像猎人记等待日志。"""
+    """埋伏笔记体：第一人称，像猎人记一笔等待日志（v1.7.3 紧凑版）。"""
     sym, base = f["sym"], f["base"]
-    title = f"{base} 埋伏笔记：剧本在「{f['stage_label']}」，我等不等"
-    if f["allow"] != "YES":
-        title = f"{base} 埋伏笔记：这一格我不进（{f['stage_label']}）"
-    lines = [
-        f"记一笔 {sym}，现价 {_fmt(f['price'])}，24h {_spct(f['chg24'])}。",
-        "",
-    ]
-    if f["allow"] == "YES":
-        lines.append("这只在我等的那一格里。")
-        if f["warm"]:
-            lines.append("注意它已经温起来了（涨幅进了 3~10% 区间）—— 温了不挡，但分数会被降，"
-                         "意思是我排到冷启动后面去等，而不是抢。")
-    else:
-        lines.append("这只不在我等的那一格里。写下来不是为了参与，是为了记住它当时的形态 —— "
-                     "妖币的形态是会重演的。")
-    lines += [""] + _axis_block(f)
-    lines += [""] + _verdict_block(f)
-    lines += _plan_block(f)
-    lines += [
-        "",
-        "**如果我进去了，我打算怎么出来**",
-        "妖币最爽和最难受的是同一件事：它涨起来的时候你舍不得走，"
-        "等你想走的时候没有买盘。所以这四条是我进之前就写好的，不是等亏了再想：",
-    ]
-    for name, val, desc in f["exit"]:
-        lines.append(f"· {name} {val}：{desc}")
-    lines += _footer_lines()
+    title = (f"{base} 埋伏笔记：这一格我等" if f["allow"] == "YES"
+             else f"{base} 埋伏笔记：这一格我不进（{f['stage_label']}）")
+    head = ("这只在我等的那一格里。" if f["allow"] == "YES"
+            else "这只不在我等的那一格里，记下来是为了记住它的形态。")
+    lines = [f"记一笔 {sym}，现价 {_fmt(f['price'])}，24h {_spct(f['chg24'])}。", "", head, ""]
+    lines += _verdict_block(f)
+    lines += [""] + _data_lines(f)
+    lines += [""] + _plan_block(f)
+    lines += _peer_block(f)
+    lines += _footer_lines(f)
     return title, lines
 
 
 def _style_warn(f: dict) -> tuple:
-    """别接盘体：站在「你可能正要去追」的位置上劝。"""
+    """别接盘体：站在「你可能正要去追」的位置上劝（v1.7.3 紧凑版）。"""
     sym, base = f["sym"], f["base"]
     title = f"{base} 涨到这里，先看清是谁在推"
     lines = [
         f"{sym} 现价 {_fmt(f['price'])}，24h {_spct(f['chg24'])}，30d {_spct(f['chg30d'])}。",
         "",
-        "看到这种涨幅，第一反应不该是「还能不能追」，而是「我在这个剧本里是什么角色」。"
-        "妖币的收益从来不是分给散户的 —— 它是从对手盘身上收上来的。",
+        "看到这种涨幅，先别问「还能不能追」，先问自己在这个剧本里是什么角色 —— "
+        "空头在这类盘上最容易被轧，妖币的顶常常是二次拉升前的换手。",
         "",
-        f"**你先看它在哪一格**：{_stage_line(f)}。",
-        f"这一格在演：{f['playing']}",
-        f"再往后是：{f['next']}",
-        "",
-        f"**再看这个盘攥在谁手里**：{f['ctrl_grade']}。{f['ctrl_reading']}。",
     ]
-    if f["ctrl_flags"]:
-        lines.append(f"命中的指纹：{'、'.join(f['ctrl_flags'])}。")
-    lines += ["", f"**最后看油从哪来**：{f['fuel_grade']}。{f['fuel_reading']}。"]
-    lines += _fuel_block(f)
-    lines += [""] + _verdict_block(f)
-    lines += [
-        "",
-        f"**最容易亏的一种做法**：看到 {_spct(f['chg24'])} 觉得「涨这么多了该回调了吧」，然后去做空。",
-        "安装版的真实战绩：3 笔做空全部被轧空击穿 10% 强平线，最大有利分别是 0.0% / 0.0% / 1.4% —— "
-        "**从一开始就没跌过**。妖币的顶经常是二次拉升前的换手，做空你以为在赌回调，"
-        "其实是在给庄家当接盘的人。",
-    ]
-    lines += _plan_block(f)
-    lines += ["", "**不管参不参与，这四条线先记下来**"]
-    for name, val, desc in f["exit"]:
-        lines.append(f"· {name} {val}：{desc}")
-    lines += _footer_lines()
+    lines += _verdict_block(f)
+    lines += [""] + _data_lines(f)
+    lines += [""] + _plan_block(f)
+    lines += _peer_block(f)
+    lines += _footer_lines(f)
     return title, lines
 
 
 def _style_plain(f: dict) -> tuple:
-    """说人话体：极简，给只看结论的人。"""
+    """说人话体：极简，给只看结论的人（v1.7.3 紧凑版）。"""
     sym, base = f["sym"], f["base"]
     title = f"{base}：{f['verdict_label']}"
-    lines = [
-        f"现价 {_fmt(f['price'])}，24h {_spct(f['chg24'])}。",
-        "",
-        f"结论：{f['verdict_label']}。{f['verdict_line']}。",
-        "",
-        f"它在剧本的「{f['stage_label']}」这一格"
-        + (f"（第 {f['seq'] + 1}/{f['seq_len']} 格）" if f["seq"] is not None else "（旁支）")
-        + f"，盘面控盘度 {f['ctrl_grade']}，燃料 {f['fuel_grade']}。",
-        "",
-        f"这一格的意思是：{f['playing']}。",
-        f"再往下：{f['next']}。",
-    ]
-    if f["allow"] == "YES":
-        lines += ["", "要参与的话（只做多）："]
-        lines += _plan_block(f)[1:]
-    else:
-        lines += ["", "本次不给点位 —— 不在这只币上勉强找机会。"]
-    lines += ["", "出场："
-              + " / ".join(f"{a} {b}" for a, b, _c in f["exit"]) + "。"]
-    lines += _footer_lines()
+    lines = [f"{sym} 现价 {_fmt(f['price'])}，24h {_spct(f['chg24'])}。", ""]
+    lines += _verdict_block(f)
+    lines += [""] + _data_lines(f)
+    lines += [""] + _plan_block(f)
+    lines += _peer_block(f)
+    lines += _footer_lines(f)
     return title, lines
 
 
