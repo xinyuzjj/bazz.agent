@@ -1,3 +1,57 @@
+# BAZZ.AGENT v1.7.6
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.7.6 更新要点（LLM 真流式：正文边生成边显示，不再「直接蹦出来」）
+
+**反馈原话：「这一段话是直接蹦出来的，而不是缓慢的显示出来」。** 当成 bug 查，
+根因不在前端 —— 在 **agent 每轮的 LLM 调用是非流式的**。
+
+### 根因
+
+`chat_with_tools` 一次性等完整回包（超时 120s）：模型思考 35s + 生成 2000 字的**整段时间里
+界面什么都看不到**，然后 `_chunk_text` 把全文在几毫秒内灌进 SSE，前端一两帧画完 ——
+看起来就是「蹦出来」。工具卡片是渐进出现的（v1.7.4 已改 `as_completed` 流式），
+**唯独模型的文字不是**。
+
+### 修法：`chat_with_tools_stream`（真流式）
+
+- **SSE 增量**：`stream=True` 逐 chunk 收；思考链（`reasoning_content` / `reasoning`）与正文
+  边生成边下发。现在深度思考**逐行长出来**，正文**边写边显示**，不再憋大招。
+- **工具调用增量组装**：tool_calls 的 `name` / `arguments` 按 `index` 分片拼接（arguments 常
+  被拆成 2-3 个 chunk），结束按注册表还原净化名 —— 与非流式回包**同构**，下游零改动。
+- **`<thinking>` 吞吐机**（`_ThinkingGate`）：deep_thinking 模型常把思考块写在 content 里，
+  非流式是回包后整块抽走；流式必须边到边判，否则思考内容会**先闪现在正文里**。做法：
+  保留 15 字符滑动窗再外发（两个标签最长 11 字，任何完整标签必然在窗内截获，含跨 chunk
+  拆开的）；思考块**边吞边外发**成 reasoning 事件 —— 不能等收尾再给，否则用户看不到这轮思考。
+  deep 关闭时直通（与非流式行为一致）。
+- **订阅直连 provider**（copilot/codex/anthropic-oauth/nous）不支持流式 → 退化为一次全文，
+  行为等同非流式，不劣化。多模型 fallback 链、`_last_error` 语义全部保留。
+
+### agent 循环侧：`_StreamEmitter`
+
+- **思考按完整行攒批**：前端把每条 reasoning 事件按行拆成思考步骤，逐 delta 发会碎出
+  几百条假步骤 —— 攒到换行才发，空行丢弃。
+- **正文分类门**：先攒 64 字符做一次「客套剥离 + 旁白判定」（`_strip_preamble` 只看第一句
+  ≤35 字、`_looks_like_narration` 只看开头 60 字，64 字必够），结论型直通、逐段实时显示；
+  **旁白型全程扣住**，流结束后再定性 —— **只有出现了 tool_calls 才能确定「让我…」开头的
+  是旁白；最终回答同样可能以「让我…」开头，那时它是正文**，照样补放。
+- 思考链只在「流里一条都没来」时才整块补发（降级/后处理产出），绝不重复。
+
+### 自测抓到的两个坑（护栏各加一条）
+
+1. **回复结尾被吞**：滑动窗扣住的最后 ≤15 字符只在 `done` 的 content 里、从未作为增量下发
+   —— 用户会看到**每条回复的结尾凭空消失**。加 `flush_tail()` 收尾补发。
+2. **思考增量丢累计**：吞吐机外发的思考片段若不回写累计区，`out["reasoning"]` 就只剩
+   未闭合的尾巴。已修，并用「thinking 合并进 out.reasoning」断言钉死。
+
+**验证**：全量 **30 套件 0 失败** / 新增 `tests/test_v175_streaming.py`（假 SSE 服务端端到端 +
+吞吐机 + 发射器共 30 条断言：思考先于 done 到达、thinking 不闪现正文、分片 arguments 组装、
+结尾不被吞）/ `tsc --noEmit` 干净 / `vite build` 成功。前端**零改动**（v1.7.4 的 rAF 流式渲染
+直接受益）。未触碰：止损 10% / 10x 杠杆 / 任何引擎判据阈值。
+
+---
+
 # BAZZ.AGENT v1.7.5
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**

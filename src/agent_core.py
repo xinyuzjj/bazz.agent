@@ -69,6 +69,84 @@ def _looks_like_narration(text: str) -> bool:
     return any(m in s[:60] for m in _NARRATION_MARKERS)
 
 
+class _StreamEmitter:
+    """把 LLM 的原始流式增量加工成可直接下发的事件片段（v1.7.5 真流式）。
+
+    改前每轮 chat_with_tools 非流式：整轮（35s 思考 + 2000 字正文）憋到最后一次性
+    吐出，前端一两帧画完 —— 用户看到的就是「直接蹦出来，而不是缓慢的显示出来」。
+
+    - reasoning：按**完整行**攒批再发。前端把每条 reasoning 事件按行拆成思考步骤，
+      逐 delta 发会碎出几百条假步骤；空行丢弃（只会多出假步骤）。
+    - content：先攒到 64 字符做一次「客套剥离 + 旁白判定」（_strip_preamble 只看
+      第一句 ≤35 字、_looks_like_narration 只看开头 60 字，64 字必够），之后逐段直通。
+    - 旁白型：全程扣住不发，由调用方在流结束后定性 —— **只有出现了 tool_calls 才能
+      确定「让我…」开头的是旁白；最终回答同样可能以「让我…」开头，那时它是正文**。
+      扣住的文本不在此缓存，调用方直接用 resp["content"] 重建（避免两份真相）。
+    """
+
+    GATE = 64  # 分类缓冲：≥35（剥客套）且 ≥60（旁白判定）
+
+    def __init__(self):
+        self.rbuf = ""            # reasoning 未发缓冲
+        self.cbuf = ""            # content 分类缓冲（分类后清空）
+        self.classified = False
+        self.narration = False    # 判定为旁白型 → 扣住，由调用方定性
+        self.saw_content = False
+        self.reasoning_emitted = False
+
+    def feed_reasoning(self, text: str) -> list:
+        if not text:
+            return []
+        self.rbuf += text
+        out = []
+        while "\n" in self.rbuf:
+            line, self.rbuf = self.rbuf.split("\n", 1)
+            if line.strip():
+                out.append(line)
+        if len(self.rbuf) > 120:      # 无换行的长思考也要有进度感
+            out.append(self.rbuf)
+            self.rbuf = ""
+        if out:
+            self.reasoning_emitted = True
+        return out
+
+    def finish_reasoning(self) -> list:
+        if self.rbuf.strip():
+            self.reasoning_emitted = True
+            rest, self.rbuf = self.rbuf, ""
+            return [rest]
+        return []
+
+    def feed_content(self, text: str) -> list:
+        """返回本次应下发的正文片段；旁白型返回 []（扣住）。"""
+        if not text:
+            return []
+        self.saw_content = True
+        if self.narration:
+            return []
+        if self.classified:
+            return [text]
+        self.cbuf += text
+        if len(self.cbuf) < self.GATE:
+            return []
+        return self._classify()
+
+    def finish_content(self) -> list:
+        """流结束：分类缓冲剩的要么直发、要么定性为旁白扣住。"""
+        if self.narration or self.classified or not self.cbuf:
+            return []
+        return self._classify()
+
+    def _classify(self) -> list:
+        self.classified = True
+        head = _strip_preamble(self.cbuf)
+        self.cbuf = ""
+        if _looks_like_narration(head):
+            self.narration = True
+            return []
+        return [head] if head else []
+
+
 _HEAL_MAX = 3  # 同一请求内工具失败的最大自愈轮次（永续/小币类查询需要更长窗口）
 # 单次生成的 agent 轮次上限：每轮 = 一次模型决策 + 一批工具执行。
 # 14 轮足够容纳长链研究（市场扫描→多币逐一 quote→资金费率/量能核对→风险→成稿），
@@ -2720,8 +2798,32 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
             messages.append({"role": "user", "content":
                              "（系统提示）工具调用轮次即将用尽。请立即基于已获得的工具结果"
                              "汇总出最终回答，不要再发起新的工具调用。"})
+        # v1.7.5 真流式：思考链按行渐进、正文边生成边显示（改前整轮憋到最后一次性吐出）
+        emitter = _StreamEmitter()
+        resp = None
         try:
-            resp = llm.chat_with_tools(messages, tools, llm_cfg=llm_cfg)
+            for ev in llm.chat_with_tools_stream(messages, tools, llm_cfg=llm_cfg):
+                kind = ev[0]
+                if kind == "done":
+                    resp = ev[1]
+                elif kind == "reasoning":
+                    try:
+                        batches = emitter.feed_reasoning(ev[1])
+                    except Exception:
+                        batches = []
+                    for batch in batches:
+                        yield {"type": "reasoning", "text": batch, "model": ev[2] or model_used}
+                elif kind == "content":
+                    try:
+                        pieces = emitter.feed_content(ev[1])
+                    except Exception:
+                        pieces = []
+                    for piece in pieces:
+                        yield {"type": "text", "delta": piece}
+            for batch in emitter.finish_reasoning():
+                yield {"type": "reasoning", "text": batch, "model": model_used}
+            for piece in emitter.finish_content():
+                yield {"type": "text", "delta": piece}
         except Exception:
             resp = None
         if not resp:
@@ -2745,8 +2847,9 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
         tool_calls = resp.get("tool_calls") or []
         model_used = resp.get("model") or model_used
         # 思考链（Hermes 渲染范式第一块：可折叠灰色思考区）
+        # 流式时已按行渐进吐过；只有流里一条都没来（降级/后处理产出）才在这里整块补。
         reasoning = resp.get("reasoning") or ""
-        if reasoning:
+        if reasoning and not emitter.reasoning_emitted:
             yield {"type": "reasoning", "text": reasoning, "model": resp.get("model") or model_used}
         if not tool_calls:
             # LLM 没主动调工具 → 用 _detect 兜底强制派发用户意图对应的工具。
@@ -2808,7 +2911,10 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
                     empty_retry_left -= 1
                     messages.append({"role": "user", "content": "（你刚才没有输出任何内容）请直接回答用户的问题。"})
                     continue
-            if content.strip():
+            if content.strip() and (not emitter.saw_content or emitter.narration):
+                # 流式时正文已实时吐过；走到这里只有两种情况：
+                # not saw_content → 推理模型「只回思考、content 兜成正文」（流里没来过正文）；
+                # narration → 内容以「让我…」开头被扣住，但本 Turn 没有工具调用 → 它是正文不是旁白。
                 for chunk in _chunk_text(_strip_preamble(content)):
                     yield {"type": "text", "delta": chunk}
             # v1.7.4 技能学习（借鉴 Hermes 的 background review）：对话**正常收尾**时，
@@ -2823,16 +2929,10 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
                    "tools": _norm_tools(accumulated_tools) or [{"icon": "💬", "name": "LLM 对话", "ok": True,
                                               "detail": model_used}]}
             return
-        # 有工具调用：先展示 LLM 的旁白（如有，剥掉客套）
-        # v1.7.5：旁白分两种 —— 「内心独白型」（让我换用 1h 补档…）折叠成 narration，
-        # 普通的过渡句才当正文铺开。用户要看的是结论，不是模型的内心活动。
-        if content.strip():
-            _narr = _strip_preamble(content)
-            if _looks_like_narration(_narr):
-                yield {"type": "narration", "text": _narr}
-            else:
-                for chunk in _chunk_text(_narr):
-                    yield {"type": "text", "delta": chunk}
+        # 有工具调用：旁白定性。非旁白型的过渡句在流式期间已实时吐过；
+        # 旁白型（「让我换用 1h 补档…」）被扣住到现在才折叠 —— v1.7.5：只折叠不删除。
+        if content.strip() and emitter.narration:
+            yield {"type": "narration", "text": _strip_preamble(content)}
         # 记录 assistant 消息（含 tool_calls）以便回传
         assistant_tc = [{"id": tc["id"], "type": "function",
                          "function": {"name": tc["name"],

@@ -1119,6 +1119,46 @@ def stream_chat(system: str, user: str, temperature: float = 0.6, llm_cfg: dict 
         yield None
 
 
+def _tools_payload(model: str, base_msgs: List[Dict[str, Any]], tools: List[Dict[str, Any]],
+                   temperature: float, eff_max: int) -> tuple:
+    """构造 /chat/completions 的工具调用 payload（非流式与流式共用，v1.7.5 抽出）。
+
+    返回 (payload, name_map)：OpenAI 工具名只允许 [a-zA-Z0-9_-]，插件 schema 用
+    "<pid>.<cmd>"（如 scout-signals.hot）会触发 400 —— 这里净化成合法名，
+    name_map 负责回包时还原；历史消息里上一轮 assistant tool_calls 的点号名一并净化。
+    """
+    payload = {"model": model,
+               "messages": json.loads(json.dumps(base_msgs)) if tools else base_msgs,
+               "temperature": temperature, "max_tokens": eff_max}
+    name_map: Dict[str, str] = {}
+    if tools:
+        clean_tools: List[Dict[str, Any]] = []
+        for t in tools:
+            fn = (t or {}).get("function", {})
+            orig = (fn or {}).get("name", "")
+            clean = _sanitize_tool_name(orig)
+            if clean != orig:
+                name_map[clean] = orig
+            if clean:
+                clone = json.loads(json.dumps(t))
+                clone["function"]["name"] = clean
+                clean_tools.append(clone)
+        payload["tools"] = clean_tools or tools
+        payload["tool_choice"] = "auto"
+        for mm in payload["messages"]:
+            if isinstance(mm, dict) and mm.get("role") == "assistant":
+                tcs = mm.get("tool_calls")
+                if tcs:
+                    for tc in tcs:
+                        fn = (tc or {}).get("function", {})
+                        orig = (fn or {}).get("name", "")
+                        clean = _sanitize_tool_name(orig)
+                        if clean != orig:
+                            name_map[clean] = orig
+                            fn["name"] = clean
+    return payload, name_map
+
+
 def chat_with_tools(messages: List[Dict[str, Any]], tools: List[Dict[str, Any]] = None,
                     temperature: float = 0.4, max_tokens: int = 1200,
                     llm_cfg: dict = None, task: str = None) -> Optional[Dict[str, Any]]:
@@ -1134,38 +1174,7 @@ def chat_with_tools(messages: List[Dict[str, Any]], tools: List[Dict[str, Any]] 
     eff_max = _deep_thinking_budget_tokens(max_tokens) if deep else max_tokens
     base_msgs = _apply_thinking_protocol(messages, deep)
     for model in _chain_for(cfg, task):
-        payload = {"model": model,
-                   "messages": json.loads(json.dumps(base_msgs)) if tools else base_msgs,
-                   "temperature": temperature, "max_tokens": eff_max}
-        name_map: Dict[str, str] = {}
-        if tools:
-            # OpenAI 工具名只允许 [a-zA-Z0-9_-]：插件 schema 用 "<pid>.<cmd>"（如
-            # scout-signals.hot）会触发 400，这里净化成合法名并在回包时还原。
-            clean_tools: List[Dict[str, Any]] = []
-            for t in tools:
-                fn = (t or {}).get("function", {})
-                orig = (fn or {}).get("name", "")
-                clean = _sanitize_tool_name(orig)
-                if clean != orig:
-                    name_map[clean] = orig
-                if clean:
-                    clone = json.loads(json.dumps(t))
-                    clone["function"]["name"] = clean
-                    clean_tools.append(clone)
-            payload["tools"] = clean_tools or tools
-            payload["tool_choice"] = "auto"
-            # 历史消息里上一轮的 assistant tool_calls 也带点号 → 一并净化（否则同样 400）
-            for mm in payload["messages"]:
-                if isinstance(mm, dict) and mm.get("role") == "assistant":
-                    tcs = mm.get("tool_calls")
-                    if tcs:
-                        for tc in tcs:
-                            fn = (tc or {}).get("function", {})
-                            orig = (fn or {}).get("name", "")
-                            clean = _sanitize_tool_name(orig)
-                            if clean != orig:
-                                name_map[clean] = orig
-                                fn["name"] = clean
+        payload, name_map = _tools_payload(model, base_msgs, tools, temperature, eff_max)
         try:
             d = _post(payload, cfg, timeout=120)
             msg = d["choices"][0]["message"]
@@ -1206,3 +1215,234 @@ def chat_with_tools(messages: List[Dict[str, Any]], tools: List[Dict[str, Any]] 
             _last_error = _summarize_error(f"模型 {model} 工具调用失败：{type(e).__name__}: {str(e).strip()}")
             continue
     return None
+
+
+class _ThinkingGate:
+    """流式 content 的 <thinking> 吞吐机（v1.7.5，只配 deep_thinking 开启时启用）。
+
+    非流式路径是回包后用 _extract_thinking_block 整块抽走；流式必须**边到边判**，
+    否则思考内容会先闪现在正文里再被"收回"。做法：保留 15 字符滑动窗再外发 ——
+    两个标签最长 11 字符，任何完整标签必然在窗内被截获（含跨 chunk 拆开的标签）。
+    模型可能输出多个思考块、最后一个可能未闭合（max_tokens 截断）——与非流式同语义：
+    未闭合的尾部整段视为思考。
+    """
+
+    HOLD = 15
+
+    def __init__(self, active: bool = True):
+        self.active = active          # deep_thinking 关闭时直通（与非流式行为一致）
+        self.mode = "stream"          # stream | swallow
+        self.buf = ""
+        self.thinking: List[str] = []
+        self.clean: List[str] = []
+
+    def feed(self, text: str) -> tuple:
+        """喂一段原始 content 增量，返回 (可外发的正文片段, 思考增量)。
+
+        思考块**边吞边外发** —— 不能等 finish 再给：原生 reasoning 已发过时
+        （前端 reasoning_emitted=True），藏在 done 里的思考块会被调用方跳过，
+        用户就看不到这轮的思考过程了。
+        """
+        if not self.active:
+            return ([text] if text else [], [])
+        self.buf += text or ""
+        out, think = [], []
+        while True:
+            if self.mode == "stream":
+                i = self._find(self.buf, "<thinking>")
+                if i >= 0:
+                    self._emit(out, self.buf[:i])
+                    self.buf = self.buf[i + 10:]
+                    self.mode = "swallow"
+                    continue
+                if len(self.buf) > self.HOLD:
+                    self._emit(out, self.buf[:-self.HOLD])
+                    self.buf = self.buf[-self.HOLD:]
+                break
+            j = self._find(self.buf, "</thinking>")
+            if j >= 0:
+                piece = self.buf[:j]
+                think.append(piece)
+                self.thinking.append(piece)   # 供 finish 合并进 out["reasoning"]
+                self.buf = self.buf[j + 11:]
+                self.mode = "stream"
+                continue
+            if len(self.buf) > self.HOLD:
+                piece = self.buf[:-self.HOLD]
+                think.append(piece)
+                self.thinking.append(piece)
+                self.buf = self.buf[-self.HOLD:]
+            break
+        return [p for p in out if p], think
+
+    def flush_tail(self) -> tuple:
+        """流结束：把滑动窗里扣住的尾部吐出来（正文/思考按当前模式归位）。
+
+        ⚠️ 必须在收尾时调用 —— 否则每条回复的最后 ≤15 字符只存在于 done 的
+        content 里、从未作为增量下发，用户会看到**结尾被吞**（v1.7.5 自测抓到）。
+        """
+        if not self.active:
+            return ([], [])
+        if self.mode == "swallow":
+            piece, self.buf = self.buf, ""
+            if piece:
+                self.thinking.append(piece)
+            return ([], [piece] if piece else [])
+        piece, self.buf = self.buf, ""
+        if piece:
+            self.clean.append(piece)
+        return ([piece] if piece else [], [])
+
+    def finish(self) -> tuple:
+        """流结束：返回 (净化正文, 思考全文)。"""
+        if self.mode == "swallow":
+            self.thinking.append(self.buf)     # 闭合标签没等到（截断）→ 整段算思考
+        else:
+            self.clean.append(self.buf)
+        self.buf = ""
+        # self.thinking 是连续增量（同一/多个思考块），直接相连再 strip ——
+        # 不能用 "\n\n" join，否则每个小片段都会被拆成「新的一段思考」。
+        return "".join(self.clean), "".join(self.thinking).strip()
+
+    @staticmethod
+    def _find(s: str, tag: str) -> int:
+        import re as _re
+        m = _re.search(_re.escape(tag), s, flags=_re.I)
+        return m.start() if m else -1
+
+    def _emit(self, out: list, piece: str):
+        if piece:
+            out.append(piece)
+            self.clean.append(piece)
+
+
+def chat_with_tools_stream(messages: List[Dict[str, Any]], tools: List[Dict[str, Any]] = None,
+                           temperature: float = 0.4, max_tokens: int = 1200,
+                           llm_cfg: dict = None, task: str = None):
+    """chat_with_tools 的流式版（v1.7.5）—— agent 每轮改为边生成边下发。
+
+    改前 agent 每轮都等完整回包（非流式），35s 思考 + 2000 字正文全部憋到最后
+    一次性吐出，前端一两帧画完 —— 用户看到的就是「直接蹦出来，而不是缓慢显示」。
+
+    产出三元组序列，成功时必以 ("done", out) 收尾：
+      ("reasoning", 文本, model)  原生思考链增量（reasoning_content / reasoning）
+      ("content",   文本)         已剥离 <thinking> 的正文增量
+      ("done",      out)          与 chat_with_tools 同构的完整回包
+    全链一个增量都没拿到时不产出 done —— 调用方按 resp=None 走纯对话兜底（与非流式同语义）。
+
+    ⚠️ 订阅直连 provider（copilot/codex/anthropic-oauth/nous）不支持流式 →
+    退化为一次 ("content", 全文) + ("done", out)，行为等同非流式（不劣化）。
+    ⚠️ 流中途断开：已收到的增量照常组装返回（绝不重新请求 —— 正文会重播一遍）。
+    """
+    global _last_error
+    cfg = _materialize(llm_cfg)
+    deep = bool(cfg.get("deep_thinking"))
+    eff_max = _deep_thinking_budget_tokens(max_tokens) if deep else max_tokens
+    base_msgs = _apply_thinking_protocol(messages, deep)
+    if _sub_provider(cfg):
+        out = chat_with_tools(messages, tools, temperature=temperature,
+                              max_tokens=max_tokens, llm_cfg=llm_cfg, task=task)
+        if out is None:
+            return
+        if out.get("content"):
+            yield ("content", out["content"])
+        yield ("done", out)
+        return
+    key = cfg.get("api_key")
+    if not key:
+        return
+    for model in _chain_for(cfg, task):
+        payload, name_map = _tools_payload(model, base_msgs, tools, temperature, eff_max)
+        payload["stream"] = True
+        gate = _ThinkingGate(active=deep)
+        reason_parts: List[str] = []
+        tcs_acc: Dict[int, dict] = {}
+        model_seen = ""
+        got_any = False
+        stream_ok = False
+        try:
+            r = requests.post(_base_url(cfg) + "/chat/completions",
+                              headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                              json=payload, timeout=(30, 90), stream=True)
+            if r.status_code >= 400:
+                snippet = net_guard.snippet(r)
+                raise RuntimeError(f"HTTP {r.status_code} · {snippet[:160]}")
+            for line in r.iter_lines():
+                if not line:
+                    continue
+                s = line.decode("utf-8", "ignore")
+                if not s.startswith("data:"):
+                    continue
+                p = s[5:].strip()
+                if p == "[DONE]":
+                    stream_ok = True
+                    break
+                try:
+                    d = json.loads(p)
+                except Exception:
+                    continue
+                model_seen = model_seen or (d.get("model") or "")
+                ch = (d.get("choices") or [{}])[0]
+                delta = ch.get("delta") or {}
+                rc = delta.get("reasoning_content") or delta.get("reasoning")
+                if rc:
+                    got_any = True
+                    reason_parts.append(rc)
+                    yield ("reasoning", rc, model_seen)
+                c = delta.get("content")
+                if c:
+                    got_any = True
+                    pieces, think = gate.feed(c)
+                    for t in think:
+                        yield ("reasoning", t, model_seen)
+                    for piece in pieces:
+                        yield ("content", piece)
+                for tc in delta.get("tool_calls") or []:
+                    got_any = True
+                    acc = tcs_acc.setdefault(tc.get("index", 0),
+                                             {"id": "", "function": {"name": "", "arguments": ""}})
+                    if tc.get("id"):
+                        acc["id"] = tc["id"]
+                    fn = tc.get("function") or {}
+                    if fn.get("name"):
+                        acc["function"]["name"] += fn["name"]
+                    if fn.get("arguments"):
+                        acc["function"]["arguments"] += fn["arguments"]
+                if ch.get("finish_reason"):
+                    stream_ok = True
+            else:
+                stream_ok = True      # iter_lines 自然结束（部分网关不发 [DONE]）
+        except Exception as e:
+            _last_error = _summarize_error(
+                f"模型 {model} 流式调用失败：{type(e).__name__}: {str(e).strip()}")
+        if not got_any and not stream_ok:
+            continue                  # 一个增量都没有且流没走完 → 换下一个模型
+        tail_c, tail_t = gate.flush_tail()   # 滑动窗扣住的尾部必须补发（否则结尾被吞）
+        for t in tail_t:
+            yield ("reasoning", t, model_seen)
+        for piece in tail_c:
+            yield ("content", piece)
+        clean, thinking = gate.finish()
+        tool_calls = []
+        for idx in sorted(tcs_acc):
+            acc = tcs_acc[idx]
+            raw_name = acc["function"]["name"]
+            try:
+                args = json.loads(acc["function"]["arguments"] or "{}")
+            except Exception:
+                args = {}
+            tool_calls.append({"id": acc["id"] or f"stream-{idx}",
+                               "name": name_map.get(raw_name, raw_name), "args": args})
+        out: Dict[str, Any] = {"content": clean, "tool_calls": tool_calls,
+                               "model": model_seen or model}
+        rc = "".join(reason_parts)
+        if thinking:
+            rc = (rc + "\n\n" + thinking).strip()
+        if rc:
+            out["reasoning"] = rc
+            # 与非流式同语义：推理模型「只回 reasoning、content 为空」时把思考链兜成正文
+            if not clean.strip() and not tool_calls:
+                out["content"] = rc
+        yield ("done", out)
+        return
+    return
