@@ -1,22 +1,32 @@
-# BAZZ.AGENT 项目状态交接（agent 体验层十项改造 · v1.7.4 已发布 · 2026-10-01 更新）
+# BAZZ.AGENT 项目状态交接（三条反馈查根因 · v1.7.5 已发布 · 2026-10-01 更新）
 
-> ✅ **v1.7.4 已发布**：起因是一句笼统反馈「输出/聊天/沙盒都不够好」。为不凭印象动手，
-> 先对标研究了 **Hermes Agent**（源码就在本机 `E:\hermes_app\hermes-agent`）与 **pi**
-> （`earendil-works/pi`），列出十项改造并**按依赖顺序**落地（1 依赖 3、3 依赖 5）：
-> **① 提示词拆四块**（95 行 f-string → SOUL / _IDENTITY / _TOOL_DOCTRINE / _BEHAVIOR_RULES，
-> zh 3052 字）；**② 错误→人话+行动+脱敏**（`error_digest.py` 八分类，
-> **「沙盒拦截」与「网络不通」必须分开** —— 混在一起会把人引去折腾代理池）；
-> **③ 工具用法搬进 schema**（7 个只存在于提示词的技能入 `run_skill` 说明，路由表整段删）；
-> **④ 响应体字节上限**（`net_guard.py`；`r.text[:200]` 其实会**先全量读入**再截断）；
-> **⑤ 工具注册表**（110 行 `if name ==` 链 → 查表；24 工具与 schema 双向对齐、审批清单单一来源）；
-> **⑥ 跨会话召回**（`recall.py` 每轮自动注入；**有意不用 FTS5** —— trigram 查不出中文两字词）；
-> **⑦ 流式工具输出**（`pool.map` 阻塞 → `as_completed`；独立 `tool_progress` 事件）；
-> **⑧ 会话分支**（`parent_id` / `fork_from` 血统 + ⑂ 入口）；**⑨ 技能自建**（`skill_learning.py`；
-> **默认关闭 + 草案待采纳** —— 不自动改 agent 的能力边界）；**⑩ 中断改向**（中断落库带标记
-> + 生成中可直接发新消息）。
-> 全量 **29 套件 0 失败** / `tsc --noEmit` 干净 / `vite build` 成功 / 3 个隔离端到端全 PASS。
-> ⚠️ **两处已知局限**：技能草案**无 UI 入口**（API 已齐）；流式粒度是「按工具完成」，
-> 不是「工具输出逐行流」。
+> ✅ **v1.7.5 已发布**：反馈是「聊天界面/输出/输出动画/调用技能展示都不太行，一股劣质的味道，
+> 而且不会自己去解决问题，记忆能力也有问题」。三条都当 bug 查，每个都定位到可复现根因：
+> **① 工具卡片倒原始 JSON**（detail 是 `exit=1 · 0.41s` + 一坨 JSON + Node 的 UNDICI 警告）——
+> 更硬的是 **`exit=1` 却显示绿色 OK**：`_ok_status` 用**黑名单**判成功，而技能失败只给
+> `status="warn"`，`warn` 不在黑名单里 → 判成成功。改**三态+白名单**（`None` 进行中 / `False` 失败 /
+> `True` 成功，未知不再默认成功）+ 技能结果**显式给 `ok`**；detail 只留**一行摘要**
+> （`_skill_detail_line` + `_SKILL_NOISE_RE` 剥 `[stderr]`/`(node:…)`/UNDICI，`_tidy_msg` 抠掉
+> **内嵌参数 JSON**，对半截 JSON 也管用）；完整输出挪 `raw` 字段折叠；卡片去掉 `TOOL::` 调试味前缀。
+> 模型「内心独白」（`让我换用 1h 补档…`）原本直接铺正文 → 新增 `_looks_like_narration()` 改走
+> `narration` 事件、前端**折叠不删**。
+> **② 「不会自己去解决问题」根因是工具说明写错了** —— `run_skill` 说明把 `market-data` 写成
+> `<子命令> <JSON>`，而它的 CLI 是**纯位置参数**，于是整坨 `{"SYMBOL":"ETHUSDT","INTERVAL":"15M"}`
+> 被当成 SYMBOL → 报「无数据」，而报错**只字不提参数形状** → 模型换 4 组数值继续撞。
+> 说明已改正 + 边界加 `normalize_skill_args()`（位置参数族收 JSON 自动摊平、缺省值补齐防串槽、
+> `interval` 非法值边界就拦并给可照抄改法）+ 自愈提示词补「先怀疑参数形状」一条。
+> **③ 「记忆能力有问题」根因是门控过严** —— `auto_memorize` 改前要求用户消息**命中偏好词表**才提炼，
+> 词表覆盖不了自然语言（「以后别给我推合约了」未必命中）→ 该记的全被挡在门外。现在只挡太短闲聊
+> （`len<12` 且无信号），其余交 LLM 判断；全局 180s 冷却保留。
+> 全量 **29 套件 0 失败** / 新增护栏 ⑫⑬ 两组 26 条断言（用**实测原文**做样本）/ `tsc` 干净 / `vite build` 成功。
+> ⚠️ **已知未修**：位置参数归一目前只覆盖 market-data / coin-report（其余位置参数族技能
+> news-sentiment / portfolio-review / risk-guard / track-monitor 仍靠说明与自愈提示兜）。
+> v1.7.4 的两处局限仍在：技能草案**无 UI 入口**（API 已齐）；流式粒度是「按工具完成」不是逐行流。
+
+> 📌 **v1.7.4 回顾**：一句笼统反馈「输出/聊天/沙盒都不够好」→ 先对标 **Hermes Agent**（源码在本机）
+> 与 **pi**（`earendil-works/pi`），列十项改造**按依赖顺序**落地
+> （提示词拆四块 / 错误→人话+脱敏 / 工具用法进 schema / 响应体字节上限 / 工具注册表 /
+> 跨会话召回 / 流式工具输出 / 会话分支 / 技能自建 / 中断改向）。
 
 > 用途：开新任务/新会话前快速恢复上下文。读完即可继续开发，无需翻旧对话。
 > 仓库：`github.com/xinyuzjj/bazz.agent`
@@ -29,7 +39,7 @@
 > （`HTTP_PROXY/HTTPS_PROXY/http_proxy/https_proxy = http://127.0.0.1:7897`），
 > 不挂会报 `schannel: failed to receive handshake` / `CONNECT tunnel failed 502`。
 >
-> ⚠️ 更早的文档曾长期停留在 v1.5.47。**本文档已按 v1.7.4 全量校准（2026-10-01）。**
+> ⚠️ 更早的文档曾长期停留在 v1.5.47。**本文档已按 v1.7.5 全量校准（2026-10-01）。**
 > 后续发展方向见 **`outputs/roadmap-v1.5.61.html`**（P0 校准收口 → P1 战绩回灌 → P2 交易闭环 → P3 产能与工程债；
 > `outputs/` 已在 `.gitignore` 里，属本地产物、不入库）。
 >
@@ -44,7 +54,7 @@
 
 - **形态**：Windows 桌面端（Electron 壳）+ FastAPI Python 后端 + TS/Vite 前端；同一套代码也能纯浏览器跑
 - **定位**：币安 AI 交易终端 —— Agent 对话、行情（现货/合约/股票化代币）、交易方案卡、CEX 连接、Agentic Wallet、广场发文、Skills Hub、多 Bot 群聊、x402 支付
-- **当前版本**：**v1.7.4（已发布）**；`package.json` 与最新 git tag 均为 v1.7.4。
+- **当前版本**：**v1.7.5（已发布）**；`package.json` 与最新 git tag 均为 v1.7.5。
   工作区与远端一致，无未发版改动
 - **规模**：后端 `src/` **37 个** py 模块（v1.7.2 起含 `onchain.py`）+ `desktop_app.py`（**141 条路由**＝140 条 HTTP 路由 + 1 个 `@app.websocket`，AST 实测）；前端 12 个视图 / 40 个文件；**28 个离线回归测试套件**（`tests/test_*.py`：27 个 `test_v*` + `test_paper_orders`；另有 `tests/_mutate_v170.py` / `_mutate_v171.py` / `_mutate_v172.py` 变异验证脚本与 `tests/_e2e_*.py` 真实链路验证脚本，均不参与全量）+ 1 套浏览器视觉验收（`tests/ui_preview_check.py`）
 - **工作区**：安装目录 `<安装根>/workspace`（state.db / proxies.json / 附件 / 日志 / spill / 复盘 / square_rich / **square_monster**）；只读盘回退 `%APPDATA%\BAZZ.AGENT\workspace`
@@ -52,10 +62,11 @@
 
 ---
 
-## 二、近期发布版本（v1.5.12 → v1.7.4）
+## 二、近期发布版本（v1.5.12 → v1.7.5）
 
 | 版本 | 核心内容 |
 |---|---|
+| **v1.7.5** | **三条反馈逐个查根因（卡片劣质感 / 空转不解决问题 / 记不住）**。反馈原话：「聊天界面/输出/输出动画/调用技能展示都不太行，一股劣质的味道，而且不会自己去解决问题，记忆能力也有问题」。三条都当 bug 查，不猜。**① 工具卡片倒原始 JSON**：用户贴的原文里四张失败卡片是 `TOOL::技能 market-data  OK` + `exit=1 · 0.41s {"error":"klines: {\"SYMBOL\":\"ETHUSDT\",...}"} [stderr] (node:19176) [UNDICI-EHPA] Warning: ...` —— 一坨原始 JSON 加 Node 警告直接倒进卡片；更硬的是 **`exit=1` 却显示绿色 OK**：`_ok_status` 用**黑名单**判定（`st not in ("", "error", "fail", ...)`），而技能失败时后端只给 `status="warn"`，**`warn` 不在黑名单里 → 判成成功**，自相矛盾。→ 改**三态 + 白名单**（`None` 进行中 / `False` 失败 / `True` 成功，**未知不再默认成功**）+ 技能结果**显式给 `ok`**（不再让前端靠字符串猜）。detail 改**一行摘要**：新增 `_skill_detail_line()`（失败给人话原因 `0.41s · 失败：klines: 无数据（interval=1h market=spot）。`／成功给要点 `2.22s · 已生成 → ETHUSDT_研报_….md`）+ `_SKILL_NOISE_RE` 剥 `[stderr]`/`(node:\d+)`/`EnvHttpProxyAgent`/`[UNDICI-*]` + `_tidy_msg()` 抠**内嵌参数 JSON**（`{"SYMBOL":...}` 原来会原样透出；含 `_JSON_ERR_RE` 先抠 `"error":"…"`，**半截 JSON 也管用**）+ `_first_sentence()` 截首句。完整输出挪 `raw` 字段前端 `<details>` 折叠；卡片去掉 `TOOL::` 调试味前缀、改状态图标（✓/✗/转圈）+ 结构化分区（`border-t` 分隔 detail 与 raw）。模型「内心独白」（`让我换用 1h 级别补档，再结合 coin-report 现有数据做分析`）原本**直接铺在正文里** → 新增 `_looks_like_narration()`（只看开头 60 字有无「让我/我先/我来/我换…」标记）改走独立 `narration` 事件、前端**折叠不删**（「接口不支持 15m」这类过渡句有用）。**② 「不会自己去解决问题」根因是工具说明写错了**：用户那段里 `market-data` 连挂 4 次（`15M`→`1H`→`1H`），全挂在同一问题上。查出 `run_skill` 说明写的是 `market-data：args='<子命令> <JSON>'，例如 klines{"symbol":"BTCUSDT",...}`，而它的 CLI 是**纯位置参数**（`klines <SYMBOL> [interval] [limit] [market]`）→ 整坨 `{"SYMBOL":"ETHUSDT","INTERVAL":"15M","LIMIT":96,"MARKET":"SPOT"}` 被当成 SYMBOL → 报「无数据」，而那句报错**只字不提参数形状** → 模型只能换数值继续撞。→ 说明改正（写清「位置参数，不要传 JSON」+ 「interval 只认小写 1h/4h/1d，没有 15m/30m」）；边界加 `normalize_skill_args()`（`_POSITIONAL_SPECS` 声明 market-data / coin-report 的位置签名；JSON 对象**自动摊平**、缺省值按 CLI 默认补齐 —— **否则「只给 limit」会让 limit 滑进 interval 槽位**；`interval` 非法值**边界就拦**并给可照抄改法 ``改用 `market-data klines ETHUSDT 1h` ``；JSON 参数族如 meme-rush **原样放行**）；`_heal_hint` 补一条「报无数据/解析失败先怀疑**参数形状**，先 cat SKILL.md」。**③ 「记忆能力有问题」根因是门控过严**：`auto_memorize` 改前要求用户消息**命中偏好词表**（`_AUTO_MEM_PREF_HINTS`）才送 LLM 提炼，而词表再全也覆盖不了自然语言（「我一般只做现货」能命中，「以后别给我推合约了」未必）→ 该记的全被挡在门外，用户就觉得「它什么都没记住」。现在只挡太短闲聊（`len<12` 且无信号），其余交 LLM 判断；全局 **180s** 冷却保留（`auto_mem_last_ts` 是全局设置、不按会话隔离 —— 顺带把写错的注释改准）。**验证**：全量 **29 套件 0 失败**；新增护栏 ⑫（卡片摘要/raw/i18n）⑬（参数摊平/interval 校验/说明正确性）**26 条断言，用实测原文做样本**；`tsc --noEmit` 干净；`vite build` 成功。**已知未修**：位置参数归一目前只覆盖 market-data / coin-report，其余位置参数族技能（news-sentiment / portfolio-review / risk-guard / track-monitor）仍靠说明与自愈提示兜。**未触碰**：止损 10% / 10x 杠杆 / 任何引擎判据阈值 |
 | **v1.7.4** | **agent 体验层十项改造（对标 pi 与 Hermes Agent）**。起因是一句笼统反馈「输出/聊天/沙盒都不够好」；为不凭印象动手，先对标研究了 Hermes Agent（源码在本机 `E:\hermes_app\hermes-agent`，逐行核实机制）与 pi（`earendil-works/pi`，拉其「不做什么」清单对照），列十项改造**按依赖顺序**落地（1 依赖 3、3 依赖 5，实际顺序 4→2→5→3→1→6→7→8→9→10）。**① 提示词分模块**：`_system_prompt` 从 95 行巨型 f-string（函数体 7518 字符）拆成 `SOUL` + `_IDENTITY` + `_TOOL_DOCTRINE`（跨工具纪律 6 条）+ `_BEHAVIOR_RULES`（行为纪律 9 条）四块 join，拼装后 zh **3052** 字 / en **3861** 字。**② 错误→人话**：新增 `src/error_digest.py`，沿 `__cause__/__context__` 链回溯 + marker 元组分 8 类（sandbox / localbackend / network / timeout / ratelimit / auth / model / unknown），每类给「出了什么事 + 为什么 + 该怎么办」并脱敏（sk- / Bearer / 长 hex）；接入 MCP 失败、工具失败、子任务失败与 4 处沙盒拦截。**最关键的一条：沙盒拦截与网络不通必须分开**（混在一起会把用户引去折腾代理池 —— 改造前真实发生过的误诊）。**③ 工具用法进 schema**：核实后发现 `llm.py` 的 description 本来就足（`run_skill` 1685 字 / `schedule_task` 713 / `meme_watch` 570），提示词那张路由表多为重复抄写；真正只存在于提示词的是 **7 个技能**（news-sentiment / portfolio-review / query-token-audit / query-address-info / binance-tokenized-securities-info / binance-trading-signal / binance-sports-ai-analyzer）+ 发文形态 + 币种识别 → 全部搬进 `run_skill` 说明（1685→2873 字），提示词路由表整段删除。**④ 响应体字节上限**：新增 `src/net_guard.py`；改前 `r.text[:200]` 的隐蔽前提是 **`r.text` 会先把整个 body 读进内存并解码**、`[:200]` 才生效，而错误体常是网关 / Cloudflare 巨型 HTML → 卡顿偏偏发生在「本来就已出错」的路径；现在先按字节截断再解码、流式走有界读、任何异常吞掉返回空串；替换 9 处调用点。**⑤ 工具注册表（唯一动地基的一次）**：`_dispatch_tool` 里 **110 行 `if name ==` 链整段删除**改查表，24 工具在文件末尾声明一次（含 toolset / emoji / approval）；对齐结果 **注册表 24 == schema 24、双向差集为空**，审批清单 6 个与 `_dispatch_is_approval_needed` 逐项一致（改前是两处各写一份）。**⑥ 跨会话召回**：新增 `src/recall.py`，每轮自动检索历史片段注入（带「这是历史召回、不是本轮」标注，否则模型张冠李戴）；**有意不用 FTS5** —— 本机 sqlite 虽支持 fts5/trigram，但 **trigram 只索引 ≥3 字符**（实测 `MATCH '广场'` 返回空），要可用得自己 bigram 展开（Hermes 靠可加载扩展、Python 内置 sqlite3 不允许），存储翻倍且变形逻辑要长期维护；本项目数据量下 LIKE 扫全表几十毫秒且中文 100% 准确。**真正缺的不是索引速度，是「自动想起来」**。**⑦ 流式工具输出**：改前 `pool.map` **阻塞到整批跑完**（跑几十秒的 `run_skill` 期间界面零反应）→ `as_completed` 边完成边回传 + 独立 `tool_progress` 事件；两条硬约束：结果要能还原原序（下游 zip 对齐）、**不能多发 `tool` 事件**（前端拿 `done.tools` 按索引合并卡片）。**⑧ 会话分支**：`conversations` 加 `parent_id` / `fork_from`（建表 + 老库 ALTER 迁移），`fork_conversation(cid, from_index)` 复制该点之前消息 + 记血统 + 不污染父会话；路由 `POST /api/conversations/{cid}/fork`；前端 ⑂ 入口。⚠️ 踩坑：`get_conversation` 用**另一条 SQL**，首次漏改 → e2e 抓到「列表有血统、详情没有」。**⑨ 技能自建**：新增 `src/skill_learning.py`（后台线程每 8 轮 review）；**有意改两处 Hermes 做法**：① **默认关闭**（`skill_learning_enabled=0`，自动建技能等于悄悄改 agent 能力边界）② **草案不直接落正式目录**（先写 `.agents/skills/_drafts/`，**用户采纳才转正**）；技能名正则白名单防路径穿越、同名拒绝覆盖。**⑩ 中断改向**：评估后发现**大部分已具备**（前端早有 Stop / AbortController；后端自更早版本起在 `GeneratorExit` 就 `_persist()` 落库 —— 我先前读到的那句「后端断连后不再落库」注释是**过时的**）；真正缺两件：落库**不带标记** → `_persist(interrupted=True)` 追加「⏹ 用户中断」（否则模型把半截内容当完整结论）、生成中**不能直接发新消息** → 现在先中断再继续（一步改向）；顺带撤掉中途多加的 `/note` 路由避免两套机制并存。**验证**：全量 **29 套件 0 失败**；新增 `tests/test_v174_agent_ux.py` 覆盖 ①~⑩；三个隔离端到端 `_e2e_v174_recall.py` / `_e2e_v174_fork.py` / `_e2e_v174_skill.py` 全 PASS；`tsc --noEmit` 干净；`vite build` 成功。**已知局限**：技能草案无 UI 入口（API 已齐）、流式粒度是「按工具完成」不是逐行流。**未触碰**止损 10% / 10x 杠杆 / 任何引擎判据阈值 |
 | **v1.7.3** | **妖币雷达四修 + 广场稿两轮改稿**（用户报的四个问题：① 妖币历史战绩不能展开查询 ② 发妖币到广场不记录模拟挂单 ③ 发妖币被判成「不是妖币」给了 SMC 方案 ④ 广场帖内容太乱太杂、抓不到重点、AI 味重）。**① 历史战绩展开不了**：前端 `MarketsView.tsx` 写死 `slice(0, 8)`，下面那行「还有 N 条」是**死 div 没有 onClick** —— 而后端 `tracks_view` 早就下发了 50 条（`history[:HISTORY_SHOWN]`），多出来的被静默吃掉。→ 后端加 `history_limit` 参数（默认 50 / 上限 `HISTORY_FETCH`=200）+ payload 补 `history_fetch_max`，路由接 `?history_limit=`；前端改 `useState` 增量展开、死文案换成真按钮。**真实 HTTP 实测**：`8/12/200/9999` 分别回 **8/12/25/25** 条、`history_total` 恒为 25、超限夹到 200。**② 妖币发帖不落台账也不建模拟挂单**：`square_store.record_from_run` 的白名单与建单钩子只认 `square-post`/`square-rich-post`，**妖币走的 `square-monster-post` 一条都不认**；`agent_core` 与 `skills_client` 两个记账入口同样漏。而数据早就备好 —— monster 的 `cli.mjs` 也打印 `已合成 → <dir>`、`compose()` 写的 `meta.json` 里 `plan` 与 rich **结构完全兼容**（`direction/entry/stop/tp/price`），只是没人读。安装版真实库里 `paper_orders` 长期为 **0**，正是「从来没建过纸单」的印证。→ 引入 `MONSTER_SKILL` + `_POST_SKILLS`/`_COMPOSE_SKILLS` 两个集合，三处入口一并补上。**端到端 19 项**：落台账 `posted` → `paper_orders` 建单 → 幂等（同 `run_dir` 不重复）→ 发布失败不建单。**③ 雷达里挑的币被判「不是妖币」去走 SMC**：分流原本整段交给 LLM **凭印象判断**，它不查雷达名单 → 用户明明从「行情→妖币雷达」列表里挑的币照样被当成普通代币走 SMC 的 OB/FVG。→ 新增**确定性工具 `radar_lookup`**（`square_monster.radar_lookup` 复用 `_row_of`，查 `scanner.get_radar_v2` 的 `coins/takeoff/ignition`）+ `agent_core._run_radar_lookup` + `llm.py` TOOLS schema，并在系统提示里写死「**凡就某币发文必须先查名单再分流**：在册走 monster，不在册才走 rich」。⚠️ 实现坑：`radar_lookup` 必须**自洽补 USDT**（只给 `AAA` 要当成 `AAAUSDT`），否则「用户只打了个 base」会被读成「不在名单」—— 这个假阴性是端到端验证时跑出来的。**④ 广场帖两轮改稿**：第一轮治「乱/杂/抓不到重点/AI味」—— 4 套风格全部重写成**结论前置 + 三条硬数据 + 操作计划**，删掉每篇雷同的通用科普段与 5 行页脚（**800+ 字符 → 300 上下**）；第二轮按用户看真稿后的定调 —— **删掉「⚠️ 10x 下 10% 止损就是强平线…」整段**与「出场：认输线 / 达标线 / 移动止盈 / 提前落袋」整行，**页脚那句「数据来自 Monster Radar 同源行情 · 非投资建议 · github…」换成可核对的读数**（`· 24h 成交额 1.79 亿 · OI 24h +1.4% · 资金费率 +0.010% · RVOL(15m) 0.6x · taker 1.03`），随后又嫌太短 → 补三块**有信息量**的内容：**三轴各自的依据**（`row.reasons` 触发判据 + 燃料读数）、**同类参照**（`state.radar_tracks_stats()['by_stage']` 本机真实关单记录，新增常量 `PEER_MIN_N=5` 做样本门禁，「不够就不出结论」）、**位置坐标 + 链上筹码**（`position_pct/drawdown_pct/from_low_pct`；`onchain` **仅 `measured=True` 时写**，守三态纪律）。样例：「**同类参照**：本机已跟踪 13 笔「点火」样本 —— 4 笔启动后落袋、8 笔 7 天没启动、1 笔先打到 −10%（落袋率 30.8%）」；「· 位置：90d 区间 98% 分位（距高点 −0.8% / 距低点 +80.2%）」。字数回到 **390~560**，每一行都能自己去核对。**⑤ 出真稿抓到的两个「跑测试看不见」的 bug**：正文**段落粘连**（`_verdict_block` 与风格开头句之间没有空行 → Markdown 把「这一格在演什么…」和「**结论：…**」并成同一段）→ 4 套风格补空行；封面**文字重叠**（价格接近 90 日高点时，跟随价格线画的「现价」标签顶进页头、压住右上角「妖币剧本引擎 · 位阶/控盘/燃料」）→ 标签改放价格线下方（`py-24` 不够位置就 `py+8`）。**⚠️ 这两个离线测试全绿、`tsc` 也全绿照样存在**，只有真出一张图、真发一篇文章才会暴露。**⑥ 已知问题（本版只照出来、未修）**：判「位阶晚不晚」只用了 **24h 涨幅（>10%）+ OI 24h** 两条，**不看 90 日位置** —— 实测 QNTUSDT 24h 仅 +1.0% → `allow=YES` → 结论「可埋伏 —— 位置不算晚」，而它同时是 **90d 区间 100% 分位（距高点 +0.0%）、30d +362.8%**，正文里两句自相矛盾。本版仅新增「位置行」把它照出来、**没有动判据**（无样本不改判据是本项目纪律），下一步应当用真实关单样本回放验证「高位是否该扣到 `allow=NO`」。**验证**：全量 **28 套件通过**、`tsc --noEmit` 干净、`vite build` 成功、端到端 **19 项通过**、护栏变异验证 **27/27 全部转红**、真实 HTTP 参数实测。**未触碰**止损 10% / 10x 杠杆 / 任何引擎判据阈值 |
 | **v1.7.2** | **链上筹码接线：链下代理指纹 × 链上持仓证据，交叉打假**（用户选择的方向：先做 v1.7.2 链上筹码接线）。**① 纠正前提：这个模块此前一行代码都没跑过。** `src/onchain.py`（989 行 / 47 KB）早就写好了，但 `grep -rn "import onchain" src/ desktop_app.py` 命中 **0 次** —— 没测试、没接线、没发版。所以本轮的顺序是**先跑真实链路再谈接线**（读代码看着没问题 = 这类模块最常见的假象）。**② 真 bug 一：代理端口被写死成 7899，而该端口是动态分配的。** `proxy_kernel` 的混合端口是 `_free_port(7899)` 运行期挑的；7899 被别的东西占时（实测经常被占）硬编码就会指向**别人的端口**，内核在别的端口时则整层**静默全空**（不报错，只是「没有链上数据」）。→ 删掉硬编码，新增 `_kernel_mixed()` 运行期 `import proxy_kernel` 问 `mixed_port()`，拿不到就返回空串（不猜）。护栏钉「源码里不得出现字面量 `127.0.0.1:7899`」，**且源码扫描走 `tokenize` 剥注释与 docstring**（否则这条断言会被它自己的修复说明绊倒 —— 本项目已栽过两次）。**③ 真 bug 二：GoPlus 限流不是 429，是 `HTTP 200 + {"code":4029,"message":"too many requests"}` 且没有 `result` 键。** 原实现是「取 `result`，没有就当作这个币没数据」→ **限流被读成「没测到」**，两者在界面上长得一模一样但含义相反（一个是源在拒我，一个是我真没查到），于是「链上筹码」会**静默地时好时坏且永不报错**。**实测出限流节奏**（直接决定实现）：0.12s 连打 → **第 11 次即限流**；限流后等 30s 仍在限流；等 **45s 恢复**；**统一 5.5s 间隔 → 14/14 全成功（82 秒）**。→ 结论是「限流按窗口内次数算，慢下来可绕开，不必靠退避硬扛」，实现三件事一起做：`_throttle_signal()`（识别 `code in ("4029","429")` 或消息含 `too many requests`，**必须在解析 `result` 之前判**）+ `_src_available()` 短路（退避窗口内直接不发请求）+ 逐源记账（`goplus_throttled` / `rug_throttled` 进 `_stats`）。**④ 交叉判据六态**（`cross_verdict(reading, struct_flags)`）：`confirm`（链下命中结构性指纹且链上 top10 高）/ `refute`（**链下命中但链上分散 → 链下代理可能是误报**，最有价值的一档）/ `warn`（链下未命中但链上高度集中）/ `clean` / `neutral`（top10 落 25%~60% → **不判，不编故事**）/ `unknown`（这个币没读数）。**阈值 60 / 25 不是拍的**：取自真实 16 币 `top10_pct` 分布（**中位 45.5**），取 60 让报警保持稀有。⚠️ **只有 3 个结构性指纹能参与交叉**（`无现货` / `合约独大` / `换手畸高`）；`空头付钱` / `拉升无爆仓` 是**持仓侧**指纹，拿它和「链上持仓集中度」比大小是**两个范畴互比**（凭空造因果）。落成模块级常量并钉死两侧名单（`scanner._MANIP_STRUCT == square_monster.STRUCT_FLAGS`）不得漂移。⚠️ **链上证据不参与 `grade` 赋值**（新数据在没有样本之前不许改判据），只往 `evidence` 追加可读证据并给出 `chain` / `chain_struct` 两个字段。**⑤ 「先剔再算」：烧地址会把结论整个反过来。** 原始 `top10_pct` 把**烧掉/销毁地址**算进去，而这些地址的筹码**永远不会卖**。实测 CAKE（BSC）：**原始 92.74% → 剔除后 4.14%**，判据结论从 `confirm` 翻成 **`refute`**。取值路径一律先剔再算，被剔个数作为审计字段带出来。**⑥ 三个数据源全零 Key 全免费**：CoinGecko（L1/L2 层，symbol→cg_id→合约地址，**直连超时必须走代理**）、GoPlus（EVM + Solana 持仓/貔貅/税率，直连可达）、RugCheck（Solana 前 20 持有者 + 风险项，直连可达）。**⑦ `source_down` ≠ `unknown`**：`measured=False` 时出 `source_down`，与逐币 `unknown` 是**两个不同 state 码** —— 前者是**我们的问题**（代理没通/源挂了），后者是**这个币的属性**；合并就等于替数据源背锅。payload 另下发 `onchain_health()` 快照（`goplus_available` / `goplus_backoff_sec` / `rug_backoff_sec` / `route` / `stats`），前端体检条在未通/限流时**红标**。**⑧ 派发必须在逐币循环之前**：链上读数是异步刷新 + 读缓存（绝不阻塞雷达主路径），`_onchain_dispatch(pool_syms)` 放扫描主体**开头**、`_onchain_read()` 在循环前**只读一次**；派发晚一步这一列就永远填不上且不报错。**⑨ 前端 i18n 走 switch 不走动态键**：`t(\`markets.onchain.${state}\`)` 会**绕开**「用到的键必须两本字典都有」的静态扫描，而 `i18n.tsx` 是 `dict[key] ?? key`（**没有 zh 兜底**）→ 缺键就是界面把 key 当文案印出来。改成显式 `switch` 映到 16 个具名键（zh+en 各一次共 32 处）；链上 pill 渲染 **i18n 标签**而不是后端下发的中文 `label`（否则英文界面串中文）。**⑩ 护栏与变异验证**：`tests/test_v172_onchain.py` **181 条断言**（A~K 共 11 组：符号归一化、**单位归一化 —— GoPlus 小数 ×100 / RugCheck 百分比原样，两个源单位相反**、烧地址剔除必须翻转 CAKE 结论、限流识别+计数+退避+短路、动态端口、损坏缓存不连坐、六态含边界、只有结构性指纹、扫描接线 + `source_down`≠`unknown`、monster 轴只给证据、前端契约、模块真被 import + 探针已清理）；`tests/_mutate_v172.py` **26 组变异全部转红（26/26）** —— 第一轮有 1 组「锚点命中 0 次」被跳过（锚点与源码换行不一致 = 这条护栏**根本没被测到**），改正锚点后复跑转红；`tests/_e2e_v172_onchain.py` 真实链路（代理自动选择 / 后台刷新不阻塞 / 真实读数与分布 / CAKE 烧地址翻转 / 限流记账 / `--radar` 跑真实 `get_radar_v2` 核对 payload 与行级格）。**⚠️ 这两个真 bug 跑离线测试永远发现不了**（测试里不复现），只能靠真实链路。**⑪ 清理**：删掉 4 个临时探针脚本（`_probe_onchain.py` / `_probe_diag.py` / `_probe_syms.py` / `_probe_wif.py`）与产物目录 `_ws_onchain/`，作用已固化进 e2e 脚本。**验证**：全量 **28 套件通过**、`tsc --noEmit` 退出码 0、`vite build` 成功、真实 e2e 通过。**未触碰**止损 10% / 10x 杠杆 / 任何引擎判据阈值 |

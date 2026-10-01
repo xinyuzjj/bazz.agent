@@ -1,3 +1,65 @@
+# BAZZ.AGENT v1.7.5
+
+**Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.7.5 更新要点（三条反馈逐个查根因：卡片劣质感 / 空转不解决问题 / 记不住）
+
+**没有加新功能，只修三个「用着不对」的地方。** 反馈原话是「聊天界面、输出、输出动画、调用技能
+的展示都不太行，一股劣质的味道，而且不会自己去解决问题，记忆能力也有问题」。三个都当成
+bug 查，不猜 —— 每个都定位到可复现的根因再动手。
+
+### ① 工具卡片倒原始 JSON —— 「劣质感」的直接来源
+
+用户贴的那段里，四张失败卡片长这样：
+
+```
+TOOL::技能 market-data    OK
+exit=1 · 0.41s {"error":"klines: {\"SYMBOL\":\"ETHUSDT\",...}"} [stderr] (node:19176) [UNDICI-EHPA] Warning: ...
+```
+
+**一坨原始 JSON + Node 的 UNDICI 警告，直接倒进卡片**；更糟的是 `exit=1` 却显示绿色 **OK**。
+
+- **状态判定从黑名单改成白名单**：改前 `_ok_status` 用 `st not in ("", "error", "fail", …)` 判成功，
+  而技能失败时后端只给 `status="warn"` —— **`warn` 不在黑名单里，被判成成功** → 卡片绿 OK、
+  detail 里却写着 `exit=1`，自相矛盾。现在改成三态：`None`=进行中（金色跳动点）/ `False`=失败（红）
+  / `True`=成功（绿），**未知状态不再默认成功**；技能结果同时显式给出 `ok` 字段，不再让前端靠字符串猜。
+- **detail 只留一行摘要**：新增 `_skill_detail_line()` —— 失败给一句人话原因（`0.41s · 失败：klines: 无数据（interval=1h market=spot）。`），
+  成功给结果要点（`2.22s · 已生成 → ETHUSDT_研报_…md`）。同时用 `_SKILL_NOISE_RE` 剥掉 `[stderr]` /
+  `(node:1234)` / `EnvHttpProxyAgent` / `[UNDICI-*]` 这些噪声，用 `_tidy_msg()` 抠掉消息里**内嵌的参数 JSON**
+  （原来会原样透出 `{"SYMBOL":"ETHUSDT","INTERVAL":"15M"}`）—— 对**被截断的半截 JSON** 也管用。
+- **原始输出挪到折叠区**：完整输出进 `raw` 字段，前端 `<details>` 承载。想看的人点开，不占版面。
+  卡片同时去掉 `TOOL::` 这个调试味前缀，改成状态图标（✓ / ✗ / 转圈）+ 结构化分区。
+- **模型的「内心独白」改成折叠**：`让我换用 1h 级别补档，再结合 coin-report…做分析` 这种过程说明
+  原先直接铺在正文里。新增叙述判定 `_looks_like_narration()`（只看开头 60 字有无「让我/我先/我来/我换…」），
+  命中改走独立的 `narration` 事件、前端折叠。**不删只折** —— 有些过渡句是有用的。
+
+### ② 「不会自己去解决问题」—— 查出来是**工具说明在教模型犯错**
+
+用户那段里 `market-data` 连挂 4 次，参数从 `15M` 试到 `1H`，全挂在同一个问题上。根因不在模型：
+
+- **`run_skill` 的工具说明写错了**：它写的是 `market-data：args='<子命令> <JSON>'，例如 klines{"symbol":"BTCUSDT",…}`，
+  而 `market-data` 的 CLI 是**纯位置参数**（`klines <SYMBOL> [interval] [limit] [market]`）。
+  模型照着说明传 JSON 对象 → **整坨 `{"SYMBOL":"ETHUSDT","INTERVAL":"15M",…}` 被当成 SYMBOL** →
+  报「无数据」，而那句报错**只字不提参数形状** → 模型只能换数值继续撞。
+- **说明已改正**：写清「位置参数，不要传 JSON」，并点明 `interval 只认小写 1h/4h/1d，没有 15m/30m`。
+- **边界加兜底**：新增 `normalize_skill_args()` —— 位置参数族技能（market-data / coin-report）收到
+  JSON 对象时**自动摊平成位置参数**（缺省值按 CLI 默认补齐，避免「只给 limit」让 limit 滑进 interval 槽位）；
+  `interval` 非法值**在边界就拦**，报错直接给可照抄的改法（``改用 `market-data klines ETHUSDT 1h` ``）。
+  JSON 参数族技能（meme-rush / query-* 等）原样放行，不受影响。
+- **自愈提示词补一条**：报「无数据 / 解析失败 / 未找到 XXX」时先怀疑**参数形状**，先 `cat SKILL.md` 看用法。
+
+### ③ 「记忆能力有问题」—— 门控过严，把该记的挡在门外
+
+`auto_memorize` 改前是「**用户消息必须命中偏好词表**」才送 LLM 提炼 —— 而词表再全也覆盖不了自然语言
+（「我一般只做现货」能命中，「以后别给我推合约了」就未必）。真正能分辨「这条值不值得长期记」的是
+提炼用的那个 LLM，词表这层前置过滤只会让用户觉得「它什么都没记住」。现在只挡明显太短的闲聊
+（`len < 12` 且无偏好信号），其余交给 LLM 判断；全局 180s 冷却保留，成本可控。
+
+验证：全量 **29 套件 0 失败** / 新增护栏 ⑫⑬ 两组共 26 条断言（用**用户实测原文**做样本）/
+`tsc --noEmit` 干净 / `vite build` 成功。未触碰：止损 10% / 10x 杠杆 / 任何引擎判据阈值。
+
+---
+
 # BAZZ.AGENT v1.7.4
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**

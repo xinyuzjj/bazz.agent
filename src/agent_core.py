@@ -24,14 +24,49 @@ import recall  # 跨会话召回：每轮自动把相关历史片段捞进上下
 import skill_learning  # 技能自建/自改进：后台识别可固化技巧，草案待采纳
 
 # ---------- tool dict normalization ----------
-def _ok_status(t: dict) -> bool:
-    """把各家模块写的 status 字段统一成 ok: bool（前端就靠这个判断卡片态）。"""
+def _ok_status(t: dict):
+    """把各家模块写的 status 字段统一成 ok（前端就靠它判断卡片态）。
+
+    v1.7.5 改为**三态** True / False / None：
+      · `None`（进行中 / 待确认）→ 前端渲染金色「运行中」+ 跳动点
+      · `False` → 红色失败
+      · `True`  → 绿色 OK
+
+    改前是二态、且用**黑名单**判定（`st not in (...)`），后果很实在：
+    技能失败时后端只给 `status="warn"`，而 `warn` 不在黑名单里 → 被判成成功
+    → **卡片显示绿色 OK，可 detail 里明明写着 `exit=1`**，自相矛盾。
+    现在改成**白名单**（只有明确表示成功的才算成功），未知状态不再默认成功。
+    """
     if not isinstance(t, dict):
         return False
     if "ok" in t:
-        return bool(t["ok"])
-    st = str(t.get("status", "")).lower()
-    return st not in ("", "error", "fail", "failed", "failed:", "bad")
+        v = t["ok"]
+        return None if v is None else bool(v)
+    st = str(t.get("status", "")).lower().strip()
+    if st in ("", "info", "pending", "running", "wait", "waiting"):
+        return None
+    return st in ("ok", "success", "done", "completed", "allow")
+
+
+# 「内心独白型」旁白标记（v1.7.4）—— 这类句子是模型的**过程叙述**，不是给用户的结论。
+_NARRATION_MARKERS = ("让我", "我先", "我来", "我换", "我改", "那我", "我准备", "我用",
+                      "接下来我", "我试试", "我需要先", "我把这", "我再看", "我去查")
+
+
+def _looks_like_narration(text: str) -> bool:
+    """这段旁白是不是「内心独白」（过程叙述）？
+
+    v1.7.4 用户实测反馈：正文里直接冒出
+    「15 分钟级别 K 线数据接口不支持…，**让我换用 1h 级别补档**，再结合…做分析」——
+    用户要的是结论，不是模型的内心活动。
+
+    但也不能一律删（有些过渡句有用），所以**折叠展示**而不是丢弃。
+    判定只看开头一小段，避免误伤正文里偶然提到「让我」的长段落。
+    """
+    s = " ".join(str(text or "").split())
+    if not s:
+        return False
+    return any(m in s[:60] for m in _NARRATION_MARKERS)
 
 
 _HEAL_MAX = 3  # 同一请求内工具失败的最大自愈轮次（永续/小币类查询需要更长窗口）
@@ -60,7 +95,11 @@ def _heal_hint(fail: str, remain: int) -> str:
                 f"【自愈指令】分析失败原因（参数？格式？网络？权限？）。\n"
                 f"- 若 args 与上一次完全相同——**立即停止重试本调用**，改为：换工具/换路径（如发币安广场走 run_skill 而非 mcp_call）、"
                 f"向用户索要必要凭据、或把失败原文与建议直接呈现。\n"
-                f"- 修复点不明确时，也优先停下如实告知用户，不要盲目循环同 args。"
+                f"- 修复点不明确时，也优先停下如实告知用户，不要盲目循环同 args。\n"
+                f"- **技能参数形状**：报『无数据 / 解析失败 / 未找到 XXX』先怀疑**参数形状**——"
+                f"`run_skill` 的位置参数族技能（market-data / coin-report / track-monitor / news-sentiment 等）"
+                f"传 JSON 对象会整坨被当参数。先 `cat .agents/skills/<name>/SKILL.md` 看用法，按位置参数传"
+                f"（如 `klines BTCUSDT 1d 90 futures`，interval 只认小写 1h/4h/1d）。"
                 f"（剩余自愈次数 {remain}。）")
     return (f"\n\n⛔ 工具执行失败：{fail}\n"
             f"【自愈次数已用尽】立即停止调用工具，不要再尝试。直接向用户如实说明："
@@ -1356,7 +1395,7 @@ def _run_help():
 _AUTO_MEM_PREF_HINTS = ("我只做", "我不做", "不要", "别用", "偏好", "习惯", "只用", "现货就好",
                         "不做合约", "不碰", "我关注", "我主要", "尽量", "风险偏好", "仓位", "止盈",
                         "止损", "喜欢", "不喜欢", "记住", "以后", "每次都", "默认")
-_AUTO_MEM_COOLDOWN = 180  # 同一会话 3 分钟内至多沉淀一次，防每轮烧模型
+_AUTO_MEM_COOLDOWN = 180  # 全局 3 分钟内至多沉淀一次，防每轮烧模型（auto_mem_last_ts 是全局设置，不按会话隔离）
 
 # 敏感信息模式：API key / secret / 私钥 / 助记词等绝不入记忆（Hermes 式写入验证）
 _SECRET_PAT = re.compile(
@@ -1396,8 +1435,15 @@ def auto_memorize(user_msg: str, reply: str, llm_cfg: dict = None) -> dict:
     um = (user_msg or "").strip()
     if not um or len(um) < 4:
         return {"stored": 0, "keys": [], "skipped": "消息太短"}
-    if not any(h in um for h in _AUTO_MEM_PREF_HINTS):
-        return {"stored": 0, "keys": [], "skipped": "无偏好信号"}
+    # v1.7.5：门控**放宽** —— 用户反馈「记忆能力有问题 / 记不住」。
+    # 改前是「用户消息里必须命中偏好词表」才送 LLM 提炼，而词表再全也覆盖不了自然语言
+    # （「我一般只做现货」能命中，但「以后别给我推合约了」就未必）。
+    # 真正能分辨「这条值不值得长期记」的是提炼用的那个 LLM，词表这层前置过滤
+    # 只会把该记的挡在门外 —— 于是用户觉得它什么都没记住。
+    # 现在只挡明显太短的闲聊，其余交给 LLM 判断；配合下面的冷却，
+    # 成本可控（同一会话 3 分钟至多沉淀一次）。
+    if len(um) < 12 and not any(h in um for h in _AUTO_MEM_PREF_HINTS):
+        return {"stored": 0, "keys": [], "skipped": "太短且无偏好信号"}
     try:
         last = float(get_setting("auto_mem_last_ts", "0") or 0)
         if time.time() - last < _AUTO_MEM_COOLDOWN:
@@ -2159,10 +2205,13 @@ def _run_sandbox_cmd(args: dict, confirmed: bool = False) -> Dict[str, Any]:
     ok = r["exit_code"] == 0
     snippet = out[:1200]
     tail = f"\n\n（输出 {len(out)} 字符，已截断）" if r["truncated"] else ""
-    detail = f"exit={r['exit_code']} · {r['elapsed']}s" + (("\n" + out[:240].rstrip()) if out else "")
+    # v1.7.5：detail 只留**一行摘要**；原始输出挪到 raw 字段（前端折叠承载）。
+    # 改前是把输出前 240 字直接倒进卡片 → 用户看到的是一坨 JSON 加 Node 警告。
+    detail = _skill_detail_line(r, out)
     return {"reply": f"{'✅' if ok else '⚠️'} 退出码 {r['exit_code']}（{r['elapsed']}s）`{r['cmd'][:60]}`\n\n```\n{snippet}\n```{tail}",
             "intent": "tool", "data": r,
-            "tools": [{"icon": "⚡", "name": "运行命令", "status": "success" if ok else "warn", "detail": detail}]}
+            "tools": [{"icon": "⚡", "name": "运行命令", "ok": ok,
+                       "status": "success" if ok else "warn", "detail": detail, "raw": out[:2000]}]}
 
 
 def _is_wallet_skill(name: str) -> bool:
@@ -2242,6 +2291,78 @@ def _square_post_fail_hint(out: str) -> str:
     return ""
 
 
+_SKILL_NOISE_RE = re.compile(r"\[stderr\][^\n]*|\(node:\d+\)[^\n]*|EnvHttpProxyAgent[^\n]*|"
+                             r"\[UNDICI-[A-Z]+\][^\n]*", re.I)
+# v1.7.5：技能返回的错误体常把参数 JSON 嵌在消息里
+# （`klines: {"SYMBOL":"ETHUSDT","INTERVAL":"15M"} 无数据…`），
+# 直接倒出来还是一坨。下面两个正则负责把它抠成人话。
+_JSON_ERR_RE = re.compile(r'"error"\s*:\s*"((?:[^"\\]|\\.)*)"')
+_INLINE_JSON_RE = re.compile(r"\{[^{}]*\}")
+
+
+def _tidy_msg(s: str) -> str:
+    """把消息里夹带的 JSON 片段与转义符清掉，只留人话。"""
+    s = _INLINE_JSON_RE.sub(" ", str(s or ""))          # 去掉 {"SYMBOL":"ETHUSDT"} 这类内嵌体
+    s = s.replace("\\n", " ").replace("\\t", " ").replace('\\"', '"').replace("\\\\", "\\")
+    # 半截 JSON（`{"error":"funding: …` 无闭合引号）走不到 json.loads，这里手动剥壳。
+    s = re.sub(r'^\s*\{\s*"(?:error|detail|message|msg)"\s*:\s*"?', "", s, flags=re.I)
+    s = re.sub(r'^\s*"(?:error|detail|message|msg)"\s*:\s*"?', "", s, flags=re.I)
+    s = re.sub(r'^\s*\{\s*', "", s)
+    s = re.sub(r'[}"]+\s*$', "", s)
+    return re.sub(r"\s+", " ", s).strip(" :·-")
+
+
+def _first_sentence(s: str, cap: int = 90) -> str:
+    """取第一句（中文句号/换行切断），再按 cap 硬截。"""
+    for sep in ("。", "；", "\n", ". "):
+        i = s.find(sep)
+        if 0 < i + 1 <= cap:
+            return s[:i + 1]
+    return s[:cap]
+
+
+
+def _skill_detail_line(r: dict, out: str) -> str:
+    """技能 / 命令卡片的**一行摘要**（v1.7.5）。
+
+    改前卡片 detail 是 `exit=0 · 2.22s` 加**原始输出前 240 字** —— 用户看到的
+    是一坨 JSON、Windows 反斜杠路径、还有 Node 的 UNDICI 警告（反馈原话：
+    「一股劣质的味道」）。现在：失败 → 一句人话原因；成功 → 一句结果要点；
+    原始输出挪到 `raw` 字段，由前端折叠区承载（想看的人点开，不占版面）。
+    """
+    secs = f"{r.get('elapsed', 0)}s"
+    txt = " ".join(_SKILL_NOISE_RE.sub(" ", str(out or "")).split())
+    if not txt:
+        return secs
+    # ① 先抠 `"error": "..."` —— 对**被截断的半截 JSON** 也管用（json.loads 会挂）。
+    m = _JSON_ERR_RE.search(txt)
+    if m:
+        msg = _tidy_msg(m.group(1))
+        if msg:
+            return f"{secs} · 失败：{_first_sentence(msg)}"
+    # ② 完整 JSON：按语义取结果要点。
+    obj = None
+    i = txt.find("{")
+    if i >= 0:
+        try:
+            obj = json.loads(txt[i:])
+        except Exception:
+            obj = None
+    if isinstance(obj, dict):
+        err = obj.get("error") or obj.get("detail")
+        if err:
+            return f"{secs} · 失败：{_first_sentence(_tidy_msg(err))}"
+        rep = obj.get("report") or obj.get("file") or obj.get("path")
+        if rep:
+            return f"{secs} · 已生成 → {os.path.basename(str(rep))}"
+        sym = obj.get("symbol")
+        if sym:
+            price = obj.get("price") or (obj.get("summary") or {}).get("price")
+            return f"{secs} · {sym}" + (f" {price}" if price else "")
+    # ③ 兜底：也要清干净，绝不把 JSON 原样倒给用户。
+    return f"{secs} · {_first_sentence(_tidy_msg(txt))}"
+
+
 def _tool_run_skill(args: dict, confirmed: bool = False) -> Dict[str, Any]:
     """run_skill：本地可执行类技能（baw / cli.mjs）需确认后经沙箱执行；纯指引类直接返回说明。"""
     from exec_sandbox import SandboxError, run_skill_cmd, skill_is_executable
@@ -2288,7 +2409,9 @@ def _tool_run_skill(args: dict, confirmed: bool = False) -> Dict[str, Any]:
             {"icon": "🧰", "name": f"技能 {name}", "status": "error", "detail": str(e)[:140]}]}
     ok = r["exit_code"] == 0
     out = r.get("output", "")
-    detail = f"exit={r['exit_code']} · {r['elapsed']}s" + (("\n" + out[:240].rstrip()) if out else "")
+    # v1.7.5：detail 只留**一行摘要**；原始输出挪到 raw 字段（前端折叠承载）。
+    # 改前是把输出前 240 字直接倒进卡片 → 用户看到的是一坨 JSON 加 Node 警告。
+    detail = _skill_detail_line(r, out)
     # 广场发帖记账：真实发布成功 / 失败都落本地台账（广场页展示），失败不打断主流程
     # v1.7.3：补 square-monster-post —— 此前妖币发帖不在白名单，发了帖既不落台账也不建模拟挂单
     if name in ("square-post", "square-rich-post", "square-monster-post"):
@@ -2314,7 +2437,10 @@ def _tool_run_skill(args: dict, confirmed: bool = False) -> Dict[str, Any]:
             reply += "\n\n" + hint
     return {"reply": reply,
             "intent": "tool", "data": r,
-            "tools": [{"icon": "🧰", "name": f"技能 {name}", "status": "success" if ok else "warn", "detail": detail}]}
+            # v1.7.5：**显式给 ok** —— 只给 status="warn" 时前端只能靠字符串猜，
+            # 而 warn 曾被误判成成功（卡片绿色 OK、detail 里却写着 exit=1）。
+            "tools": [{"icon": "🧰", "name": f"技能 {name}", "ok": ok,
+                       "status": "success" if ok else "warn", "detail": detail, "raw": out[:2000]}]}
 
 
 def _dispatch_is_approval_needed(name: str) -> bool:
@@ -2698,9 +2824,15 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
                                               "detail": model_used}]}
             return
         # 有工具调用：先展示 LLM 的旁白（如有，剥掉客套）
+        # v1.7.5：旁白分两种 —— 「内心独白型」（让我换用 1h 补档…）折叠成 narration，
+        # 普通的过渡句才当正文铺开。用户要看的是结论，不是模型的内心活动。
         if content.strip():
-            for chunk in _chunk_text(_strip_preamble(content)):
-                yield {"type": "text", "delta": chunk}
+            _narr = _strip_preamble(content)
+            if _looks_like_narration(_narr):
+                yield {"type": "narration", "text": _narr}
+            else:
+                for chunk in _chunk_text(_narr):
+                    yield {"type": "text", "delta": chunk}
         # 记录 assistant 消息（含 tool_calls）以便回传
         assistant_tc = [{"id": tc["id"], "type": "function",
                          "function": {"name": tc["name"],

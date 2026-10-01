@@ -418,6 +418,177 @@ def test_interrupt_redirect():
     check("⑩ Stop 仍然可用", "abortRef.current?.abort()" in fe)
 
 
+# ---------------- ⑪ 工具状态与旁白呈现（用户实测反馈） ----------------
+
+def test_tool_status_is_three_state():
+    """工具卡片必须能表达「失败」。
+
+    改前 `_ok_status` 用**黑名单**判定，而技能失败时后端只给 `status="warn"` ——
+    warn 不在黑名单里 → 判成成功 → **卡片显示绿色 OK，可 detail 里明明写着 exit=1**。
+    """
+    ac = _src("src/agent_core.py")
+    check("⑪ _ok_status 改为白名单（未知不再默认成功）",
+          'return st in ("ok", "success", "done", "completed", "allow")' in ac)
+    check("⑪ 进行中/待确认 → None（前端渲染金色运行中）",
+          '"info", "pending", "running", "wait", "waiting"' in ac)
+    check("⑪ 技能结果显式给出 ok 字段", '"name": f"技能 {name}", "ok": ok' in ac)
+
+
+def test_narration_detects_real_case():
+    """拿用户实测那句话做样本：必须命中，且不能误伤正常旁白。"""
+    import agent_core
+
+    f = agent_core._looks_like_narration
+    check("⑪ 命中实测那句内心独白",
+          f("15 分钟级别 K 线数据接口不支持（market-data 仅提供 1h/4h/1d），"
+            "让我换用 1h 级别补档，再结合 coin-report 现有数据做分析。"))
+    check("⑪ 不误伤结论型过渡句", not f("先看行情：ETH 现价 2699，24h +1.1%"))
+    check("⑪ 空输入不抛", f("") is False and f(None) is False)
+
+
+def test_narration_is_folded_not_dumped():
+    """模型的内心独白不该直接铺在正文里（用户实测反馈）。"""
+    ac = _src("src/agent_core.py")
+    check("⑪ 有叙述判定函数", "def _looks_like_narration(" in ac)
+    check("⑪ 叙述型走 narration 事件", '"type": "narration"' in ac)
+    check("⑪ 普通旁白仍当正文铺开", '"type": "text", "delta": chunk}' in ac)
+    fe = _src("frontend/src/views/ChatView.tsx")
+    check("⑪ 前端处理 narration", 'ev.type === "narration"' in fe)
+    check("⑪ 渲染成可折叠块（不删只折）", "m.narration?.length" in fe and "<details" in fe)
+    loc = _src("frontend/src/i18n/locales.ts")
+    check("⑪ i18n 键 chat.narration zh/en 各一处", loc.count('"chat.narration"') == 2,
+          str(loc.count('"chat.narration"')))
+
+
+# ---------------- ⑫ 工具卡片「劣质感」治理（用户实测反馈） ----------------
+
+_SKILL_FAIL_SAMPLE = (
+    '{"error":"klines: {\\"SYMBOL\\":\\"ETHUSDT\\",\\"INTERVAL\\":\\"15M\\",\\"LIMIT\\":96,'
+    '\\"MARKET\\":\\"SPOT\\"} 无数据（interval=1h market=spot）。检查符号拼写、interval 合法值'
+    '（1h/4h/1d 等）与 market（spot/futures）；合约下架币试试 spot"} '
+    '[stderr] (node:19176) [UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental, '
+    'expect them to change at any time.'
+)
+_SKILL_OK_SAMPLE = (
+    '{"report":"F:\\\\1\\\\BAZZ.AGENT\\\\workspace\\\\妖币\\\\ETHUSDT_研报_202610010443.md",'
+    '"summary":{"price":2696.54,"chg_24h":1.04}} '
+    '(node:6636) [UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental.'
+)
+
+
+def test_skill_detail_line_hides_json_and_noise():
+    """技能卡片 detail 必须是一行人话，不能倒 JSON / Node 警告。
+
+    用户实测原文里那 4 张失败卡片的 detail 是「`exit=1 · 0.41s` + 一坨原始 JSON + UNDICI 警告」，
+    反馈原话「一股劣质的味道」。这里用**原样样本**跑摘要器。
+    """
+    import agent_core
+
+    f = agent_core._skill_detail_line
+    bad = f({"elapsed": 0.41}, _SKILL_FAIL_SAMPLE)
+    check("⑫ 失败行给出人话原因", "失败：" in bad and "无数据" in bad, bad)
+    check("⑫ 失败行不含内嵌 JSON", "{" not in bad and "SYMBOL" not in bad, bad)
+    check("⑫ 失败行不含 Node / UNDICI 噪声",
+          "UNDICI" not in bad and "node:" not in bad and "EnvHttpProxy" not in bad, bad)
+    check("⑫ 失败行是一行（无换行）", "\n" not in bad, bad)
+
+    ok = f({"elapsed": 2.22}, _SKILL_OK_SAMPLE)
+    check("⑫ 成功行取结果要点（生成文件名）", "已生成" in ok and "ETHUSDT_研报" in ok, ok)
+    check("⑫ 成功行不含反斜杠路径", "\\" not in ok and "F:" not in ok, ok)
+
+    # 半截 JSON（无闭合引号）也不能原样倒出
+    half = f({"elapsed": 0.3}, '{"error":"funding: 未找到 {\\"SYMBOL\\":\\"ETHUSDT\\"} 的 USDT 永续合约')
+    check("⑫ 半截 JSON 也能剥壳", not half.rstrip().endswith("合约\"") and "{" not in half, half)
+
+
+def test_skill_card_moves_raw_out_of_detail():
+    """原始输出必须挪到 raw 字段折叠承载，而不是塞进 detail。"""
+    ac = _src("src/agent_core.py")
+    check("⑫ 有摘要器", "def _skill_detail_line(" in ac)
+    check("⑫ 有噪声正则", "_SKILL_NOISE_RE" in ac)
+    check("⑫ detail 不再切 out[:240]", "out[:240]" not in ac)
+    check("⑫ raw 字段承载原始输出（两处卡片）", ac.count('"raw": out[:2000]') >= 2,
+          str(ac.count('"raw": out[:2000]')))
+    check("⑫ _norm_tool 会透传 raw", "nt = dict(t)" in ac)
+    fe = _src("frontend/src/views/ChatView.tsx")
+    check("⑫ 前端 tools 类型带 raw", "raw?: string" in fe)
+    check("⑫ 前端把 raw 折进 details", "m.narration?.length" in fe and "tl.raw" in fe)
+    loc = _src("frontend/src/i18n/locales.ts")
+    check("⑫ i18n 键 chat.rawOutput zh/en 各一处", loc.count('"chat.rawOutput"') == 2,
+          str(loc.count('"chat.rawOutput"')))
+
+
+def test_memory_gate_not_over_strict():
+    """记忆门控不能是「必须命中偏好词表」—— 那是「记不住」的直接原因。
+
+    改前：`if not any(h in um for h in _AUTO_MEM_PREF_HINTS): return 跳过`。
+    词表再全也覆盖不了自然语言（「以后别给我推合约了」未必命中），
+    结果该记的全被挡在门外。现在只挡明显太短的闲聊。
+    """
+    ac = _src("src/agent_core.py")
+    check("⑫ 不再无条件要求命中词表",
+          "if not any(h in um for h in _AUTO_MEM_PREF_HINTS):" not in ac)
+    check("⑫ 改为「太短且无信号」才跳过",
+          'len(um) < 12 and not any(h in um for h in _AUTO_MEM_PREF_HINTS)' in ac)
+    check("⑫ 冷却仍在（成本可控）", "auto_mem_last_ts" in ac and "_AUTO_MEM_COOLDOWN" in ac)
+
+
+# ---------------- ⑬ 技能参数形状（「不会自己解决问题」的直接病灶） ----------------
+
+def test_skill_args_normalized_to_positional():
+    """位置参数族技能收到 JSON 对象要自动摊平。
+
+    实测事故：market-data 是位置参数 CLI，模型却传 JSON → 整坨被当成 SYMBOL
+    → 报「无数据」→ 换 4 组数值继续撞。这是工具说明写错引发的一连串空转。
+    """
+    import exec_sandbox as es
+
+    f = es.normalize_skill_args
+    check("⑬ JSON → 位置参数（全字段）",
+          f("market-data", 'klines {"symbol":"ETHUSDT","interval":"1d","limit":90,"market":"futures"}')
+          == "klines ETHUSDT 1d 90 futures")
+    check("⑬ 补默认值不串槽（只给 limit）",
+          f("market-data", '{"symbol":"BTCUSDT","limit":90}') == "klines BTCUSDT 1h 90 spot")
+    check("⑬ 纯位置参数不动",
+          f("market-data", "klines ETHUSDT 1h 24 spot") == "klines ETHUSDT 1h 24 spot")
+    check("⑬ 无参子命令不动", f("market-data", "fng") == "fng")
+    check("⑬ coin-report JSON → 位置参数",
+          f("coin-report", '{"symbol":"ETHUSDT"}') == "report ETHUSDT futures")
+    check("⑬ JSON 参数族不受影响（meme-rush 原样）",
+          f("meme-rush", '{"chainId":"CT_501","rankType":10}') == '{"chainId":"CT_501","rankType":10}')
+    check("⑬ 传错形状给可读错误（不是静默）",
+          "SandboxError" in _src("src/exec_sandbox.py") and "_POSITIONAL_SPECS" in _src("src/exec_sandbox.py"))
+
+
+def test_skill_interval_validated_at_boundary():
+    """非法 interval 必须在**边界**就被拦下并给出可用值。
+
+    改前是丢给 CLI 报「无数据（interval=15m market=spot）」—— 那句只字不提
+    「15m 根本不支持」，模型只能靠猜，实测来回猜了 4 次。
+    """
+    import exec_sandbox as es
+
+    try:
+        es.normalize_skill_args("market-data", '{"SYMBOL":"ETHUSDT","INTERVAL":"15M"}')
+        check("⑬ 非法 interval 应报错", False, "未抛异常")
+    except es.SandboxError as e:
+        msg = str(e)
+        check("⑬ 非法 interval 报错并点明可选值", "1h/4h/1d" in msg, msg)
+        check("⑬ 报错给出可直接照抄的改法", "market-data klines ETHUSDT 1h" in msg, msg)
+    check("⑬ 大写 interval 自动转小写（合法值）",
+          "_INTERVAL_OK" in _src("src/exec_sandbox.py")
+          and es.normalize_skill_args("market-data", '{"symbol":"ETH","interval":"1D"}') == "klines ETH 1d 24 spot")
+
+
+def test_run_skill_doc_is_positional():
+    """工具说明必须写对参数形状 —— 这是事故的源头，改错了它会再犯一次。"""
+    ll = _src("src/llm.py")
+    check("⑬ market-data 说明改为位置参数", "klines <SYMBOL> [interval] [limit] [market]" in ll)
+    check("⑬ 明说不要传 JSON", "不要传 JSON" in ll)
+    check("⑬ 点明没有 15m/30m", "没有 15m/30m" in ll)
+    check("⑬ 通用用法行区分两种形状", "位置参数" in ll and "参数形状" in _src("src/agent_core.py"))
+
+
 def main():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

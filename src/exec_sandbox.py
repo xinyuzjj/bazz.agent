@@ -10,6 +10,7 @@
 
 策略违规抛 SandboxError；上层转成工具错误卡，绝不静默执行。
 """
+import json
 import os
 import re
 import shlex
@@ -955,6 +956,83 @@ def run_command(command: str, timeout: int = DEFAULT_TIMEOUT, max_out: int = DEF
             "cmd": command, "elapsed": round(time.time() - t0, 2)}
 
 
+# ---------- v1.7.5：技能参数归一（治「模型把 JSON 当位置参数」） ----------
+# 实测事故：market-data 的 CLI 是**位置参数**（`klines <SYMBOL> [interval] [limit] [market]`），
+# 而 run_skill 的工具说明曾错误地教模型传 JSON 对象 →
+# 整坨 `{"SYMBOL":"ETHUSDT","INTERVAL":"15M",...}` 被当成 SYMBOL → 报「无数据」，
+# 而报错本身**只字不提参数形状** → 模型换了 4 组数值继续撞同一面墙（15M / 1H / 1H …）。
+# 说明已改正；这里再加一层兜底：位置参数族技能收到 JSON 对象时自动摊平成位置参数。
+_POSITIONAL_SPECS = {
+    "market-data": {
+        "bare": "klines",
+        "cmds": {
+            "klines":    {"symbol": None, "interval": "1h", "limit": "24", "market": "spot"},
+            "liq":       {"symbol": None, "limit": "60", "window": "300"},
+            "funding":   {"symbol": None},
+            "oi":        {"symbol": None},
+            "longshort": {"symbol": None},
+        },
+    },
+    "coin-report": {
+        "bare": "report",
+        "cmds": {"report": {"symbol": None, "market": "futures"}},
+    },
+}
+_INTERVAL_OK = ("1h", "4h", "1d")
+
+
+def normalize_skill_args(skill_name: str, args: str) -> str:
+    """位置参数族技能收到 JSON 对象 → 摊平成位置参数；顺带校验取值。
+
+    - 只处理 `{...}` 形状的入参，纯位置参数原样返回（不碰正常调用）；
+    - 缺省值按 CLI 默认补齐（否则「只给 limit」会让 limit 滑进 interval 槽位）；
+    - interval 只认小写 1h/4h/1d，非法值**在边界就拦**并给出可用值
+      （改前是丢给 CLI 报一个不知所云的「无数据」，白烧一轮）。
+    """
+    spec = _POSITIONAL_SPECS.get(skill_name)
+    a = (args or "").strip()
+    if not spec or "{" not in a:
+        return args
+    m = re.match(r"^([A-Za-z][\w-]*)\s*(\{.*\})\s*$", a, re.S)
+    if m:
+        cmd, blob = m.group(1), m.group(2)
+        if cmd not in spec["cmds"]:
+            return args
+    elif a.startswith("{"):
+        cmd, blob = spec["bare"], a
+    else:
+        return args
+    try:
+        obj = json.loads(blob)
+    except Exception:
+        return args
+    if not isinstance(obj, dict):
+        return args
+    low = {str(k).lower(): v for k, v in obj.items()}
+    toks = [cmd]
+    for key, dflt in spec["cmds"][cmd].items():
+        v = low.get(key, dflt)
+        if v is None or v == "":
+            raise SandboxError(
+                f"`{skill_name} {cmd}` 缺少 `{key}` 参数。正确用法：`{skill_name} "
+                f"{cmd} " + " ".join(f"<{k}>" for k in spec["cmds"][cmd]) + "`（位置参数，不要传 JSON）。")
+        if isinstance(v, (list, tuple)):
+            v = ",".join(str(x) for x in v)
+        s = str(v).strip()
+        if key == "interval":
+            s = s.lower()
+            if s not in _INTERVAL_OK:
+                raise SandboxError(
+                    f"`{skill_name}` 不支持 interval={v}（可选 {'/'.join(_INTERVAL_OK)}）。"
+                    f"改用 `{skill_name} {cmd} {low.get('symbol', '<SYMBOL>')} 1h`。")
+        elif key in ("market", "window"):
+            s = s.lower()
+        elif key == "symbol":
+            s = s.upper()
+        toks.append(s)
+    return " ".join(toks)
+
+
 def run_skill_cmd(skill_name: str, args: str = "", timeout: int = 180, max_out: int = 12000) -> dict:
     """执行 skill（复用 skills_client 的智能路由：baw 扩展 / launcher 绕 Windows dispatch / 直跑）。
     超时 180s（coin-report 一次拉 90d K 线+费率+OI+多空+情绪，后端冷缓存/慢代理时 90s 不够）；
@@ -962,7 +1040,8 @@ def run_skill_cmd(skill_name: str, args: str = "", timeout: int = 180, max_out: 
     import skills_client
     sdir = os.path.join(skills_client.AGENTS_DIR, skill_name)
     cli = os.path.join(sdir, "scripts", "cli.mjs")
-    arg_s = (args or "").strip()
+    # v1.7.5：位置参数族技能收到 JSON 对象时先摊平（详见 normalize_skill_args 注释）。
+    arg_s = normalize_skill_args(skill_name, (args or "").strip()).strip()
     try:
         if skill_name in skills_client._BAW_SKILLS:
             # v1.2.11：与 skills_client 一致，baw 调用走 wallet_runtime.baw_invocation() 解析

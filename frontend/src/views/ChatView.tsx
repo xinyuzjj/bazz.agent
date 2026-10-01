@@ -39,10 +39,12 @@ type ChatMsg = {
   id: string; role: "user" | "assistant"; text: string;
   reasoning?: string;
   model?: string;     // 该条回复实际命中的模型（snapshot/model 落库回读）
-  tools?: { name: string; args?: any; ok?: boolean; detail?: string }[];
+  tools?: { name: string; args?: any; ok?: boolean; detail?: string; raw?: string }[];
   // v1.7.4 流式工具输出：当前正在执行的工具名。**独立字段**，不混进 tools ——
   // tools 要与 done.tools **按索引**对齐合并，塞临时项会让整条链错位。
   runningTools?: string[];
+  // v1.7.4：模型的「内心独白型」旁白（过程叙述）—— 折叠展示，不当正文铺开
+  narration?: string[];
   approval?: { id: string; title: string; label: string; action: string; signal?: any };
   clarify?: { questions: { q: string; choices: string[]; recommended?: string }[] };  // v1.4.5 结构化追问选择卡
   persona?: string;   // 群聊里该条回复来自哪个 Agent
@@ -987,6 +989,12 @@ export function ChatView({
         a.runningTools = ev.phase === "start" ? (ev.names ?? []) : [];
         if (ev.phase === "start" && ev.names?.length) pushLog(`TOOL_START > ${ev.names.join(", ")}`);
       }
+      else if (ev.type === "narration") {
+        // v1.7.4：内心独白型旁白（「让我换用 1h 补档…」这类）折叠展示 —— 用户要看结论，
+        // 不想看模型的内心活动；但也不删（有时是有用的进展说明），折起来即可。
+        a.narration = [...(a.narration ?? []), ev.text ?? ""];
+        pushLog(`NARRATION > ${String(ev.text ?? "").slice(0, 50)}`);
+      }
       else if (ev.type === "approval") { a.approval = ev.approval; pushLog(`APPROVAL_REQ > ${ev.approval?.title ?? ev.approval?.label ?? "—"}`); }
       else if (ev.type === "clarify") { a.clarify = ev.clarify; pushLog(`CLARIFY > ${ev.clarify?.questions?.length ?? 0} q`); armClarifyTimer(asstId); }
       else if (ev.type === "done") {
@@ -1699,19 +1707,44 @@ export function ChatView({
                       const failed = tl.ok === false;
                       return (
                         <div key={i}
-                          className={`mb-2 rounded-md border bg-elevated/50 p-2.5 transition-colors ${running ? "border-gold/60 tool-running" : failed ? "border-red/40" : "border-line"}`}>
-                          <div className="flex items-center gap-2">
-                            <I.Cpu size={12} className={`text-gold ${running ? "tool-spin" : ""}`} />
-                            <span className="font-mono text-[11px] text-gold tracking-wider">TOOL::{tl.name}</span>
-                            <span className={`pill ${running ? "pill-gold" : failed ? "pill-red" : "pill-green"}`}>
-                              {running ? t("chat.toolRunning") : failed ? t("chat.failed") : "OK"}
+                          className={`mb-1.5 overflow-hidden rounded-lg border bg-elevated/40 transition-colors ${running ? "border-gold/50" : failed ? "border-red/40" : "border-line/70"}`}>
+                          <div className="flex items-center gap-2 px-2.5 py-1.5">
+                            <span className={`grid h-[18px] w-[18px] shrink-0 place-items-center rounded ${running ? "bg-gold/15 text-gold" : failed ? "bg-red/15 text-red" : "bg-green/15 text-green"}`}>
+                              {running ? <I.Cpu size={10} className="tool-spin" />
+                                : failed ? <I.X size={11} />
+                                : <I.Check size={11} />}
                             </span>
-                            {running && <span className="ml-1 think-dots shrink-0"><span /><span /><span /></span>}
+                            <span className="truncate font-mono text-[11.5px] tracking-wide text-ink">{tl.name}</span>
+                            {running && <span className="think-dots ml-1 shrink-0"><span /><span /><span /></span>}
                           </div>
-                          {tl.detail && <div className="mt-1.5 text-[12px] text-ink-dim font-mono">{tl.detail}</div>}
+                          {tl.detail && (
+                            <div className={`border-t px-2.5 py-1.5 font-mono text-[12px] leading-relaxed ${failed ? "border-red/25 bg-red/[0.04] text-red/90" : "border-line/40 text-ink-dim"}`}>
+                              {tl.detail}
+                            </div>
+                          )}
+                          {!!tl.raw && (
+                            <details className="border-t border-line/40">
+                              <summary className="cursor-pointer select-none px-2.5 py-1 font-mono text-[10.5px] text-ink-mute hover:text-gold">
+                                {t("chat.rawOutput")}
+                              </summary>
+                              <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-all border-t border-line/40 bg-canvas/60 p-2 font-mono text-[11px] leading-relaxed text-ink-dim">{tl.raw}</pre>
+                            </details>
+                          )}
                         </div>
                       );
                     })}
+                    {!!(m.narration?.length) && (
+                      <details className="mb-2 rounded-md border border-line bg-elevated/40 px-2.5 py-2">
+                        <summary className="cursor-pointer select-none font-mono text-[11px] text-ink-mute hover:text-gold">
+                          {t("chat.narration")}
+                        </summary>
+                        <div className="mt-1.5 space-y-1.5">
+                          {m.narration.map((s, i) => (
+                            <div key={i} className="whitespace-pre-wrap text-[12.5px] leading-relaxed text-ink-dim">{s}</div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
                     <div className="text-[14px] text-ink leading-relaxed">
                       {m.pending && !m.text && !m.reasoning ? (
                         // 完全空 → 思考中：跳动点
