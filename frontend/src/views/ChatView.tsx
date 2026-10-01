@@ -40,6 +40,9 @@ type ChatMsg = {
   reasoning?: string;
   model?: string;     // 该条回复实际命中的模型（snapshot/model 落库回读）
   tools?: { name: string; args?: any; ok?: boolean; detail?: string }[];
+  // v1.7.4 流式工具输出：当前正在执行的工具名。**独立字段**，不混进 tools ——
+  // tools 要与 done.tools **按索引**对齐合并，塞临时项会让整条链错位。
+  runningTools?: string[];
   approval?: { id: string; title: string; label: string; action: string; signal?: any };
   clarify?: { questions: { q: string; choices: string[]; recommended?: string }[] };  // v1.4.5 结构化追问选择卡
   persona?: string;   // 群聊里该条回复来自哪个 Agent
@@ -343,6 +346,20 @@ export function ChatView({
       const r: any = await api.newConversation();
       setMessages([]); pushLog(`NEW > ${r?.id?.slice(0, 8)}`);
       setConvId(r.id ?? null); refreshList();
+    } catch (e: any) { pushToast(t("common.opFailed"), String(e?.message ?? e).slice(0, 120), "bad"); }
+  };
+  // v1.7.4 会话分支（借鉴 Hermes 的血统设计）：从这一轮**分叉**出新会话 ——
+  // 新会话复制该点之前的上下文，可以换个方向接着聊，而不污染原来那条线。
+  const forkHere = async (fromIndex: number) => {
+    if (!convId) return;
+    try {
+      const r: any = await api.forkConversation(convId, fromIndex);
+      if (r?.id) {
+        refreshList();
+        setConvId(r.id);
+        pushLog(`FORK > ${String(r.id).slice(0, 8)} (${r.copied ?? 0} 条)`);
+        pushToast(t("chat.forked"), t("chat.forkedHint", { n: String(r.copied ?? 0) }), "ok");
+      }
     } catch (e: any) { pushToast(t("common.opFailed"), String(e?.message ?? e).slice(0, 120), "bad"); }
   };
   const delConv = async (cid: string) => {
@@ -760,7 +777,15 @@ export function ChatView({
   const send = async (text?: string, opts?: { regenerate?: boolean; editText?: string; editId?: string | null }) => {
     const isRegen = !!opts?.regenerate || !!opts?.editText;
     let content = isRegen ? (opts?.editText ?? "") : (text ?? input).trim();
-    if (streaming || uploading) return;
+    if (uploading) return;
+    if (streaming) {
+      // v1.7.4 改向（借鉴 Hermes 的 redirect）：生成中直接发新消息 = **自动中断当前流并接着往下**，
+      // 一步完成。改前这里直接 return —— 用户必须手动点 Stop 再发，也看不出中断内容会保留。
+      // 后端在断连时会把已产出部分落库并打上「用户中断」标记，下一轮模型因此知道讲到哪了。
+      activeReqRef.current += 1;
+      abortRef.current?.abort();
+      await new Promise((r) => setTimeout(r, 180)); // 等后端落库，别让新消息抢在它前面
+    }
     if (!isRegen && !content && attachments.length === 0) return;
     cancelClarifyTimer(); // 用户主动发消息 = 已越过追问（v1.4.5 clarify 超时取消）
     const clearAttachments = () => setAttachments([]);
@@ -954,6 +979,13 @@ export function ChatView({
         };
         a.tools = [...(a.tools ?? []), tool];
         pushLog(`TOOL > ${tool.name}${tool.ok ? " OK" : " …"}`);
+      }
+      else if (ev.type === "tool_progress") {
+        // v1.7.4 流式工具输出：工具**执行期间**先推「在跑哪些」，结束清空。
+        // 改前后端是 pool.map 阻塞到整批跑完 → 跑几十秒的 run_skill 期间界面毫无反应，
+        // 用户分不清「在跑」还是「卡死了」。
+        a.runningTools = ev.phase === "start" ? (ev.names ?? []) : [];
+        if (ev.phase === "start" && ev.names?.length) pushLog(`TOOL_START > ${ev.names.join(", ")}`);
       }
       else if (ev.type === "approval") { a.approval = ev.approval; pushLog(`APPROVAL_REQ > ${ev.approval?.title ?? ev.approval?.label ?? "—"}`); }
       else if (ev.type === "clarify") { a.clarify = ev.clarify; pushLog(`CLARIFY > ${ev.clarify?.questions?.length ?? 0} q`); armClarifyTimer(asstId); }
@@ -1588,7 +1620,7 @@ export function ChatView({
             </div>
           ) : (
             <div className="p-4 space-y-3">
-              {messages.map((m) => {
+              {messages.map((m, mi) => {
                 if ((m as any).note) {
                   return (
                     <div key={m.id} className="py-0.5 text-center msg-in">
@@ -1617,6 +1649,10 @@ export function ChatView({
                             {m.text && !m.pending && (
                               <button onClick={() => copyText(m.text)} title={t("chat.copyReply")}
                                 className="p-0.5 rounded text-ink-mute hover:text-gold hover:bg-elevated transition-colors"><I.Copy size={11} /></button>
+                            )}
+                            {m.text && !m.pending && (
+                              <button onClick={() => forkHere(mi + 1)} title={t("chat.forkHere")}
+                                className="p-0.5 rounded text-ink-mute hover:text-gold hover:bg-elevated transition-colors"><span className="font-mono text-[10px]">⑂</span></button>
                             )}
                           </span>
                         </div>
@@ -1650,6 +1686,14 @@ export function ChatView({
                         </details>
                       );
                     })()}
+                    {!!(m.runningTools?.length) && (
+                      <div className="mb-2 flex items-center gap-2 rounded-md border border-gold/40 bg-gold/5 px-2.5 py-2">
+                        <I.Cpu size={12} className="text-gold tool-spin" />
+                        <span className="font-mono text-[11px] text-gold tracking-wider">{t("chat.toolExecuting")}</span>
+                        <span className="font-mono text-[11.5px] text-ink-dim truncate">{m.runningTools.join(" · ")}</span>
+                        <span className="think-dots shrink-0"><span /><span /><span /></span>
+                      </div>
+                    )}
                     {(m.tools ?? []).map((tl, i) => {
                       const running = tl.ok === undefined || tl.ok === null;
                       const failed = tl.ok === false;

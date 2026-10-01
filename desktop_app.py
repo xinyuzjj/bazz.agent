@@ -633,11 +633,18 @@ async def chat_stream(req: Request):
             except Exception:
                 history = None
 
-        def _persist():
-            """落库：正文 + 思考链 + 实际命中的 model（只在有内容时写，避免空泡）。"""
+        def _persist(interrupted: bool = False):
+            """落库：正文 + 思考链 + 实际命中的 model（只在有内容时写，避免空泡）。
+
+            v1.7.4（中断改向）：`interrupted=True` 时在正文尾部**显式标记**这是被打断的回复。
+            只落库不标记，模型下一轮看不出「上次是讲到一半被喊停」——会把半截内容
+            当成完整结论接着往下讲。标上之后它才知道该沿这条线继续，还是推倒重来。
+            """
             reply = final.get("reply") or "".join(text_acc)
             if not str(reply).strip():
                 return
+            if interrupted:
+                reply = f"{reply}\n\n⏹ 用户中断（以上为已产出的部分）"
             try:
                 state.add_message(conv_id, "assistant", reply, tools=final.get("tools", []),
                                   reasoning="\n".join(reasoning_acc)[:6000],
@@ -686,8 +693,9 @@ async def chat_stream(req: Request):
                 if ev.get("type") == "done":
                     final = ev
         except GeneratorExit:
-            # 客户端中途断开（关窗/切会话）：不可再 yield，把已生成内容落库后原样上抛
-            _persist()
+            # 客户端中途断开（关窗/切会话/用户点 Stop）：不可再 yield，把已生成内容落库后原样上抛。
+            # v1.7.4：带上 interrupted 标记 —— 让下一轮的模型知道「这条回复是被打断的」。
+            _persist(interrupted=True)
             raise
         except Exception as e:
             # v1.3.6：流中异常不再静默断死 —— 推 error 事件（前端 ChatView 已有对应渲染）
@@ -729,6 +737,61 @@ async def rename_conv(cid: str, req: Request):
         return JSONResponse({"error": "not found"}, status_code=404)
     state.touch_conversation(cid, title=title)
     return {"ok": True, "id": cid, "title": title}
+
+
+@app.post("/api/conversations/{cid}/fork")
+async def fork_conv(cid: str, req: Request):
+    """v1.7.4 会话分支：从第 N 条消息处**分叉**出新会话。
+
+    新会话复制该点之前的上下文并记录血统（parent_id / fork_from），
+    于是可以带着当时的上下文换一个方向接着聊，而不污染原来那条线。
+    body: {"from_index": <保留前 N 条，0=整条复制>, "title": <可选>}
+    """
+    try:
+        b = await req.json()
+    except Exception:
+        b = {}
+    r = state.fork_conversation(cid, from_index=int(b.get("from_index") or 0),
+                                title=b.get("title") or "")
+    if not r.get("ok"):
+        return JSONResponse({"error": r.get("error") or "fork failed"}, status_code=404)
+    return r
+
+
+@app.get("/api/skill-drafts")
+def list_skill_drafts():
+    """v1.7.4 技能学习：列出**待采纳**的技能草案。
+
+    默认是关闭的（`settings.skill_learning_enabled=0`），所以通常为空。
+    即使开启，草案也只落在 `.agents/skills/_drafts/` —— 正式技能目录只有用户
+    显式采纳才会被写入。
+    """
+    try:
+        import skill_learning
+        return {"ok": True, "enabled": skill_learning.enabled(),
+                "drafts": skill_learning.list_drafts()}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "drafts": []}
+
+
+@app.post("/api/skill-drafts/{name}/adopt")
+def adopt_skill_draft(name: str):
+    """采纳草案 → 转正到正式技能目录。"""
+    try:
+        import skill_learning
+        return skill_learning.adopt_draft(name)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/skill-drafts/{name}/discard")
+def discard_skill_draft(name: str):
+    """丢弃草案。"""
+    try:
+        import skill_learning
+        return skill_learning.discard_draft(name)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 @app.get("/api/conversations/search")

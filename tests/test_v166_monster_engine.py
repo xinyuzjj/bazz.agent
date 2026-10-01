@@ -457,14 +457,18 @@ def test_wiring():
     """路由提示词 / llm 工具 schema / 技能发现 / 前端文案 —— 一处漏了就等于没接上。"""
     print("\n=== ⑩ 接线 ===")
     ac = _src("agent_core.py")
+    llm_src = _src("llm.py")
     check("agent 提示词提到 square-monster-post", "square-monster-post" in ac)
-    check("agent 提示词要求先按标的分流（代币 vs 妖币）", "代币 vs 妖币" in ac)
-    # v1.7.3：分流不再靠 LLM 凭印象 —— 必须先调 radar_lookup 查雷达名单
-    check("agent 提示词强制发帖前先调 radar_lookup 查名单",
-          "radar_lookup" in ac and "不许凭印象判断" in ac)
-    check("agent 提示词写清「绝不可互相替代」",
+    # v1.7.4：逐工具用法已搬进各工具的 schema.description（提示词只留**跨工具纪律**）。
+    # 所以这几条断言跟着**信息**走，而不是死守旧位置 —— 否则重构一次就误报一次。
+    check("代币/妖币分流作为跨工具纪律留在提示词",
+          "radar_lookup" in ac and "square-monster-post" in ac and "square-rich-post" in ac)
+    check("「先查名单、不要凭印象判断」在 radar_lookup 的 schema 里",
+          "不要凭印象判断" in llm_src)
+    check("「绝不可互相替代」留在提示词（跨工具纪律）",
           "绝不可互相替代" in ac or "两者绝不可互相替代" in ac)
-    check("agent 提示词有 audit 模式说明", "mode='audit'" in ac)
+    check("audit 模式说明在 meme_watch 的 schema 里",
+          "audit" in llm_src and "判据体检" in llm_src)
     check("agent 提示词里有 _run_radar_audit 实现", "_run_radar_audit" in ac)
 
     llm = _src("llm.py")

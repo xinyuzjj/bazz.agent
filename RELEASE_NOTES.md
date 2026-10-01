@@ -1,6 +1,123 @@
-# BAZZ.AGENT v1.7.3
+# BAZZ.AGENT v1.7.4
 
 **Binance Agent OS 专属 AI 交易桌面端（Agent OS Alpha Scout · Track A）**
+
+## 🆕 v1.7.4 更新要点（agent 体验层十项改造：对标 pi 与 Hermes Agent）
+
+**这一版不是加功能，是把 agent 的底层行为重做了一遍。** 起因是一句很笼统的反馈 ——
+「输出、聊天、沙盒都不够好」。为了不凭印象动手，先做了一轮对标研究：把 Hermes Agent
+（`NousResearch/hermes-agent`，源码在本机）的关键机制逐行核实，又把 pi（`earendil-works/pi`）
+那份「不做什么」清单拉出来对照，最后列了十项改造、**按依赖顺序**落地
+（1 依赖 3、3 依赖 5，所以顺序是 4 → 2 → 5 → 3 → 1 → 6 → 7 → 8 → 9 → 10）。
+
+### ① 提示词从「一个 95 行 f-string」拆成四块拼装
+
+改前 `_system_prompt` 是一个 95 行的巨型 f-string（函数体自身就有 7518 字符），
+修 bug 的方式是「往提示词里再加一条规则」。现在按 Hermes 的分层做法拆开：
+
+| 块 | 内容 |
+|---|---|
+| `SOUL` | 人格（本来就是外置的 `SOUL.md`） |
+| `_IDENTITY` | 身份声明 |
+| `_TOOL_DOCTRINE` | **跨工具**纪律 6 条（只讲「工具之间怎么选、哪些路不许走」） |
+| `_BEHAVIOR_RULES` | 行为纪律 9 条 |
+
+拼装后提示词 **zh 3052 字 / en 3861 字**。
+
+### ② 错误 → 人话 + 行动建议 + 脱敏
+
+新增 `src/error_digest.py`：沿 `__cause__` / `__context__` 链回溯，用 marker 元组分 8 类
+（sandbox / localbackend / network / timeout / ratelimit / auth / model / unknown），
+每类给「出了什么事 + 为什么 + 该怎么办」，并做脱敏（`sk-` / Bearer / 长 hex）。
+接入 MCP 调用失败、工具执行失败、子任务失败与 4 处沙盒拦截。
+
+**其中最关键的一条是「沙盒拦截」与「网络不通」必须分开** —— 混在一起会把用户引去折腾代理池，
+而这正是改造前真实发生过的误诊。
+
+### ③ 工具用法搬进 schema，不再和提示词各写一份
+
+核实后发现 `llm.py` 的 tool description 本来就写得很足（`run_skill` 1685 字、
+`schedule_task` 713 字、`meme_watch` 570 字），提示词里那张路由表很多是**重复抄写**。
+真正「只在提示词里」的是 7 个技能（news-sentiment / portfolio-review / query-token-audit /
+query-address-info / binance-tokenized-securities-info / binance-trading-signal /
+binance-sports-ai-analyzer），加上发文形态规则与币种识别 —— 全部搬进 `run_skill` 的说明
+（1685 → 2873 字），提示词里的路由表整段删除。
+
+### ④ 响应体加字节上限
+
+新增 `src/net_guard.py`。改前 `r.text[:200]` 有个隐蔽前提：**`r.text` 会先把整个 body
+读进内存并解码**，`[:200]` 才生效 —— 而错误响应体往往是网关 / Cloudflare 的巨型 HTML，
+于是卡顿偏偏发生在「本来就已经出错」的路径上。现在先按字节截断再解码、流式响应走有界读，
+且**任何异常都吞掉返回空串**（诊断路径上二次抛错最伤）。替换 9 处调用点。
+
+### ⑤ 工具注册表（唯一动地基的一次）
+
+`_dispatch_tool` 里那条 **110 行的 `if name == "..."` 链整段删除**，改成查表；
+24 个工具改为在文件末尾**声明一次**（name / handler / toolset / emoji / approval / summary）。
+对齐结果：注册表 24 个工具 == `llm.py` 的 24 份 schema，**双向差集都为空**；
+审批清单 6 个与 `_dispatch_is_approval_needed` **逐项一致**（改前这是两处各写一份的）。
+
+### ⑥ 跨会话召回：每轮自动把相关历史捞进上下文
+
+新增 `src/recall.py`。改前只有「LLM 想起来才会调 `search_history`」这一条路，
+而模型**不知道自己不知道什么** —— 用户说「上次那个币」，它不会想到去翻历史。
+现在每轮用当前消息自动检索历史片段并注入（带「这是历史召回、不是本轮」的显式标注）。
+
+**这里有意没照抄 Hermes 的 FTS5**：本机 sqlite 支持 fts5/trigram，但 **trigram 只索引
+≥3 字符**（实测中文两字词 `MATCH '广场'` 返回空）；要可用得自己把正文做 bigram 展开
+（Hermes 靠可加载扩展，而 Python 内置 sqlite3 不允许加载扩展），存储翻倍且变形逻辑要长期维护。
+这个数据量下 LIKE 扫全表只要几十毫秒、对中文 100% 准确。**真正缺的不是索引速度，是「自动想起来」**。
+
+### ⑦ 流式工具输出：不再等整批跑完
+
+改前用 `pool.map`，它**阻塞到整批工具跑完**才返回 —— 用户面对一个要跑几十秒的 `run_skill`
+时界面毫无反应，分不清「在跑」还是「卡死了」。现在 `as_completed` 边完成边回传，
+并推独立的 `tool_progress` 事件让前端显示「正在执行：A、B」。
+
+⚠️ 两条硬约束：结果要能**还原原序**（下游 `zip` 对齐依赖它）；**不能多发 `tool` 事件**
+（前端拿 `done.tools` **按索引**合并卡片，多发一条整链错位）。
+
+### ⑧ 会话分支 / 血统
+
+`conversations` 表新增 `parent_id` / `fork_from`（含老库自动补列迁移），
+`fork_conversation(cid, from_index)` 复制该点之前的消息并记录血统，**不污染父会话**；
+前端在消息上加 ⑂ 入口，分叉后自动切到新会话。这正是 Hermes / pi 都把「会话可分支」
+当基础能力的原因：同一个分析换个方向验证，不该只能靠「重开一个对话再复述一遍」。
+
+### ⑨ 技能自建 / 自改进（默认关闭）
+
+新增 `src/skill_learning.py`：后台线程每 8 轮判断本轮有没有产生「下次还该这么做」的技巧，
+有就生成技能草案。**这里有意改了两处 Hermes 做法**：① **默认关闭**
+（`settings.skill_learning_enabled=0`）—— 自动建技能等于悄悄改变 agent 的能力边界，
+交易场景必须先告知；② **草案不直接落正式技能目录**，先写 `.agents/skills/_drafts/`，
+**用户采纳才转正**。技能名走正则白名单防路径穿越，同名拒绝覆盖。
+
+### ⑩ 中断改向
+
+评估后发现大部分已经具备：前端早有 Stop（AbortController），后端自更早版本起就在
+`GeneratorExit` 时落库（我先前读到的那句「后端断连后不再落库」注释是**过时的**）。
+真正缺的只有两件：① 落库**不带标记** → 现在 `_persist(interrupted=True)` 在正文尾部
+追加「⏹ 用户中断」，否则模型看不出上次是讲到一半被喊停、会把半截内容当成完整结论；
+② 生成中**不能直接发新消息** → 现在先中断再继续，**一步完成改向**。
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| 全量离线套件 | **29 个，0 失败** |
+| 新增护栏 | `tests/test_v174_agent_ux.py`，覆盖 ①~⑩ 十组 |
+| 隔离端到端 | `_e2e_v174_recall.py` / `_e2e_v174_fork.py` / `_e2e_v174_skill.py` **全 PASS** |
+| 前端类型检查 | `tsc --noEmit` 干净 |
+| 前端构建 | `vite build` 成功 |
+
+### 两处已知局限（本版未做）
+
+1. **技能草案没有 UI 入口** —— 后端能力齐全（列表 / 采纳 / 丢弃路由都有），前端面板未接，
+   查看需调 `GET /api/skill-drafts`。
+2. **流式粒度是「按工具完成」**，不是「工具输出逐行流」—— `run_command` 跑长命令时
+   仍是一次性出结果（那需要改 subprocess 的读取方式）。
+
+**未触碰**：止损 10% / 10x 杠杆 / 任何引擎判据阈值。
 
 ## 🆕 v1.7.3 更新要点（妖币雷达四修 + 广场稿两轮改稿）
 

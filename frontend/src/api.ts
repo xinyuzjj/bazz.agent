@@ -66,6 +66,9 @@ export const api = {
     jpost("/conversations/" + encodeURIComponent(id) + "/archive", { archived }),
   renameConversation: (id: string, title: string) =>
     jpost("/conversations/" + encodeURIComponent(id) + "/rename", { title }),
+  // v1.7.4 会话分支：从第 N 条消息处分叉出新会话（复制该点之前的上下文 + 记录血统）
+  forkConversation: (id: string, fromIndex = 0, title = "") =>
+    jpost("/conversations/" + encodeURIComponent(id) + "/fork", { from_index: fromIndex, title }),
   searchConversations: (q: string) =>
     jget("/conversations/search?q=" + encodeURIComponent(q)),
   workspaceFiles: (path: string = "") =>

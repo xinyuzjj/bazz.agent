@@ -8,6 +8,8 @@ from typing import Optional
 import requests
 from dotenv import load_dotenv
 
+import net_guard  # 响应体字节上限：错误体可能是网关的巨型 HTML，别全量读进内存
+
 load_dotenv()
 
 BASE_URL = "https://api.binance.com"
@@ -63,7 +65,7 @@ def place_limit_order(symbol: str, side: str, quantity: str,
                       headers={"X-MBX-APIKEY": API_KEY}, timeout=10)
     if r.status_code == 200:
         return r.json()
-    return {"error": r.text, "status_code": r.status_code}
+    return {"error": net_guard.bounded_text(r), "status_code": r.status_code}
 
 
 def place_oco_order(symbol: str, side: str, quantity: str,

@@ -20,6 +20,8 @@ import hmac
 import hashlib
 import threading
 from urllib.parse import urlencode, quote
+
+import net_guard  # 响应体字节上限：错误体可能是网关的巨型 HTML，别全量读进内存
 from typing import Optional, Tuple
 
 import requests
@@ -145,7 +147,7 @@ def _get_signed(path: str, params: dict, api_key: str, secret: str) -> dict:
             body_msg = str(e.get("msg") or e.get("message") or "")
             body_code = e.get("code")
         except Exception:
-            body_msg = req.text[:200]
+            body_msg = net_guard.snippet(req)
         msg = body_msg or f"HTTP {req.status_code}"
         # 错误归因（区分三种场景，给前端可操作提示）：
         #   -2014 / "API-key format invalid" → Key 不是 HMAC 格式（可能 Ed25519/BX- 或抄错）
@@ -179,7 +181,7 @@ def _signed_request(method: str, path: str, params: dict, api_key: str,
             body_msg = str(e.get("msg") or e.get("message") or "")
             body_code = e.get("code")
         except Exception:
-            body_msg = req.text[:200]
+            body_msg = net_guard.snippet(req)
         msg = body_msg or f"HTTP {req.status_code}"
         if "API-key format invalid" in msg or body_code == -2014:
             raise ValueError("KEY_FORMAT::API-key format invalid（-2014）")
@@ -339,9 +341,9 @@ def place_order(symbol: str, side: str, quantity: str, price: str,
         return {"status": "ok", "order": req.json()}
     msg = ""
     try:
-        msg = str(req.json().get("msg") or req.text[:200])
+        msg = str(req.json().get("msg") or net_guard.snippet(req))
     except Exception:
-        msg = req.text[:200]
+        msg = net_guard.snippet(req)
     return {"status": "error", "code": f"http_{req.status_code}", "message": msg}
 
 

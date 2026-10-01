@@ -21,6 +21,8 @@ import re
 import requests
 from typing import Optional, Iterator, Dict, Any, List
 
+import net_guard  # 响应体字节上限（错误路径别把巨型 body 全量读进内存）
+
 try:
     from state import get_setting
 except Exception:
@@ -437,17 +439,17 @@ def _post(payload: dict, cfg: dict, timeout: int):
                       json=payload, timeout=timeout)
     # 状态码错：直接抛，requests.HTTPError 包含状态码
     if r.status_code >= 400:
-        snippet = r.text[:200].replace("\n", " ").strip()
+        snippet = net_guard.snippet(r)
         raise RuntimeError(f"HTTP {r.status_code} · {r.headers.get('Content-Type','?').split(';')[0]} · {snippet[:160]}")
     # 内容类型：非 JSON（如 Cloudflare challenge HTML）抛错，含真实摘要
     ctype = (r.headers.get("Content-Type") or "").lower()
     if "json" not in ctype:
-        snippet = r.text[:200].replace("\n", " ").strip()
+        snippet = net_guard.snippet(r)
         raise RuntimeError(f"非 JSON 响应（Content-Type={ctype.split(';')[0]}）；疑似被网关/Cloudflare 拦截 · {snippet[:160]}")
     try:
         return r.json()
     except Exception as e:
-        snippet = r.text[:200].replace("\n", " ").strip()
+        snippet = net_guard.snippet(r)
         raise RuntimeError(f"JSON 解析失败：{type(e).__name__} · {snippet[:160]}")
 
 
@@ -785,7 +787,19 @@ TOOLS: List[Dict[str, Any]] = [
                             "**发币安广场（square-post）：** args 直接拼 `node scripts/cli.mjs <子命令> <JSON>`，常用子命令 text(短文)、article(长文 + 标题)、image(图文,<=4 张)、video(视频)。长文/多段落正文必须先写入工作区文件再传 `--text-file <路径>`（多段落文本直接拼进 args 会触发「命令解析失败」），示例：`text --text-file workspace/draft.md --title 标题`。前置 BINANCE_SQUARE_OPENAPI_KEY（已配置则自动读取），缺时去创作者中心 https://www.binance.com/square/creator-center/home 生成。\n"
                             "**富媒体行情文（square-rich-post，优先用它发文）：** args='<SYMBOL> [spot] --publish'——自动取 90d K线/费率/OI/多空比/恐惧贪婪，画深色封面图与 24h 分时图，组稿含 $cashtag/#hashtag，直接发布带封面文章。示例：`RAYUSDT --publish`。想先预览再发就去掉 --publish，改稿后 `RAYUSDT --publish --reuse <目录>` 重发。\n"
                             "⚠️ 不要用 run_command 直接调 .agents/skills/X/scripts/cli.mjs——这是已装技能的入口，应当走本 run_skill 工具（它会代你处理 token 化/确认/路径/超时）。\n"
-                            "⚠️ **不要把发广场映射成 mcp_call**：MCP binance 网关不含发广场端点；发广场只走本 run_skill。"),
+                            "⚠️ **不要把发广场映射成 mcp_call**：MCP binance 网关不含发广场端点；发广场只走本 run_skill。\n"
+                            "**妖币剧本文（square-monster-post）：** args='<SYMBOL> [futures|spot] --publish'——只给**妖币雷达视野内**的币用（先调 radar_lookup 确认在不在名单）。不在名单它会明确报错并提示改用 square-rich-post，**不要因为一个技能报错就换另一个硬发**。\n"
+                            "**发文形态**：默认**短贴多图**（封面 + 走势图直接显示在正文里）；用户指定要长文才加 `--article`（长文 API 不支持正文插图）。**严禁绕过它自己手写简版文直接 square-post 发**——那会丢分析推理链 / 仓位算法 / GitHub 链接 / 封面。\n"
+                            "**其余已装技能（按需直调；记不准子命令就传空 args，本工具会返回用法指引）：**\n"
+                            "  · news-sentiment：args='latest' | 'coin <SYM>' | 'sentiment' —— 新闻快讯 / 情绪 / 舆论 / 利好利空\n"
+                            "  · portfolio-review：args='<子命令> [参数]' —— 资产快照 / 复盘 / 周报 / 成交统计 / 盈亏\n"
+                            "  · query-token-audit：args='<子命令> <JSON>' —— 代币安全审计 / 貔貅 / 蜜罐 /『这个币安全吗』\n"
+                            "  · query-address-info：args='<子命令> <JSON>' —— 某地址持有什么币\n"
+                            "  · query-token-info：args='<子命令> <JSON>' —— 按名称 / 合约地址搜链上代币（币安现货合约行情里查不到的 Alpha / 链上币走它）\n"
+                            "  · binance-tokenized-securities-info：args='<子命令> <JSON>' —— 代币化美股 / RWA 股票行情\n"
+                            "  · binance-trading-signal：args='<子命令> <JSON>' —— 合约逐笔聪明钱信号（BSC/Solana 买卖事件）\n"
+                            "  · binance-sports-ai-analyzer：args='<子命令> <JSON>' —— 世界杯 / AI 赛事预测\n"
+                            "**币种识别 — 严禁猜交易对**：用户用中文名 / 展示名 / 别名指代币种（如『牛市』『未来』『小狗币』）→ 把『<名字>USDT』原样传；若 coin-report / market-data 对该 SYMBOL 报错（说明是 Alpha / 链上代币，不在币安现货合约行情内）→ **绝不许换成别的交易对来猜**：改用 query-token-info 分析，或用 clarify 问用户要英文 ticker / 合约地址。宁可承认不认识，也不要张冠李戴。"),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -942,7 +956,7 @@ def test_connection(base_url: str = "", api_key: str = "", model: str = "", prov
                 # 在目录中 → 直接可用
                 return {"ok": True, "model_tried": model, "model_hint": model, "count": len(ids)}
         # 非 JSON / 非 200 / 不在目录：落到第二阶段验证，但先记录第一阶段响应
-        first = (f"阶段1 /models {r.status_code} {ctype.split(';')[0]} · " + (r.text[:200].replace('\n', ' ').strip() or "no body"))[:240]
+        first = (f"阶段1 /models {r.status_code} {ctype.split(';')[0]} · " + (net_guard.snippet(r) or "no body"))[:240]
     except Exception as e:
         first = f"阶段1 /models 异常：{type(e).__name__}: {str(e)[:200]}"
     # 2) 试一次极小补全（部分 provider 无 /models，或 model 是目录外的可用别名，

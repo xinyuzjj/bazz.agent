@@ -66,6 +66,8 @@ def _init():
         members_json TEXT DEFAULT '',
         provider_snapshot TEXT DEFAULT '{}',
         ctx_summary TEXT DEFAULT '',
+        parent_id TEXT DEFAULT '',
+        fork_from INTEGER DEFAULT 0,
         created_at REAL NOT NULL,
         updated_at REAL NOT NULL
     );
@@ -286,6 +288,14 @@ def _init():
         # v1.4.2 持久化滚动摘要：长对话旧历史压缩产物落库，跨轮复用不重烧
         c.execute("ALTER TABLE conversations ADD COLUMN ctx_summary TEXT DEFAULT ''")
         c.commit()
+    if ccols and "parent_id" not in ccols:
+        # v1.7.4 会话分支（借鉴 Hermes 的 sessions.parent_session_id 血统）：
+        # 记录「这个会话是从哪分出来的」，便于对比同一段分析的不同走向。
+        c.execute("ALTER TABLE conversations ADD COLUMN parent_id TEXT DEFAULT ''")
+        c.commit()
+    if ccols and "fork_from" not in ccols:
+        c.execute("ALTER TABLE conversations ADD COLUMN fork_from INTEGER DEFAULT 0")
+        c.commit()
     mcols = {r[1] for r in c.execute("PRAGMA table_info(messages)").fetchall()}
     if mcols and "reasoning" not in mcols:
         c.execute("ALTER TABLE messages ADD COLUMN reasoning TEXT DEFAULT ''")
@@ -326,6 +336,49 @@ def new_conversation(title="新对话", persona="", provider_snapshot=None, kind
     return cid
 
 
+@_serialized
+def fork_conversation(cid: str, from_index: int = 0, title: str = "") -> dict:
+    """从会话 `cid` 的**第 N 条消息处**分叉出新会话（v1.7.4，借鉴 Hermes 的血统设计）。
+
+    新会话会**复制父会话在该点之前的全部消息**，并记住「从哪来、从第几条分叉」——
+    于是它能带着当时的上下文往另一个方向接着聊，而**不污染原来那条线**。
+    这正是 Hermes / pi 都把「会话可分支」当基础能力的原因：同一个分析换个方向验证，
+    不该只能靠「重新开一个对话、再把上下文手动复述一遍」。
+
+    `from_index` 语义：**保留前 N 条**；传 0 或缺省 = 整条复制（等价于「另存一份」）。
+    """
+    src = get_conversation(cid)
+    if not src:
+        return {"ok": False, "error": "源会话不存在"}
+    msgs = get_messages(cid)
+    n = max(0, int(from_index or 0))
+    keep = msgs[:n] if n > 0 else msgs
+    base_title = (title or "").strip() or f"{src.get('title') or '对话'} · 分叉"
+    new_id = new_conversation(title=base_title[:60], persona=src.get("persona") or "",
+                              provider_snapshot=src.get("provider_snapshot") or {},
+                              kind=src.get("kind") or "dm",
+                              members=src.get("members") or [])
+    c = _conn_get()
+    c.execute("UPDATE conversations SET parent_id=?, fork_from=? WHERE id=?",
+              (cid, len(keep), new_id))
+    now = time.time()
+    for m in keep:
+        try:
+            c.execute(
+                "INSERT INTO messages (id,conv_id,role,content,tools_json,data_json,reasoning,model,created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                (_uid(), new_id, m.get("role") or "user", m.get("content") or "",
+                 json.dumps(m.get("tools") or [], ensure_ascii=False),
+                 json.dumps({"persona": m.get("persona")} if m.get("persona") else {},
+                            ensure_ascii=False),
+                 m.get("reasoning") or "", m.get("model") or "", now))
+        except Exception:
+            continue
+    c.commit()
+    return {"ok": True, "id": new_id, "copied": len(keep), "title": base_title[:60],
+            "parent_id": cid, "fork_from": len(keep)}
+
+
 def _snap_of(r):
     try:
         return json.loads(r["provider_snapshot"] or "{}")
@@ -355,7 +408,7 @@ def _conv_out(r):
 
 
 def list_conversations(include_archived: bool = False):
-    sql = ("SELECT id,title,persona,kind,members_json,provider_snapshot,archived,created_at,updated_at "
+    sql = ("SELECT id,title,persona,kind,members_json,provider_snapshot,archived,parent_id,fork_from,created_at,updated_at "
            "FROM conversations")
     if not include_archived:
         sql += " WHERE COALESCE(archived,0)=0"
@@ -373,7 +426,8 @@ def list_conversations(include_archived: bool = False):
 
 def get_conversation(cid):
     r = _conn_get().execute(
-        "SELECT id,title,persona,kind,members_json,provider_snapshot,created_at,updated_at FROM conversations WHERE id=?", (cid,)).fetchone()
+        "SELECT id,title,persona,kind,members_json,provider_snapshot,parent_id,fork_from,"
+        "created_at,updated_at FROM conversations WHERE id=?", (cid,)).fetchone()
     return _conv_out(r) if r else None
 
 
@@ -417,7 +471,7 @@ def search_conversations(q, limit=30):
     out = []
     for cid, h in hits.items():
         r = c.execute(
-            "SELECT id,title,persona,kind,members_json,provider_snapshot,archived,created_at,updated_at "
+            "SELECT id,title,persona,kind,members_json,provider_snapshot,archived,parent_id,fork_from,created_at,updated_at "
             "FROM conversations WHERE id=?", (cid,)).fetchone()
         if not r or (r["kind"] or "dm") == "room":
             continue

@@ -16,7 +16,12 @@ import json
 import hashlib
 import threading
 from typing import Optional, Iterator, Dict, Any
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import error_digest  # 错误 → 人话 + 行动建议 + 脱敏（别再把裸异常甩给用户）
+import tool_registry  # 工具注册表：清单只声明一次，dispatch 只查表
+import recall  # 跨会话召回：每轮自动把相关历史片段捞进上下文
+import skill_learning  # 技能自建/自改进：后台识别可固化技巧，草案待采纳
 
 # ---------- tool dict normalization ----------
 def _ok_status(t: dict) -> bool:
@@ -143,7 +148,7 @@ def _run_delegate(args: dict) -> Dict[str, Any]:
                         acc["reply"] += "\n（子任务发起追问但无人应答，已终止。）"
                         break
         except Exception as e:
-            acc["reply"] = f"子任务异常：{type(e).__name__}: {str(e)[:200]}"
+            acc["reply"] = error_digest.humanize(e, prefix="⚠️ 子任务执行失败。")
         summary = (acc["reply"] or acc["text"] or "（无输出）").strip()[:DELEGATE_SUMMARY_BUDGET]
         results[idx] = {"name": t["name"], "summary": summary,
                         "ok": not summary.startswith("子任务异常")}
@@ -361,96 +366,69 @@ def _lang(locale: str = None) -> str:
     return "en" if locale and str(locale).lower().startswith("en") else "zh"
 
 
+# ---------------- 系统提示词分块（v1.7.4） ----------------
+# 借鉴 Hermes `agent/system_prompt.py` 的分层组装：人格 / 身份 / 工具纪律 / 行为纪律 / 动态上下文，
+# 每块独立、可单独改，最后 join。
+#
+# ⚠️ **逐工具的「怎么用、什么时候用」不写在这里** —— 那属于各工具的 `schema.description`
+# （schema 随每次请求发给模型，模型一样看得到）。在这里再抄一遍只会产生**两份真相**：
+# 改一处忘一处，模型行为就对不上了。这里只留**跨工具**的选择规则与禁区。
+
+_IDENTITY = ("你是 Binance Agent OS 的中文交易助手(BAZZ Agent)。\n"
+             "你拥有一组工具（function calling），用它们完成用户的真实请求。")
+
+# 跨工具纪律：只写「工具之间怎么选、哪些路不许走」——这类规则不属于任何单个工具
+_TOOL_DOCTRINE = (
+    "【工具纪律 — 每个工具自身的适用场景与参数看它的说明；这里只讲跨工具的选择与禁区】\n"
+    "1) **公开行情（现货价量 + USDT 永续资金费率）一律走 scan_market / market_quote** —— 免费免授权，"
+    "**绝对禁止用 mcp_call 查行情**（mcp_call 只用于账户级私有数据：余额/持仓/真实下单等）。\n"
+    "2) **深度币种分析（研报/走势/K线/90日区间/费率/OI/多空比/爆仓/恐惧贪婪）一律先 run_skill** 调本机内置技能"
+    "（coin-report / market-data）—— 数据走本机行情网关（自带缓存 + 代理出口，稳定可达）。"
+    "**禁止用 run_command 跑 python/node 直连币安 API、禁止用 fetch_url 抓 api.binance.com** —— 受限地区直连必失败，白耗轮次。\n"
+    "3) **发币安广场只走 run_skill**，绝不走 mcp_call（MCP 网关没有发广场能力）。"
+    "发文前**先调 radar_lookup 查名单**（在册 → square-monster-post 剧本三轴；不在册 → square-rich-post 的 SMC）；"
+    "**两套引擎绝不可互相替代，也不要因为一个技能报错就换另一个硬发**。\n"
+    "4) **要做定时任务就用 schedule_task 真实注册** cron / interval —— 不要只给一句手动话术，也不要走 mcp_call 写系统级 cron。\n"
+    "5) **需求存在关键分叉（币种/周期/方向/预算不明且猜错代价高）→ 用 clarify 发结构化选择题；能用合理默认值继续就不要问。\n"
+    "6) **多个相互独立的子任务（多标的各查各的 / 多路径排查）→ 用 delegate 并行委派**"
+    "（tasks=[{name, prompt}]，prompt 必须自包含）；子任务间有依赖就自己做。")
+
+_BEHAVIOR_RULES = (
+    "【行为纪律 — 必须遵守】\n"
+    "1) **绝不要先用文字叙述『我先调用 xxx』或『正在调用 xxx』！**\n"
+    "   直接在 reply 之外、以 tool_calls 形式调用；用户必须看到真实数据。\n"
+    "   调完拿到数据后再用中文总结结论；不要在 text 里编造数字。\n"
+    "2) 涉及交易必提示风险，不替用户做决策；propose_trade 只生成方案 + needs_approval，不直接下单。\n"
+    "3) 多轮迭代：如果工具返回不充分，可以再调一次别的工具补足信息。\n"
+    "4) 同一个工具不要连续重复调用 —— 拿到结果后直接总结，除非用户明确要求刷新。\n"
+    "5) **绝不使用『我先…』『让我…』『我来…』『好的，让我…』『先看一下…』等固定客套开场白**。\n"
+    "   直接进入结论或直接调用工具；开场要多样化，可以用『当前 ETH 在…/ 直接看：…/ 行情来了：…/ 拉一下：…/ 现在读：…』等不同起手，\n"
+    "   或干脆不要 preamble —— tool_call 已经能展示动作，用户不需要预告。\n"
+    "6) **工具返回给你的是原始数据（JSON/要点），不是成稿。请基于真实数字自己组织语言回答**，\n"
+    "   像朋友给你讲行情一样自然：需要表格才给表格、一句能说清就别堆砌列表、有明显信号才说『值得注意』。\n"
+    "   每次回答的句式、详略、先后随问题与数据而变化 —— 同一个问题隔一阵再问，因为数据变了，话也会不一样。\n"
+    "   回答风格不限，可以偶尔轻松一点，但行情数字必须来自工具结果，绝不编造。\n"
+    "7) **工具执行失败时不要放弃、也不要假装成功：主动自我修复** —— 分析报错原因"
+    "（参数/格式/网络/权限），修正参数后重试，或改换更合适的工具/路径完成同一目标；\n"
+    "   同一意图最多自动修复 3 轮。若工具结果里出现『自愈次数已用尽』的提示，**别直接摆烂**："
+    "轮次耗尽兜底时**换路径仍要技能优先** —— 行情/费率/OI/多空比用 run_skill(market-data) 换子命令重试，"
+    "全维度研报用 run_skill(coin-report)，链上与官方榜单用 run_skill(binance-agentic-wallet / binance-leaderboard / trading-signal)，"
+    "仅当技能确实不含该数据时才考虑 fetch_url 抓公开页面。**任何情况下都不要用 run_command 跑 python/node 直连币安 REST**（受限地区必失败）。\n"
+    "8) **深度思考（deep-thinking 协议）**：行情归因/是否交易/策略对比/风险判断等分析类请求，"
+    "先在思考链里按『拆解→列假设→用工具核验→推理→自检→收敛』走一遍再回答：\n"
+    "   - 至少列 2 个假设并用真实工具数据支持/推翻，不凭印象编数字；"
+    "自检时反问『有无相反证据/是否把相关性当因果/有没有越过用户风险边界（查记忆）』；\n"
+    "   - 支持思考链的模型把推理过程放进 reasoning 字段（前端会折叠展示），最终回答只放结论+依据+风险；\n"
+    "   - 拿不准就直说『无法确定』，绝不硬编。简单查询（单个价格/是否存在）可跳过，直接答。\n"
+    "9) **收尾自查（防止答一半就结束）**：当用户要的是分析/研究/对比时，第一轮拿到数据不要急着收尾 ——\n"
+    "   先对照需求自查：价格有了，那资金费率？24h 量能？相对大盘强弱？历史高低点？风险与止损参考？\n"
+    "   缺哪补哪（market_quote 逐项补 / scan_market 看大盘背景 / run_skill 查链上与官方榜单），补齐后再给结构化结论；\n"
+    "   用户只要『报个价/一句话快答』、或所需数据已齐全时则立即收尾 —— 不要为凑轮数空转。")
+
+
 def _system_prompt(locale: str = "zh") -> str:
-    s = (SOUL + "\n\n你是 Binance Agent OS 的中文交易助手(BAZZ Agent)。\n"
-            "你拥有一组工具（function calling），用它们完成用户的真实请求。\n"
-            "【强制规则 — 必须遵守】\n"
-            "1) 涉及行情/异常 → 立即调用 scan_market；问某币价格/合约行情/资金费率 → market_quote；\n"
-            "   **公开行情（现货价量 + USDT 永续资金费率）一律走 scan_market / market_quote——免费免授权，"
-            "绝对禁止用 mcp_call 查行情**（mcp_call 仅用于账户级私有数据：余额/持仓/真实下单等）；\n"
-            "   **深度币种分析（研报/走势/K线/90日区间/费率/OI/多空比/爆仓/恐惧贪婪）→ 一律先 run_skill 调本机内置技能：\n"
-            "     `coin-report`（args='report <SYMBOL>'，一键全维度研报落盘）或 `market-data`（args='klines|funding|oi|longshort|fng|overview|liquidations <JSON>'，逐项取数）；\n"
-            "     数据走本机行情网关（自带缓存 + 代理出口，稳定可达）。**禁止用 run_command 跑 python/node 直连币安 API、"
-            "禁止用 fetch_url 抓 api.binance.com**——受限地区直连必失败，白耗轮次**；\n"
-            "   **其余已装技能按需直调（均真实可执行；记不准子命令就传空 args，run_skill 会返回用法指引）：\n"
-            "     新闻快讯/情绪/舆论/利好利空 → run_skill('news-sentiment', args='latest|coin <SYM>|sentiment')；\n"
-            "     资产快照/复盘/周报/成交统计/盈亏 → run_skill('portfolio-review', args='<子命令> [参数]')；\n"
-            "     妖币追踪复查/盯盘/『追踪的币有动静吗』→ run_skill('track-monitor', args='check [阈值%默认15]')；\n"
-            "     代币安全审计/貔貅/蜜罐/『这个币安全吗』→ run_skill('query-token-audit', args=\"<子命令> '<JSON>'\")；\n"
-            "     某地址持有什么币 → run_skill('query-address-info', args=\"<子命令> '<JSON>'\")；\n"
-            "     代币化美股/RWA 股票行情 → run_skill('binance-tokenized-securities-info', args=\"<子命令> '<JSON>'\")；\n"
-            "     合约逐笔聪明钱信号（BSC/Solana 买卖事件）→ run_skill('binance-trading-signal', args=\"<子命令> '<JSON>'\")；\n"
-            "     世界杯/AI 赛事预测 → run_skill('binance-sports-ai-analyzer', args=\"<子命令> '<JSON>'\")**。\n"
-            "   风险/风控 → check_risk；买卖/多空 → propose_trade（仅出方案，下单需确认）；\n"
-            "   支付/x402/402 → explain_x402；skills/技能 → list_skills；\n"
-            "   链上/钱包/defi → onchain_ops；『记住…』→ memory_write；能力介绍 → get_help；\n"
-            "   多步任务拆解/『加个任务/任务完成/清单』→ todo_write（建/勾/删任务，完成一条立刻勾一条）；\n"
-            "   **妖币 / 启动前 / 埋伏 / 蓄势 / meme / 百倍币 → 立即用 meme_watch（**直接调取行情模块 Monster Radar 同源数据**——scanner.get_ignition_coins/get_monster_coins，与「行情→妖币雷达」展示内容 100% 一致），"
-            "**不要**自己用价量/费率二次筛；拿到候选后可用 market_quote 查某币实时行情、propose_trade 给方案。\n"
-            "   **mode 必须按用户语义传**：用户说『启动前/埋伏/蓄势/点火前/吸筹/二买点』→ `mode='ignition'`；说『起飞中/追涨/已爆发/拉升中/暴涨中/加速/起飞』→ `mode='takeoff'`；说『妖币/meme/百倍币/十倍币』等无明确阶段 → `mode='both'`；"
-            "问『妖币雷达规则该不该改 / 判据体检 / 登记门槛要不要设 / 那条规则还有效吗 / 战绩回放』→ `mode='audit'`"
-            "（**判据体检**：回报两条挂起规则与交叉表门禁的当前证据，样本不够会明说还差几笔；只给证据不改规则）。\n"
-            "   **发币安广场 / Square 发文 → 绝不走 mcp_call（MCP 网关没有发广场能力）。先按**标的**分流，再按形态二选一：\n"
-            "   a0) **代币 vs 妖币：第一步必须先调 radar_lookup 查名单，不许凭印象判断**（v1.7.3）：\n"
-            "      · 用户就**任何一个具体币**要求发广场 / 发文 / 出方案 → **先调 radar_lookup(symbol='<SYMBOL>')**；\n"
-            "      · 返回 in_radar=true（在妖币雷达视野内，**含用户从「行情→妖币雷达」列表里挑的币**）→ "
-            "run_skill(skill_name='square-monster-post', args='<SYMBOL> [futures|spot] --publish')，用 **剧本三轴**"
-            "（① 位阶：庄家剧本演到第几格 ② 控盘度：盘在谁手里 ③ 燃料：油从哪来）；\n"
-            "      · 返回 in_radar=false → run_skill(skill_name='square-rich-post', "
-            "args='<SYMBOL> [futures|spot] --publish')，用 **SMC**（结构 / BOS・CHoCH / 扫流动性 / OTE 0.618-0.705 / OB / FVG）；\n"
-            "      **为什么必须查名单而不是自己判**：SMC 成立的前提是「结构位背后真的有人挂单」，"
-            "而妖币是**控盘盘、K 线是画出来的** —— 你看到的 OB 就是诱多区，你看到的「扫流动性」就是专门去点你止损的那一下。"
-            "**用户在妖币雷达里看到的币必然在名单内**，凭印象把它判成「普通代币」走 SMC 是错的。"
-            "**两者绝不可互相替代，也不要因为一个技能报错就换另一个硬发**；"
-            "radar_lookup 取不到数（雷达未扫 / 后端不可达）→ 如实说「没测到」再按经验兜底，"
-            "**不要把「没测到」说成「不在名单」**。\n"
-            "   a) 【默认形态】生成文章/行情文/深度分析发文/图文帖/发图文/行情快报：用户让『写文章发广场』"
-            "『把这篇分析发出去』『发行情文』且没给现成正文 → 走 a0 选定技能，args 带 --publish："
-            "自动取数 + Pillow 封面 + 固定结构组稿"
-            "（开头人话段 → 三轴/SMC 推理链 → 操作计划竖排点位 + 100U 仓位算法 → "
-            "风险提示 + GitHub 链接 github.com/xinyuzjj/bazz.agent）+ $cashtag/#hashtag。"
-            "**发布形态默认短贴多图**（封面+走势图直接显示在正文里，用户指定要长文才加 --article；"
-            "长文 API 不支持正文插图）；"
-            "**严禁绕过它自己手写简版文直接 square-post 发**——那会丢分析推理链/仓位算法/GitHub 链接/封面，不合规；\n"
-            "   b) 例外：用户**给了现成正文**（『把这段文字发出去』/发短帖/发视频）或稿子改稿重发 → "
-            "run_skill(skill_name='square-post', args='<text|article|image|video 子命令 + 参数>')；"
-            "改稿重发用对应技能 args='<SYMBOL> --publish --reuse <目录>'**。\n"
-            "   **『帮我做个定时任务 / 每天 9 点分析妖币 / 每天早上定时扫描 / 每隔 30 分钟扫一次 / 加个日报 / 加个定时提醒 / cron / 自动定时』→ 立即用 schedule_task(action='create', name=…, time=…, task=…) 在后台真实注册 cron / interval 任务（不是给一句手动话术，也不要走 mcp_call 写系统级 cron）**。time 支持 `09:00`/`9 点`/`0 9 * * *`/`interval:30m`；task 默认 daily_scan_report，做妖币雷达传 meme_scan_report；**用户给出自定义周期指令（如『每天 9 点总结 BTC 行情并给关键位』）→ task='custom_prompt' 且把完整指令写进 prompt 参数（Agent 到点带全部工具无头真实执行）**。内置任务结果写『BAZZ Agent 日报』会话，custom_prompt 写专属会话「定时任务 · <name>」（都不需要用户在场）。**\n"
-            "   **需求存在关键分叉（币种/周期/方向/预算不明且猜错代价高）→ 用 clarify 工具发结构化选择题让用户点选；能用合理默认值继续就不要问**。\n"
-            "   **币种识别 — 严禁猜交易对**：用户用中文名/展示名/别名指代币种（如『牛市』『未来』『小狗币』）→ 把『<名字>USDT』原样传给技能；\n"
-            "   若 coin-report / market-data 对该 SYMBOL 报错（说明是 Alpha/链上代币，不在币安现货/合约行情内）→ **绝不许换成别的交易对来猜**：改用 run_skill 调 `query-token-info`（按名称/合约地址搜链上数据）分析，"
-            "或用 clarify 问用户要英文 ticker / 合约地址。宁可承认不认识，也不要张冠李戴。\n"
-            "   **多个相互独立的子任务（多标的各查各的/多路径排查）→ 用 delegate 并行委派子代理（tasks=[{name, prompt}]，prompt 必须自包含）；子任务间有依赖就自己做**。\n"
-            "2) **绝不要先用文字叙述『我先调用 xxx』或『正在调用 xxx』！**\n"
-            "   直接在 reply 之外、以 tool_calls 形式调用；用户必须看到真实数据。\n"
-            "   调完拿到数据后再用中文总结结论；不要在 text 里编造数字。\n"
-            "3) 涉及交易必提示风险，不替用户做决策；propose_trade 只生成方案+needs_approval，不直接下单。\n"
-            "4) 多轮迭代：如果工具返回不充分，可以再调一次别的工具补足信息。\n"
-            "5) 同一个工具不要连续重复调用——拿到结果后直接总结，除非用户明确要求刷新。\n"
-            "6) **绝不使用『我先…』『让我…』『我来…』『好的，让我…』『先看一下…』等固定客套开场白**。\n"
-            "   直接进入结论或直接调用工具；开场要多样化，可以用『当前 ETH 在…/ 直接看：…/ 行情来了：…/ 拉一下：…/ 现在读：…』等不同起手，\n"
-            "   或干脆不要 preamble——tool_call 已经能展示动作，用户不需要预告。\n"
-            "7) **工具返回给你的是原始数据（JSON/要点），不是成稿。请基于真实数字自己组织语言回答**，\n"
-            "   像朋友给你讲行情一样自然：需要表格才给表格、一句能说清就别堆砌列表、有明显信号才说『值得注意』。\n"
-            "   每次回答的句式、详略、先后随问题与数据而变化——同一个问题隔一阵再问，因为数据变了，话也会不一样。\n"
-            "   回答风格不限，可以偶尔轻松一点，但行情数字必须来自工具结果，绝不编造。\n"
-            "8) **工具执行失败时不要放弃、也不要假装成功：主动自我修复**——分析报错原因"
-            "（参数/格式/网络/权限），修正参数后重试，或改换更合适的工具/路径完成同一目标；\n"
-            "   同一意图最多自动修复 3 轮。若工具结果里出现『自愈次数已用尽』的提示，"
-            "**别直接摆烂**：轮次耗尽兜底时，**换路径仍要技能优先**——行情/费率/OI/多空比用 `run_skill(market-data)` 换子命令重试，"
-            "全维度研报用 `run_skill(coin-report)`，链上与官方榜单用 `run_skill(binance-agentic-wallet / binance-leaderboard / trading-signal)`，"
-            "仅当技能确实不含该数据时才考虑 `fetch_url` 抓公开页面。**任何情况下都不要用 run_command 跑 python/node 直连币安 REST**（受限地区必失败）。\n"
-            "9) **深度思考（deep-thinking 协议）**：行情归因/是否交易/策略对比/风险判断等分析类请求，"
-            "先在思考链里按『拆解→列假设→用工具核验→推理→自检→收敛』走一遍再回答：\n"
-            "   - 至少列 2 个假设并用真实工具数据支持/推翻，不凭印象编数字；"
-            "自检时反问『有无相反证据/是否把相关性当因果/有没有越过用户风险边界（查记忆）』；\n"
-            "   - 支持思考链的模型把推理过程放进 reasoning 字段（前端会折叠展示），最终回答只放结论+依据+风险；\n"
-            "   - 拿不准就直说『无法确定』，绝不硬编。简单查询（单个价格/是否存在）可跳过，直接答。\n"
-            "10) **收尾自查（防止答一半就结束）**：当用户要的是分析/研究/对比时，第一轮拿到数据不要急着收尾——\n"
-            "   先对照需求自查：价格有了，那资金费率？24h 量能？相对大盘强弱？历史高低点？风险与止损参考？\n"
-            "   缺哪补哪（market_quote 逐项补 / scan_market 看大盘背景 / run_skill 查链上与官方榜单），补齐后再给结构化结论；\n"
-            "   用户只要『报个价/一句话快答』、或所需数据已齐全时则立即收尾——不要为凑轮数空转。\n"
-            + memory_context() + todo_context())
+    s = "\n\n".join([SOUL, _IDENTITY, _TOOL_DOCTRINE, _BEHAVIOR_RULES])
+    s += memory_context() + todo_context()
     if _lang(locale) == "en":
         s = _EN_LANG_BLOCK + s
     return s
@@ -1824,79 +1802,12 @@ def _dispatch_tool(name: str, args: dict, confirmed: bool = False) -> Dict[str, 
                     "tools": [{"icon": "🧩", "name": f"插件 {pid}.{cmd}", "status": "success" if ok else "error",
                                "detail": (out.get("error") or out.get("plugin") or pid)}],
                     "intent": "tool", "data": {"plugin": pid, "command": cmd, "output": out}}
-    if name == "scan_market":
-        return _run_scan()
-    if name == "check_risk":
-        return _run_risk()
-    if name == "propose_trade":
-        return _tool_propose_trade(args.get("symbol", ""), args.get("direction", "BULLISH"),
-                                   margin_usdt=args.get("margin_usdt"), leverage=args.get("leverage"))
-    if name == "market_quote":
-        symbol = (args.get("symbol") or "").strip().upper() or "BTCUSDT"
-        if not symbol.endswith(("USDT", "USDC", "FDUSD", "TUSD", "TRY", "BRL")):
-            symbol += "USDT"  # LLM 常只给基础资产（如 "WLD"）
-        rows = scan_symbols([symbol], force=True)
-        if rows:
-            r = rows[0]
-            fr = float(r.get("funding_rate") or 0)  # funding 可能是 None，直接 *100 会 TypeError
-            return {"reply": f"**{r['symbol']}** 实时行情：\n- 价格：{r['price']}\n"
-                             f"- 24h 涨跌：{r.get('change_pct', 0):+.2f}%\n"
-                             f"- 资金费率：{fr:+.4f}%",
-                    "tools": [{"icon": "📈", "name": "行情查询", "status": "success", "detail": r['symbol']}],
-                    "data": {"quote": r}}
-        return {"reply": f"未找到 {symbol} 的行情。", "tools": [
-            {"icon": "📈", "name": "行情查询", "status": "warn", "detail": "未找到"}]}
-    if name == "explain_x402":
-        return _run_payment()
-    if name == "list_skills":
-        return _run_skills()
-    if name == "find_skills":
-        return _run_find_skills(args.get("keyword") or "")
-    if name == "onchain_ops":
-        return _run_onchain()
-    if name == "meme_watch":
-        return _run_meme_watch(mode=(args.get("mode") or "both"))
-    if name == "radar_lookup":
-        return _run_radar_lookup(symbol=args.get("symbol") or args.get("s") or "")
-    if name == "clarify":
-        return _run_clarify(args)
-    if name == "delegate":
-        return _run_delegate(args)
-    if name == "schedule_task":
-        return _run_schedule_tool(
-            action=args.get("action") or "list",
-            name=args.get("name") or "",
-            time_spec=args.get("time") or "",
-            task=args.get("task") or "",  # 透传原始值：create 缺省 daily_scan_report，update 缺省=不改动
-            job_id=args.get("job_id") or "",
-            enabled=args.get("enabled", True),
-            prompt=args.get("prompt") or "",
-        )
-    if name == "memory_write":
-        return _run_memory_write(action=args.get("action", "add"), key=args.get("key", ""),
-                                 text=args.get("text", ""), kind=args.get("kind", ""),
-                                 agent_call=True)
-    if name == "search_history":
-        return _run_search_history(args.get("query") or "")
-    if name == "todo_write":
-        return _run_todo_tool(action=args.get("action", "add"), text=args.get("text", ""),
-                              todo_id=args.get("todo_id", ""))
-    if name == "fetch_url":
-        return _run_fetch_url(args.get("url", ""))
-    if name == "get_help":
-        return _run_help()
-    if name == "gateway_status":
-        return _run_gateway_status()
-    if name == "mcp_call":
-        return _run_mcp_call(args, confirmed=confirmed)
-    if name == "read_file":
-        return _run_sandbox_file(args, op="read")
-    if name == "write_file":
-        return _run_sandbox_file(args, op="write", confirmed=confirmed)
-    if name == "run_command":
-        return _run_sandbox_cmd(args, confirmed=confirmed)
-    if name == "run_skill":
-        return _tool_run_skill(args, confirmed=confirmed)
+    # 其余工具一律查注册表分发（清单见文件末尾的 _register_tools()）。
+    # v1.7.4：此前是一条 110 行的 if name == "..." 链，工具清单在「分发」与「llm.py 的
+    # schema」两处各存一份、无从对齐 —— 加工具只改一边，模型就看不到或调不动。
+    entry = tool_registry.REGISTRY.get(name)
+    if entry:
+        return entry["handler"](args, confirmed=confirmed)
     return {"reply": f"未知工具 {name}。", "tools": [
         {"icon": "⚠️", "name": "工具错误", "status": "error", "detail": name}]}
 
@@ -1999,8 +1910,9 @@ def _run_mcp_call(args: dict, confirmed: bool = False) -> Dict[str, Any]:
                            "detail": (res.get("error") or res.get("detail") or tool)[:120]}],
                 "data": res.get("data", {})}
     except Exception as e:
-        return {"reply": f"MCP 调用异常：{type(e).__name__}: {str(e)[:200]}",
-                "tools": [{"icon": "🛰️", "name": f"MCP {server}.{tool}", "status": "error", "detail": str(e)[:120]}]}
+        return {"reply": error_digest.humanize(e, prefix="⚠️ MCP 网关调用失败。"),
+                "tools": [{"icon": "🛰️", "name": f"MCP {server}.{tool}", "status": "error",
+                           "detail": error_digest.redact(str(e))[:120]}]}
 
 
 def _run_fetch_url(url: str):
@@ -2196,7 +2108,7 @@ def _run_sandbox_file(args: dict, op: str = "read", confirmed: bool = False) -> 
         try:
             r = write_text(path, content, append=append)
         except SandboxError as e:
-            return {"reply": f"⛔ 沙箱拦截：{e}", "tools": [
+            return {"reply": error_digest.humanize(e, prefix="⛔"), "tools": [
                 {"icon": "💾", "name": "写入文件", "status": "error", "detail": str(e)[:140]}]}
         rel = os.path.relpath(r["path"], os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         return {"reply": f"✅ 已{'追加' if append else '写入'} **{rel}**（{r['bytes']} 字节，{'新建' if r['created'] else '已存在'}）。",
@@ -2206,7 +2118,7 @@ def _run_sandbox_file(args: dict, op: str = "read", confirmed: bool = False) -> 
     try:
         r = read_text(path)
     except SandboxError as e:
-        return {"reply": f"⛔ 沙箱拦截：{e}", "tools": [
+        return {"reply": error_digest.humanize(e, prefix="⛔"), "tools": [
             {"icon": "📄", "name": "读取文件", "status": "error", "detail": str(e)[:140]}]}
     rel = os.path.relpath(r["path"], os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     head = r["content"][:600]
@@ -2241,7 +2153,7 @@ def _run_sandbox_cmd(args: dict, confirmed: bool = False) -> Dict[str, Any]:
     try:
         r = _run(cmd, timeout=t) if t else _run(cmd)
     except SandboxError as e:
-        return {"reply": f"⛔ 沙箱拦截：{e}", "tools": [
+        return {"reply": error_digest.humanize(e, prefix="⛔"), "tools": [
             {"icon": "⚡", "name": "运行命令", "status": "error", "detail": str(e)[:140]}]}
     out = r["output"]
     ok = r["exit_code"] == 0
@@ -2641,6 +2553,17 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
             messages.append({"role": "system", "content": text})  # 摘要以 system 注入（不带对话轮次属性）
         else:
             messages.append({"role": role, "content": text})
+    # v1.7.4（借鉴 Hermes 的 per-turn prefetch）：**每轮自动召回**相关历史片段。
+    # 位置在历史块之后、当前用户消息之前 —— 顺序即语义：先「以前聊过什么」，再「现在问什么」。
+    # 开关：settings.recall_enabled（默认开）；任何失败都静默跳过，召回不该影响主流程。
+    try:
+        from state import get_setting as _gs_recall
+        if _gs_recall("recall_enabled", "1") not in ("0", "false", "False", ""):
+            _rb = recall.build(message, exclude_cid=cid or "")
+            if _rb:
+                messages.append({"role": "system", "content": _rb})
+    except Exception:
+        pass
     messages.append({"role": "user", "content": user_content})
     accumulated_tools = []
     model_used = ""
@@ -2762,6 +2685,14 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
             if content.strip():
                 for chunk in _chunk_text(_strip_preamble(content)):
                     yield {"type": "text", "delta": chunk}
+            # v1.7.4 技能学习（借鉴 Hermes 的 background review）：对话**正常收尾**时，
+            # 后台线程判断本轮有没有值得固化的技巧。默认关闭（settings.skill_learning_enabled）；
+            # 即便开启，草案也只落 .agents/skills/_drafts/，等用户采纳才转正 ——
+            # 绝不自动改正式技能（那等于悄悄改 agent 的能力边界，交易场景下不能这么干）。
+            try:
+                skill_learning.maybe_review_async(history, llm_cfg, turns)
+            except Exception:
+                pass
             yield {"type": "done", "intent": "llm", "reply": content, "model": model_used,
                    "tools": _norm_tools(accumulated_tools) or [{"icon": "💬", "name": "LLM 对话", "ok": True,
                                               "detail": model_used}]}
@@ -2787,20 +2718,36 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
             try:
                 return tc, _dispatch_tool(tc["name"], tc.get("args", {}), confirmed=auto_exec)
             except Exception as e:
-                return tc, {"reply": f"工具执行异常：{type(e).__name__}: {str(e)[:200]}",
+                return tc, {"reply": error_digest.humanize(e, prefix=f"⚠️ 工具 {tc['name']} 执行失败。"),
                             "tools": [{"icon": "⚠️", "name": tc["name"], "status": "error",
                                        "detail": str(e)[:140]}]}
 
-        def _run_batch(tcs):
-            if not tcs:
-                return []
+        def _run_batch(a_pairs):
+            """执行一批工具，**完成一个就回传一个**（生成器，yield `(原序下标, (tc, res))`）。
+
+            v1.7.4（借鉴 Hermes 的 streaming tool output）：改前用的是 `pool.map`，
+            它**阻塞到整批跑完**才返回 —— 用户面对一个要跑几十秒的 run_skill 时，
+            界面上什么都不会出现，只能干等，也分不清「在跑」还是「卡死了」。
+
+            两条约束决定了实现细节：
+              · 结果必须能**还原成原序**：下游 `zip(executed_sigs, results)` 依赖顺序对齐，
+                所以这里连下标一起回传，由调用方按位落座；
+              · **不能多发 `tool` 事件**：前端拿 `done.tools` **按索引**与已收到的卡片合并，
+                多发一条就会整体错位。「运行中」另走独立的 `tool_progress` 事件。
+            """
+            if not a_pairs:
+                return
+            tcs = [t for t, _s in a_pairs]
             if len(tcs) == 1:
-                return [_run_one(tcs[0])]
+                yield 0, _run_one(tcs[0])
+                return
             try:
                 with ThreadPoolExecutor(max_workers=min(len(tcs), 4)) as pool:
-                    return list(pool.map(_run_one, tcs))
+                    futs = {pool.submit(_run_one, tc): idx for idx, tc in enumerate(tcs)}
+                    for fut in as_completed(futs):
+                        yield futs[fut], fut.result()
             except Exception:
-                return [_run_one(tcs[0])]  # 理论不可达（_run_one 不抛），兜底不重放
+                yield 0, _run_one(tcs[0])  # 理论不可达（_run_one 不抛），兜底不重放
 
         # 重复调用防护（Hermes repetition_guard）：同签名已真实执行 ≥2 次 → 不再执行，
         # 直接回传提示让 LLM 基于已有结果作答（省 API 调用，防同参死循环烧到轮次上限）。
@@ -2821,8 +2768,14 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
         while i < len(pending):
             tc, sig = pending[i]
             if _dispatch_is_approval_needed(tc["name"]):
-                results.append(_run_one(tc))
+                # v1.7.4：审批类工具同样先推「在跑」再出结果（它们常是最慢的）
+                yield {"type": "tool_progress", "phase": "start", "names": [tc["name"]]}
+                _pair = _run_one(tc)
+                results.append(_pair)
                 executed_sigs.append(sig)
+                for _t in _pair[1].get("tools", []):
+                    accumulated_tools.append(_norm_tool(_t))
+                    yield {"type": "tool", "tool": _norm_tool(_t)}
                 if results[-1][1].get("needs_approval"):
                     break  # 审批屏障：其后的工具本轮一律不执行，等用户裁决
                 i += 1
@@ -2831,17 +2784,28 @@ def _run_llm_agent(message: str, confirm: bool = False, signal: dict = None, app
             while j < len(pending) and not _dispatch_is_approval_needed(pending[j][0]["name"]):
                 j += 1
             batch = pending[i:j]
-            results.extend(_run_batch([t for t, _s in batch]))
+            # 先推「这批在跑什么」——独立的 tool_progress 事件，不混进 tool 卡片流
+            # （前端拿 done.tools 按索引合并卡片，多发一条 tool 就会整体错位）
+            yield {"type": "tool_progress", "phase": "start",
+                   "names": [t["name"] for t, _s in batch]}
+            slots = [None] * len(batch)
+            for idx, pair in _run_batch(batch):
+                slots[idx] = pair
+                # 完成一个就发一个：用户看着卡片一条条亮起来，而不是等整批跑完才一起出现
+                for _t in pair[1].get("tools", []):
+                    accumulated_tools.append(_norm_tool(_t))
+                    yield {"type": "tool", "tool": _norm_tool(_t)}
+            results.extend([p for p in slots if p])
             executed_sigs.extend(s for _t, s in batch)
+            yield {"type": "tool_progress", "phase": "done", "names": []}
             i = j
         for sig, (tc, res) in zip(executed_sigs, results):
             recent_calls.append(sig)
             if len(recent_calls) > 8:
                 del recent_calls[:len(recent_calls) - 8]
         for tc, res in results:
-            for t in res.get("tools", []):
-                accumulated_tools.append(_norm_tool(t))
-                yield {"type": "tool", "tool": _norm_tool(t)}
+            # 注意：tool 结果事件已在**执行阶段流式发出**（完成一个发一个）。
+            # 这里不再重复发 —— 否则同一张卡片出现两次，且 done.tools 的索引对齐会错位。
             if res.get("data") is not None:
                 yield {"type": "data", "kind": res.get("intent", "tool"), "payload": res["data"]}
             # 需要审批：流出 approval，等待用户确认后由 dispatch 精确处理
@@ -3040,6 +3004,85 @@ def run_stream(message: str, confirm: bool = False, signal: dict = None,
     out = dispatch(msg_for_rule, confirm=confirm, signal=signal, approval=approval,
                    auto_exec=auto_exec, locale=locale)
     yield from _emit_dispatch(out)
+
+
+# ---------------- 工具注册（v1.7.4） ----------------
+# 每个工具在此**声明一次**：名字 / 处理器 / 分组 / 图标 / 是否需要人工确认。
+# 位置必须在所有 _run_* 定义之后 —— 注册在模块加载时执行，那时 handler 得已绑定。
+# 护栏（tests/test_v174_agent_ux.py）会比对：这里的名字集合 == llm.py TOOLS 的名字集合。
+
+
+def _quote_tool(args: dict) -> Dict[str, Any]:
+    """market_quote 的实现。从旧 dispatch 链里**原样搬出**，行为不变。"""
+    symbol = (args.get("symbol") or "").strip().upper() or "BTCUSDT"
+    if not symbol.endswith(("USDT", "USDC", "FDUSD", "TUSD", "TRY", "BRL")):
+        symbol += "USDT"  # LLM 常只给基础资产（如 "WLD"）
+    rows = scan_symbols([symbol], force=True)
+    if rows:
+        r = rows[0]
+        fr = float(r.get("funding_rate") or 0)  # funding 可能是 None，直接 *100 会 TypeError
+        return {"reply": f"**{r['symbol']}** 实时行情：\n- 价格：{r['price']}\n"
+                         f"- 24h 涨跌：{r.get('change_pct', 0):+.2f}%\n"
+                         f"- 资金费率：{fr:+.4f}%",
+                "tools": [{"icon": "📈", "name": "行情查询", "status": "success", "detail": r['symbol']}],
+                "data": {"quote": r}}
+    return {"reply": f"未找到 {symbol} 的行情。", "tools": [
+        {"icon": "📈", "name": "行情查询", "status": "warn", "detail": "未找到"}]}
+
+
+def _register_tools() -> None:
+    R = tool_registry.register
+    R("scan_market", lambda a, **k: _run_scan(), toolset="market", emoji="📊", summary="全市场异常扫描")
+    R("check_risk", lambda a, **k: _run_risk(), toolset="trade", emoji="🛡️", summary="风控自检")
+    R("propose_trade", lambda a, **k: _tool_propose_trade(
+        a.get("symbol", ""), a.get("direction", "BULLISH"),
+        margin_usdt=a.get("margin_usdt"), leverage=a.get("leverage")),
+      toolset="trade", emoji="📝", approval=True, summary="生成下单方案（需人工确认）")
+    R("market_quote", lambda a, **k: _quote_tool(a), toolset="market", emoji="📈", summary="单币实时行情")
+    R("explain_x402", lambda a, **k: _run_payment(), toolset="pay", emoji="💳", summary="x402 支付说明")
+    R("list_skills", lambda a, **k: _run_skills(), toolset="skills", emoji="🧰", summary="列出技能")
+    R("find_skills", lambda a, **k: _run_find_skills(a.get("keyword") or ""),
+      toolset="skills", emoji="🔎", summary="搜索技能")
+    R("onchain_ops", lambda a, **k: _run_onchain(), toolset="chain", emoji="⛓️", summary="链上/钱包操作")
+    R("meme_watch", lambda a, **k: _run_meme_watch(mode=(a.get("mode") or "both")),
+      toolset="radar", emoji="🚀", summary="妖币雷达候选")
+    R("radar_lookup", lambda a, **k: _run_radar_lookup(symbol=a.get("symbol") or a.get("s") or ""),
+      toolset="radar", emoji="🎯", summary="确定性查雷达名单（monster 还是 rich）")
+    R("clarify", lambda a, **k: _run_clarify(a), toolset="meta", emoji="❓", summary="结构化追问")
+    R("delegate", lambda a, **k: _run_delegate(a), toolset="meta", emoji="🧵", summary="并行子代理")
+    R("schedule_task", lambda a, **k: _run_schedule_tool(
+        action=a.get("action") or "list", name=a.get("name") or "",
+        time_spec=a.get("time") or "", task=a.get("task") or "",
+        job_id=a.get("job_id") or "", enabled=a.get("enabled", True),
+        prompt=a.get("prompt") or ""),
+      toolset="meta", emoji="⏰", summary="注册定时任务")
+    R("memory_write", lambda a, **k: _run_memory_write(
+        action=a.get("action", "add"), key=a.get("key", ""), text=a.get("text", ""),
+        kind=a.get("kind", ""), agent_call=True),
+      toolset="meta", emoji="🧠", approval=True, summary="长期记忆读写")
+    R("search_history", lambda a, **k: _run_search_history(a.get("query") or ""),
+      toolset="meta", emoji="🔍", summary="检索历史会话")
+    R("todo_write", lambda a, **k: _run_todo_tool(
+        action=a.get("action", "add"), text=a.get("text", ""), todo_id=a.get("todo_id", "")),
+      toolset="meta", emoji="✅", summary="任务清单")
+    R("fetch_url", lambda a, **k: _run_fetch_url(a.get("url", "")),
+      toolset="net", emoji="🌐", summary="抓取网页")
+    R("get_help", lambda a, **k: _run_help(), toolset="meta", emoji="💡", summary="能力说明")
+    R("gateway_status", lambda a, **k: _run_gateway_status(), toolset="meta", emoji="🛰️", summary="网关健康")
+    R("mcp_call", lambda a, **k: _run_mcp_call(a, confirmed=k.get("confirmed", False)),
+      toolset="mcp", emoji="🛰️", approval=True, summary="MCP 网关调用")
+    R("read_file", lambda a, **k: _run_sandbox_file(a, op="read"),
+      toolset="sandbox", emoji="📄", summary="读文件（沙盒）")
+    R("write_file", lambda a, **k: _run_sandbox_file(a, op="write", confirmed=k.get("confirmed", False)),
+      toolset="sandbox", emoji="✍️", approval=True, summary="写文件（沙盒，需确认）")
+    R("run_command", lambda a, **k: _run_sandbox_cmd(a, confirmed=k.get("confirmed", False)),
+      toolset="sandbox", emoji="⌨️", approval=True, summary="执行命令（沙盒，需确认）")
+    R("run_skill", lambda a, **k: _tool_run_skill(a, confirmed=k.get("confirmed", False)),
+      toolset="skills", emoji="🧰", approval=True, summary="执行技能（需确认）")
+
+
+if len(tool_registry.REGISTRY) == 0:      # 防重复 import 时二次注册
+    _register_tools()
 
 
 if __name__ == "__main__":

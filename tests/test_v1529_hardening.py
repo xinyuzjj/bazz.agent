@@ -134,7 +134,11 @@ def test_mcp_call_requires_confirmation():
 
 
 def test_mcp_call_whitelisted_passes_gate():
-    mcp = function("src/agent_core.py", "_run_mcp_call", {"_wl_has": lambda op, a: True})
+    # v1.7.4：错误文案改走 error_digest（人话 + 该怎么办），桩环境要一并注入它
+    digest_stub = SimpleNamespace(humanize=lambda e, **k: f"err: {e}",
+                                  redact=lambda s: s or "")
+    mcp = function("src/agent_core.py", "_run_mcp_call",
+                   {"_wl_has": lambda op, a: True, "error_digest": digest_stub})
     r = mcp({"server": "binance", "tool": "no_such", "arguments": {}}, confirmed=False)
     # 白名单命中后应越过审批屏障（此处因桩内 mcp_client 缺失而抛错文案，但绝不能是 needs_approval）
     assert not r.get("needs_approval"), "白名单命中的 MCP 调用仍被拦（应放行到执行层）"
@@ -163,8 +167,22 @@ def test_run_llm_agent_no_batch_replay():
 
 
 def test_run_one_never_raises():
-    src = unparse("src/agent_core.py", "_run_llm_agent")
-    assert "工具执行异常" in src, "_run_one 未兜底异常（线程池异常会触发整批重跑）"
+    """_run_one 必须兜底异常并**返回结果**（线程池里裸抛会触发整批重跑）。
+
+    v1.7.4：兜底文案从「工具执行异常：<异常名>」升级为 error_digest.humanize
+    （人话 + 该怎么办），所以这条断言改成**检查行为**（有 except 且分支里有 return），
+    不再绑死具体文案 —— 否则每次改文案都要改测试。
+    """
+    node = next((n for n in ast.walk(tree("src/agent_core.py"))
+                 if isinstance(n, ast.FunctionDef) and n.name == "_run_one"), None)
+    assert node is not None, "找不到 _run_one"
+    handlers = [h for t in ast.walk(node) if isinstance(t, ast.Try) for h in t.handlers]
+    assert handlers, "_run_one 没有 try/except 兜底"
+    assert any(isinstance(h.type, ast.Name) and h.type.id in ("Exception", "BaseException")
+               for h in handlers if h.type is not None), \
+        "_run_one 未捕获宽泛异常（线程池异常会触发整批重跑）"
+    assert any(isinstance(x, ast.Return) for h in handlers for x in ast.walk(h)), \
+        "_run_one 的 except 分支没有 return（异常会向上抛）"
 
 
 # ---------------- F06：沙箱环境清洗 + 符号链接越界 ----------------
